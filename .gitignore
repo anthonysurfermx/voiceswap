@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Test coverage
+coverage/
+
+# Temporary files
+tmp/
+temp/
+
+# Mobile App (Expo)
+mobile-app/node_modules/
+mobile-app/.expo/
+mobile-app/dist/
+mobile-app/ios/
+mobile-app/android/
+*.ipa
+*.apk
+
+# Expo EAS
+.eas/
