@@ -22,6 +22,7 @@ export const StatusRequestSchema = z.object({
 });
 
 // Response types
+
 export interface QuoteResponse {
   tokenIn: {
     address: string;
@@ -41,6 +42,8 @@ export interface QuoteResponse {
   route: string[];
   estimatedGas: string;
   timestamp: number;
+  routingType?: 'v4' | 'uniswap_x';
+  uniswapXEncodedOrder?: string; // Encoded order for signing if routingType is uniswap_x
 }
 
 export interface RouteResponse extends QuoteResponse {
@@ -54,11 +57,13 @@ export interface RouteResponse extends QuoteResponse {
 export interface ExecuteResponse {
   status: 'pending' | 'submitted' | 'confirmed' | 'failed';
   txHash?: string;
+  orderHash?: string; // For Uniswap X orders
   blockNumber?: number;
   gasUsed?: string;
   effectiveGasPrice?: string;
   error?: string;
 }
+
 
 export interface StatusResponse {
   status: 'pending' | 'confirmed' | 'failed' | 'not_found';

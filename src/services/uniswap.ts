@@ -4,7 +4,7 @@ import type { QuoteResponse, RouteResponse, ExecuteResponse, StatusResponse } fr
 
 // V4 Quoter ABI
 const V4_QUOTER_ABI = [
-  'function quoteExactInputSingle((address poolKey, bool zeroForOne, uint128 exactAmount, bytes hookData)) external returns (uint256 amountOut, uint256 gasEstimate)',
+  'function quoteExactInputSingle((tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) poolKey, bool zeroForOne, uint128 exactAmount, bytes hookData)) external returns (uint256 amountOut, uint256 gasEstimate)',
 ];
 
 // Simplified pool key struct ABI for encoding
@@ -24,6 +24,13 @@ const ERC20_ABI = [
   'function name() view returns (string)',
   'function balanceOf(address) view returns (uint256)',
   'function approve(address spender, uint256 amount) returns (bool)',
+  'function allowance(address owner, address spender) view returns (uint256)',
+];
+
+// StateView ABI (for reading pool state)
+const STATE_VIEW_ABI = [
+  'function getSlot0(bytes32 poolId) external view returns (uint160 sqrtPriceX96, int24 tick, uint8 protocolFee, uint24 lpFee)',
+  'function getLiquidity(bytes32 poolId) external view returns (uint128 liquidity)',
 ];
 
 // V4 Actions enum values
@@ -92,7 +99,7 @@ export class UniswapService {
   /**
    * Build a PoolKey for the token pair
    */
-  private buildPoolKey(tokenIn: string, tokenOut: string, feeTier: typeof FEE_TIERS.MEDIUM = FEE_TIERS.MEDIUM): PoolKey {
+  private buildPoolKey(tokenIn: string, tokenOut: string, feeTier: { fee: number; tickSpacing: number } = FEE_TIERS.MEDIUM): PoolKey {
     const { currency0, currency1 } = this.sortTokens(tokenIn, tokenOut);
 
     return {
@@ -105,14 +112,125 @@ export class UniswapService {
   }
 
   /**
-   * Encode PoolKey for contract calls
+   * Calculate Pool ID from PoolKey (keccak256 of encoded PoolKey)
    */
-  private encodePoolKey(poolKey: PoolKey): string {
+  private getPoolId(poolKey: PoolKey): string {
     const abiCoder = new ethers.utils.AbiCoder();
-    return abiCoder.encode(
-      ['tuple(address,address,uint24,int24,address)'],
-      [[poolKey.currency0, poolKey.currency1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks]]
+    const encoded = abiCoder.encode(
+      ['address', 'address', 'uint24', 'int24', 'address'],
+      [poolKey.currency0, poolKey.currency1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks]
     );
+    return ethers.utils.keccak256(encoded);
+  }
+
+  /**
+   * Find the best pool for the pair by checking liquidity across tiers
+   */
+  private async findBestPool(tokenIn: string, tokenOut: string): Promise<PoolKey> {
+    const stateView = new ethers.Contract(
+      this.networkConfig.contracts.STATE_VIEW,
+      STATE_VIEW_ABI,
+      this.provider
+    );
+
+    let bestPoolKey: PoolKey | null = null;
+    let maxLiquidity = ethers.BigNumber.from(0);
+
+    // Check all fee tiers
+    const tiers = Object.values(FEE_TIERS);
+
+    await Promise.all(tiers.map(async (tier) => {
+      try {
+        const poolKey = this.buildPoolKey(tokenIn, tokenOut, tier);
+        const poolId = this.getPoolId(poolKey);
+
+        // Check if pool has liquidity
+        const liquidity = await stateView.getLiquidity(poolId);
+
+        if (liquidity.gt(maxLiquidity)) {
+          maxLiquidity = liquidity;
+          bestPoolKey = poolKey;
+        }
+      } catch (error) {
+        // Pool might not exist or error fetching, ignore
+        // console.debug(`Failed to check pool for tier ${tier.fee}`, error);
+      }
+    }));
+
+    if (!bestPoolKey) {
+      // Default to MEDIUM if no liquidity found anywhere (fallback)
+      return this.buildPoolKey(tokenIn, tokenOut, FEE_TIERS.MEDIUM);
+    }
+
+    return bestPoolKey;
+  }
+
+  /**
+   * Compute Price Impact
+   */
+  private async calculatePriceImpact(
+    poolKey: PoolKey,
+    amountIn: ethers.BigNumber,
+    amountOut: ethers.BigNumber,
+    tokenInDecimals: number,
+    tokenOutDecimals: number,
+    zeroForOne: boolean
+  ): Promise<number> {
+    try {
+      const stateView = new ethers.Contract(
+        this.networkConfig.contracts.STATE_VIEW,
+        STATE_VIEW_ABI,
+        this.provider
+      );
+
+      const poolId = this.getPoolId(poolKey);
+      const slot0 = await stateView.getSlot0(poolId);
+      const sqrtPriceX96 = slot0.sqrtPriceX96;
+
+      // Calculate spot price from sqrtPriceX96
+      // price = (sqrtPriceX96 / 2^96)^2
+      const Q96 = ethers.BigNumber.from(2).pow(96);
+
+      // We calculate prices with high precision
+      // Execution Price = amountOut / amountIn
+      const executionPrice = parseFloat(ethers.utils.formatUnits(amountOut, tokenOutDecimals)) /
+        parseFloat(ethers.utils.formatUnits(amountIn, tokenInDecimals));
+
+      // Spot Price calculation
+      // If zeroForOne (Token0 -> Token1), price is Token1/Token0
+      // If oneForZero (Token1 -> Token0), price is Token0/Token1 = 1 / (Token1/Token0)
+
+      // Calculate Token1/Token0 price
+      // price = (sqrtPrice / Q96) ** 2
+      // To improve precision handling with BN, we can use a library or simplified float math for estimation
+      const sqrtPriceFloat = parseFloat(sqrtPriceX96.toString()) / parseFloat(Q96.toString());
+      const rawPrice = sqrtPriceFloat * sqrtPriceFloat;
+
+      // Adjust for decimal difference: price * 10^(decimals0 - decimals1)
+      const decimals0 = zeroForOne ? tokenInDecimals : tokenOutDecimals;
+      const decimals1 = zeroForOne ? tokenOutDecimals : tokenInDecimals;
+      const spotPriceToken1PerToken0 = rawPrice * Math.pow(10, decimals0 - decimals1);
+
+      let spotPrice;
+      if (zeroForOne) {
+        // We are selling Token0 (In) for Token1 (Out) -> we want Price of Token0 in terms of Token1
+        spotPrice = spotPriceToken1PerToken0;
+      } else {
+        // We are selling Token1 (In) for Token0 (Out) -> we want Price of Token1 in terms of Token0
+        spotPrice = 1 / spotPriceToken1PerToken0;
+      }
+
+      // Price Impact = (Spot Price - Execution Price) / Spot Price
+      const impact = (spotPrice - executionPrice) / spotPrice;
+
+      // Return percentage (e.g., 0.05 for 5%)
+      // If negative (execution better than spot due to math/rounding), return 0
+      return Math.max(0, impact);
+
+    } catch (error) {
+      console.warn('Failed to calculate price impact:', error);
+      return 0.0; // Fallback
+    }
   }
 
   /**
@@ -123,97 +241,88 @@ export class UniswapService {
     tokenOutAddress: string,
     amountIn: string
   ): Promise<QuoteResponse> {
-    // Get token info
-    const [tokenInInfo, tokenOutInfo] = await Promise.all([
-      this.getTokenInfo(tokenInAddress),
-      this.getTokenInfo(tokenOutAddress),
-    ]);
-
-    // Sort tokens and determine swap direction
-    const { zeroForOne } = this.sortTokens(tokenInAddress, tokenOutAddress);
-    const poolKey = this.buildPoolKey(tokenInAddress, tokenOutAddress);
-
-    // Parse amount with correct decimals
-    const amountInParsed = ethers.utils.parseUnits(amountIn, tokenInInfo.decimals);
-
-    // Create quoter contract
-    const quoter = new ethers.Contract(
-      this.networkConfig.contracts.QUOTER,
-      V4_QUOTER_ABI,
-      this.provider
-    );
-
-    // Encode the quote params
-    const abiCoder = new ethers.utils.AbiCoder();
-    const encodedPoolKey = abiCoder.encode(
-      ['tuple(address,address,uint24,int24,address)'],
-      [[poolKey.currency0, poolKey.currency1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks]]
-    );
-
-    // Build quote params struct
-    const quoteParams = {
-      poolKey: encodedPoolKey,
-      zeroForOne,
-      exactAmount: amountInParsed,
-      hookData: '0x',
-    };
-
-    let amountOut: ethers.BigNumber;
-    let gasEstimate: ethers.BigNumber;
-
     try {
-      // Call quoter using callStatic (doesn't modify state)
-      const result = await quoter.callStatic.quoteExactInputSingle(quoteParams);
-      amountOut = result.amountOut || result[0];
-      gasEstimate = result.gasEstimate || result[1] || ethers.BigNumber.from(150000);
-    } catch (error) {
-      // Fallback: try alternative quoter interface
-      // V4 Quoter might have different param structure depending on version
-      const altQuoterABI = [
-        'function quoteExactInputSingle(tuple(tuple(address,address,uint24,int24,address) poolKey, bool zeroForOne, uint128 exactAmount, bytes hookData) params) external returns (uint256 amountOut, uint256 gasEstimate)',
-      ];
+      // Get token info
+      const [tokenInInfo, tokenOutInfo] = await Promise.all([
+        this.getTokenInfo(tokenInAddress),
+        this.getTokenInfo(tokenOutAddress),
+      ]);
 
-      const altQuoter = new ethers.Contract(
+      // Dynamically find the best pool
+      const poolKey = await this.findBestPool(tokenInAddress, tokenOutAddress);
+      const { zeroForOne } = this.sortTokens(tokenInAddress, tokenOutAddress);
+
+      // Parse amount with correct decimals
+      const amountInParsed = ethers.utils.parseUnits(amountIn, tokenInInfo.decimals);
+
+      // Create quoter contract
+      const quoter = new ethers.Contract(
         this.networkConfig.contracts.QUOTER,
-        altQuoterABI,
+        V4_QUOTER_ABI,
         this.provider
       );
 
-      const altParams = {
-        poolKey: [poolKey.currency0, poolKey.currency1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks],
+      // Build quote params struct
+      // The quoter expects the poolKey as a struct, not encoded bytes
+      const quoteParams = {
+        poolKey: {
+          currency0: poolKey.currency0,
+          currency1: poolKey.currency1,
+          fee: poolKey.fee,
+          tickSpacing: poolKey.tickSpacing,
+          hooks: poolKey.hooks,
+        },
         zeroForOne,
         exactAmount: amountInParsed,
         hookData: '0x',
       };
 
-      const result = await altQuoter.callStatic.quoteExactInputSingle(altParams);
-      amountOut = result.amountOut || result[0];
-      gasEstimate = result.gasEstimate || result[1] || ethers.BigNumber.from(150000);
+      let amountOut: ethers.BigNumber;
+      let gasEstimate: ethers.BigNumber;
+
+      try {
+        // Call quoter using callStatic (doesn't modify state)
+        const result = await quoter.callStatic.quoteExactInputSingle(quoteParams);
+        amountOut = result.amountOut || result[0];
+        gasEstimate = result.gasEstimate || result[1] || ethers.BigNumber.from(150000);
+      } catch (error) {
+        // Fallback for different ABI variations or errors
+        throw new Error(`Quoter failed: ${(error as Error).message}`);
+      }
+
+      // Calculate REAL price impact
+      const priceImpactRaw = await this.calculatePriceImpact(
+        poolKey,
+        amountInParsed,
+        amountOut,
+        tokenInInfo.decimals,
+        tokenOutInfo.decimals,
+        zeroForOne
+      );
+
+      return {
+        tokenIn: {
+          address: tokenInAddress,
+          symbol: tokenInInfo.symbol,
+          decimals: tokenInInfo.decimals,
+          amount: amountIn,
+          amountRaw: amountInParsed.toString(),
+        },
+        tokenOut: {
+          address: tokenOutAddress,
+          symbol: tokenOutInfo.symbol,
+          decimals: tokenOutInfo.decimals,
+          amount: ethers.utils.formatUnits(amountOut, tokenOutInfo.decimals),
+          amountRaw: amountOut.toString(),
+        },
+        priceImpact: (priceImpactRaw * 100).toFixed(4), // Convert to percentage string
+        route: [tokenInAddress, tokenOutAddress],
+        estimatedGas: gasEstimate.toString(),
+        timestamp: Date.now(),
+      };
+    } catch (e) {
+      throw e;
     }
-
-    // Calculate price impact (simplified)
-    const priceImpact = this.calculatePriceImpact(amountInParsed, amountOut, tokenInInfo.decimals, tokenOutInfo.decimals);
-
-    return {
-      tokenIn: {
-        address: tokenInAddress,
-        symbol: tokenInInfo.symbol,
-        decimals: tokenInInfo.decimals,
-        amount: amountIn,
-        amountRaw: amountInParsed.toString(),
-      },
-      tokenOut: {
-        address: tokenOutAddress,
-        symbol: tokenOutInfo.symbol,
-        decimals: tokenOutInfo.decimals,
-        amount: ethers.utils.formatUnits(amountOut, tokenOutInfo.decimals),
-        amountRaw: amountOut.toString(),
-      },
-      priceImpact: priceImpact.toFixed(4),
-      route: [tokenInAddress, tokenOutAddress],
-      estimatedGas: gasEstimate.toString(),
-      timestamp: Date.now(),
-    };
   }
 
   /**
@@ -227,7 +336,7 @@ export class UniswapService {
     slippageTolerance: number = 0.5,
     deadlineMinutes: number = 30
   ): Promise<RouteResponse> {
-    // First get the quote
+    // First get the quote (this will now use findBestPool internally)
     const quote = await this.getQuote(tokenInAddress, tokenOutAddress, amountIn);
 
     // Calculate minimum amount out with slippage
@@ -238,13 +347,13 @@ export class UniswapService {
     // Deadline timestamp
     const deadline = Math.floor(Date.now() / 1000) + deadlineMinutes * 60;
 
-    // Build pool key and determine swap direction
+    // We must rebuild the pool key that matched the quote (best pool)
+    const bestPoolKey = await this.findBestPool(tokenInAddress, tokenOutAddress);
     const { zeroForOne } = this.sortTokens(tokenInAddress, tokenOutAddress);
-    const poolKey = this.buildPoolKey(tokenInAddress, tokenOutAddress);
 
     // Encode V4 swap actions
     const calldata = this.encodeV4SwapCalldata(
-      poolKey,
+      bestPoolKey,
       zeroForOne,
       ethers.BigNumber.from(quote.tokenIn.amountRaw),
       amountOutMin,
@@ -346,7 +455,15 @@ export class UniswapService {
     }
 
     try {
+      // Validation: Check ETH balance for gas
+      const balance = await this.wallet.getBalance();
+      const minBalance = ethers.utils.parseEther("0.001"); // Minimal buffer
+      if (balance.lt(minBalance)) {
+        throw new Error('Relayer wallet has insufficient ETH for gas');
+      }
+
       // Get the route with calldata
+      // NOTE: In production, you might want to re-check the quote here to ensure it hasn't expired or moved significantly
       const route = await this.getRoute(
         tokenInAddress,
         tokenOutAddress,
@@ -383,6 +500,7 @@ export class UniswapService {
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Execute Error:', error);
       return {
         status: 'failed',
         error: message,
@@ -429,20 +547,6 @@ export class UniswapService {
         txHash,
       };
     }
-  }
-
-  /**
-   * Calculate approximate price impact
-   */
-  private calculatePriceImpact(
-    amountIn: ethers.BigNumber,
-    amountOut: ethers.BigNumber,
-    decimalsIn: number,
-    decimalsOut: number
-  ): number {
-    // Simplified price impact calculation
-    // In production, you'd compare against the pool's spot price
-    return 0.1; // Placeholder - actual implementation would query pool state
   }
 }
 

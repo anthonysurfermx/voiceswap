@@ -2,7 +2,6 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import { paymentMiddleware } from 'x402-express';
 import swapRoutes from './routes/swap.js';
 
 const app = express();
@@ -24,63 +23,10 @@ if (!PAYMENT_RECEIVER) {
 // Swap execution network (Unichain)
 const SWAP_NETWORK = (process.env.NETWORK || 'unichain-sepolia') as 'unichain' | 'unichain-sepolia';
 
-// x402 payment network (Base - x402 payments happen on Base, swaps happen on Unichain)
-const PAYMENT_NETWORK: 'base' | 'base-sepolia' = SWAP_NETWORK === 'unichain' ? 'base' : 'base-sepolia';
+// x402 payment network (Arbitrum - x402 payments via Thirdweb)
+const PAYMENT_NETWORK: 'arbitrum' | 'arbitrum-sepolia' = SWAP_NETWORK === 'unichain' ? 'arbitrum' : 'arbitrum-sepolia';
 
-// x402 route pricing configuration
-const x402Routes = {
-  'GET /quote': {
-    price: '$0.001',
-    network: PAYMENT_NETWORK,
-    config: {
-      description: 'Get a swap quote for any token pair on Uniswap V4',
-    },
-  },
-  'POST /quote': {
-    price: '$0.001',
-    network: PAYMENT_NETWORK,
-    config: {
-      description: 'Get a swap quote for any token pair on Uniswap V4 (POST)',
-    },
-  },
-  'POST /route': {
-    price: '$0.005',
-    network: PAYMENT_NETWORK,
-    config: {
-      description: 'Calculate optimal swap route with calldata for execution',
-    },
-  },
-  'POST /execute': {
-    price: '$0.02',
-    network: PAYMENT_NETWORK,
-    config: {
-      description: 'Execute a swap on-chain via the relayer',
-    },
-  },
-  'GET /status/:txHash': {
-    price: '$0.001',
-    network: PAYMENT_NETWORK,
-    config: {
-      description: 'Check the status of a swap transaction',
-    },
-  },
-};
-
-// Facilitator configuration
-// For testnet, use the public facilitator URL
-// For mainnet, import and use the facilitator from @coinbase/x402
-const facilitator = PAYMENT_NETWORK === 'base-sepolia'
-  ? { url: 'https://x402.org/facilitator' as const }
-  : undefined; // Will use CDP facilitator with API keys for mainnet
-
-// Apply x402 payment middleware to protected routes
-app.use(paymentMiddleware(
-  PAYMENT_RECEIVER as `0x${string}`,
-  x402Routes,
-  facilitator
-));
-
-// Mount swap routes
+// Mount swap routes (x402 middleware is applied per-route in swap.ts)
 app.use('/', swapRoutes);
 
 // Root endpoint - service info
