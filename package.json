@@ -19,6 +19,7 @@
     "@uniswap/v4-sdk": "^1.6.3",
     "@uniswap/universal-router-sdk": "^3.3.0",
     "x402-express": "^0.7.3",
+    "thirdweb": "^5.74.0",
     "express": "^4.21.0",
     "ethers": "^5.7.2",
     "dotenv": "^16.4.5",
