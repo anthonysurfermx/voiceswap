@@ -1,0 +1,20 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "QZRTV6CMTT.com.voiceswap.app",
+        "paths": [
+          "/app/*",
+          "/pay/*",
+          "/voiceswap/*"
+        ]
+      }
+    ]
+  },
+  "webcredentials": {
+    "apps": [
+      "QZRTV6CMTT.com.voiceswap.app"
+    ]
+  }
+}
