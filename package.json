@@ -10,29 +10,37 @@
     "start": "node dist/index.js",
     "test": "vitest"
   },
-  "keywords": ["x402", "uniswap", "defi", "swap", "ai-agents", "micropayments"],
+  "keywords": [
+    "x402",
+    "uniswap",
+    "defi",
+    "swap",
+    "ai-agents",
+    "micropayments"
+  ],
   "author": "Anthony Chavez",
   "license": "MIT",
   "dependencies": {
     "@coinbase/x402": "^0.7.3",
     "@uniswap/sdk-core": "^6.0.0",
-    "@uniswap/v4-sdk": "^1.6.3",
     "@uniswap/universal-router-sdk": "^3.3.0",
-    "x402-express": "^0.7.3",
-    "thirdweb": "^5.74.0",
-    "express": "^4.21.0",
-    "ethers": "^5.7.2",
-    "dotenv": "^16.4.5",
+    "@uniswap/v4-sdk": "^1.6.3",
     "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "ethers": "^5.7.2",
+    "express": "^4.21.0",
     "helmet": "^8.0.0",
-    "zod": "^3.23.8",
+    "openai": "^6.10.0",
     "sqlite": "^5.1.1",
-    "sqlite3": "^5.1.7"
+    "sqlite3": "^5.1.7",
+    "thirdweb": "^5.74.0",
+    "x402-express": "^0.7.3",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
     "@types/node": "^22.9.0",
-    "@types/cors": "^2.8.17",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",
     "vitest": "^2.1.4"

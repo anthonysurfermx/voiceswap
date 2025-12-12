@@ -2,38 +2,73 @@
  * x402 Payment Middleware using Thirdweb
  *
  * Handles micropayments for API endpoints using x402 protocol
- * Integrated with Thirdweb for payment facilitation
+ * Payments in USDC on Unichain (mainnet: 130, sepolia: 1301)
  */
 
 import { Request, Response, NextFunction } from 'express';
 import { createThirdwebClient } from 'thirdweb';
 import { facilitator, settlePayment } from 'thirdweb/x402';
-import { arbitrumSepolia, arbitrum } from 'thirdweb/chains';
+import { defineChain } from 'thirdweb/chains';
 
 // Thirdweb client configuration
 const client = createThirdwebClient({
   secretKey: process.env.THIRDWEB_SECRET_KEY!,
 });
 
+// Network configuration - Unichain
+const isProduction = process.env.NETWORK === 'unichain';
+const UNICHAIN_MAINNET_ID = 130;
+const UNICHAIN_SEPOLIA_ID = 1301;
+
+// USDC addresses on Unichain
+const USDC_UNICHAIN_MAINNET = '0x078D782b760474a361dDA0AF3839290b0EF57AD6';
+const USDC_UNICHAIN_SEPOLIA = '0x31d0220469e10c4E71834a79b1f276d740d3768F'; // Testnet USDC
+
+// Payment network configuration
+const paymentChainId = isProduction ? UNICHAIN_MAINNET_ID : UNICHAIN_SEPOLIA_ID;
+const paymentNetwork = defineChain(paymentChainId);
+const usdcAddress = isProduction ? USDC_UNICHAIN_MAINNET : USDC_UNICHAIN_SEPOLIA;
+
+// Server wallet address for receiving payments
+const serverWalletAddress = process.env.PAYMENT_RECEIVER_ADDRESS || process.env.BACKEND_WALLET_ADDRESS!;
+
 // x402 facilitator configuration
 const thirdwebX402Facilitator = facilitator({
   client,
-  serverWalletAddress: process.env.PAYMENT_RECEIVER_ADDRESS || process.env.BACKEND_WALLET_ADDRESS!,
+  serverWalletAddress,
+  waitUntil: 'simulated', // Use simulated for faster testing
 });
 
-// Use Arbitrum Sepolia for testnet, Arbitrum for mainnet
-const isProduction = process.env.NODE_ENV === 'production';
-const paymentNetwork = isProduction ? arbitrum : arbitrumSepolia;
-
 /**
- * Price map for different API endpoints
+ * Price map for different API endpoints (in USDC micro-units)
+ * 1 USDC = 1,000,000 micro-units (6 decimals)
  */
 export const API_PRICES = {
-  '/quote': '$0.001',      // Get quote
-  '/route': '$0.005',      // Get route with calldata
-  '/execute': '$0.02',     // Execute swap
-  '/status': '$0.001',     // Check status
+  '/quote': { display: '$0.001', amount: '1000' },      // 0.001 USDC
+  '/route': { display: '$0.005', amount: '5000' },      // 0.005 USDC
+  '/execute': { display: '$0.02', amount: '20000' },    // 0.02 USDC
+  '/status': { display: '$0.001', amount: '1000' },     // 0.001 USDC
 } as const;
+
+/**
+ * Convert price string to USDC micro-units
+ */
+function priceToAmount(price: string): string {
+  // Check if it's a known endpoint price
+  const endpoint = Object.entries(API_PRICES).find(([_, p]) => p.display === price);
+  if (endpoint) {
+    return endpoint[1].amount;
+  }
+
+  // Parse price string like "$0.02" to micro-units
+  const match = price.match(/\$?([\d.]+)/);
+  if (match) {
+    const usdValue = parseFloat(match[1]);
+    return Math.round(usdValue * 1_000_000).toString();
+  }
+
+  return '1000'; // Default: 0.001 USDC
+}
 
 /**
  * x402 payment middleware factory
@@ -52,6 +87,8 @@ export function requireX402Payment(price: string) {
       const resourceUrl = `${protocol}://${host}${path}`;
 
       console.log(`[x402] Processing payment for ${resourceUrl} (${price})`);
+      console.log(`[x402] Network: Unichain ${isProduction ? 'Mainnet' : 'Sepolia'} (${paymentChainId})`);
+      console.log(`[x402] USDC: ${usdcAddress}`);
 
       // In development mode with strict mode disabled, allow access
       if (process.env.X402_STRICT_MODE !== 'true') {
@@ -60,13 +97,22 @@ export function requireX402Payment(price: string) {
         return;
       }
 
-      // Settle the payment using Thirdweb
+      // Convert price to USDC micro-units
+      const amountInMicroUnits = priceToAmount(price);
+
+      // Settle the payment using Thirdweb x402 on Unichain
       const result = await settlePayment({
         resourceUrl,
         method: req.method as 'GET' | 'POST',
         paymentData,
+        payTo: serverWalletAddress,
         network: paymentNetwork,
-        price,
+        price: {
+          amount: amountInMicroUnits,
+          asset: {
+            address: usdcAddress,
+          },
+        },
         facilitator: thirdwebX402Facilitator,
       });
 
@@ -115,8 +161,6 @@ export function checkGasTank() {
       const gasTankId = req.headers['x-gas-tank'] as string | undefined;
 
       if (gasTankId) {
-        // TODO: Implement gas tank balance checking
-        // For now, just log and continue
         console.log(`[x402] Gas tank detected: ${gasTankId}`);
       }
 
@@ -136,8 +180,11 @@ export function createPaymentInfoHeader(price: string, endpoint: string): Record
   return {
     'X-Payment-Required': 'true',
     'X-Payment-Price': price,
-    'X-Payment-Network': paymentNetwork.name ?? 'arbitrum-sepolia',
-    'X-Payment-Receiver': process.env.PAYMENT_RECEIVER_ADDRESS || process.env.BACKEND_WALLET_ADDRESS || '',
+    'X-Payment-Network': `unichain-${isProduction ? 'mainnet' : 'sepolia'}`,
+    'X-Payment-Chain-Id': paymentChainId.toString(),
+    'X-Payment-Asset': 'USDC',
+    'X-Payment-Asset-Address': usdcAddress,
+    'X-Payment-Receiver': serverWalletAddress,
     'X-Payment-Endpoint': endpoint,
   };
 }
@@ -150,10 +197,24 @@ export function addPaymentInfo() {
   return (req: Request, res: Response, next: NextFunction) => {
     // Add CORS headers for x402
     res.set({
-      'Access-Control-Expose-Headers': 'X-Payment-Required, X-Payment-Price, X-Payment-Network, X-Payment-Receiver',
+      'Access-Control-Expose-Headers': 'X-Payment-Required, X-Payment-Price, X-Payment-Network, X-Payment-Chain-Id, X-Payment-Asset, X-Payment-Asset-Address, X-Payment-Receiver',
     });
 
     next();
+  };
+}
+
+/**
+ * Get x402 configuration info
+ */
+export function getX402Config() {
+  return {
+    network: isProduction ? 'unichain' : 'unichain-sepolia',
+    chainId: paymentChainId,
+    asset: 'USDC',
+    assetAddress: usdcAddress,
+    receiver: serverWalletAddress,
+    prices: API_PRICES,
   };
 }
 
@@ -162,5 +223,6 @@ export default {
   checkGasTank,
   addPaymentInfo,
   createPaymentInfoHeader,
+  getX402Config,
   API_PRICES,
 };

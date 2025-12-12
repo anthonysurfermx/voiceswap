@@ -40,7 +40,7 @@ const validateRequest = (schema: typeof QuoteRequestSchema | typeof RouteRequest
  * Get a quote for a token swap
  * x402 Price: $0.001
  */
-router.get('/quote', requireX402Payment(API_PRICES['/quote']), validateRequest(QuoteRequestSchema), async (req: Request, res: Response) => {
+router.get('/quote', requireX402Payment(API_PRICES['/quote'].display), validateRequest(QuoteRequestSchema), async (req: Request, res: Response) => {
   try {
     const { tokenIn, tokenOut, amountIn } = req.body;
     const uniswap = getUniswapService();
@@ -84,7 +84,7 @@ router.get('/quote', requireX402Payment(API_PRICES['/quote']), validateRequest(Q
  * POST /quote
  * Alternative POST endpoint for quote
  */
-router.post('/quote', requireX402Payment(API_PRICES['/quote']), validateRequest(QuoteRequestSchema), async (req: Request, res: Response) => {
+router.post('/quote', requireX402Payment(API_PRICES['/quote'].display), validateRequest(QuoteRequestSchema), async (req: Request, res: Response) => {
   try {
     const { tokenIn, tokenOut, amountIn } = req.body;
     const uniswap = getUniswapService();
@@ -111,7 +111,7 @@ router.post('/quote', requireX402Payment(API_PRICES['/quote']), validateRequest(
  * Get optimal route with calldata for swap execution
  * x402 Price: $0.005
  */
-router.post('/route', requireX402Payment(API_PRICES['/route']), validateRequest(RouteRequestSchema), async (req: Request, res: Response) => {
+router.post('/route', requireX402Payment(API_PRICES['/route'].display), validateRequest(RouteRequestSchema), async (req: Request, res: Response) => {
   try {
     const { tokenIn, tokenOut, amountIn, recipient, slippageTolerance } = req.body;
     const uniswap = getUniswapService();
@@ -146,7 +146,7 @@ router.post('/route', requireX402Payment(API_PRICES['/route']), validateRequest(
  * Execute a swap on-chain via Thirdweb Engine (with gas sponsorship)
  * x402 Price: $0.02
  */
-router.post('/execute', requireX402Payment(API_PRICES['/execute']), validateRequest(ExecuteRequestSchema), async (req: Request, res: Response) => {
+router.post('/execute', requireX402Payment(API_PRICES['/execute'].display), validateRequest(ExecuteRequestSchema), async (req: Request, res: Response) => {
   try {
     const { tokenIn, tokenOut, amountIn, recipient, slippageTolerance, routingType, uniswapXEncodedOrder, useEngine } = req.body as any;
 
@@ -252,7 +252,7 @@ router.post('/execute', requireX402Payment(API_PRICES['/execute']), validateRequ
  * Supports both Engine queueId and regular txHash
  * x402 Price: $0.001
  */
-router.get('/status/:identifier', requireX402Payment(API_PRICES['/status']), async (req: Request, res: Response) => {
+router.get('/status/:identifier', requireX402Payment(API_PRICES['/status'].display), async (req: Request, res: Response) => {
   try {
     const { identifier } = req.params;
 

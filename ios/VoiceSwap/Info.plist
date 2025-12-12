@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- App Bundle Configuration -->
+    <key>CFBundleDevelopmentRegion</key>
+    <string>$(DEVELOPMENT_LANGUAGE)</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>VoiceSwap</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSRequiresIPhoneOS</key>
+    <true/>
+
+    <!-- Meta Wearables DAT Integration -->
+    <!-- IMPORTANT: Get MetaAppID from "App configuration" in Meta Developer Portal -->
+    <!-- After project setup, copy the ID in iOS Info.plist format -->
+    <key>MWDAT</key>
+    <dict>
+        <key>MetaAppID</key>
+        <string>865317392634736</string>
+        <key>Analytics</key>
+        <dict>
+            <key>OptOut</key>
+            <false/>
+        </dict>
+        <key>AppLinkURLScheme</key>
+        <string>voiceswap://</string>
+    </dict>
+
+    <!-- Required Permissions for VoiceSwap -->
+
+    <!-- Microphone Access (Voice Commands) -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>VoiceSwap needs microphone access to hear your voice commands for payments.</string>
+
+    <!-- Speech Recognition -->
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>VoiceSwap uses speech recognition to understand your payment commands.</string>
+
+    <!-- Camera Access (QR Code Scanning) -->
+    <key>NSCameraUsageDescription</key>
+    <string>VoiceSwap needs camera access to scan merchant QR codes for payments.</string>
+
+    <!-- Bluetooth Access (Meta Ray-Ban Connection) -->
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>VoiceSwap needs Bluetooth to connect to your Meta Ray-Ban glasses.</string>
+    <key>NSBluetoothPeripheralUsageDescription</key>
+    <string>VoiceSwap needs Bluetooth to connect to your Meta Ray-Ban glasses.</string>
+
+    <!-- Face ID / Touch ID (Transaction Security) -->
+    <key>NSFaceIDUsageDescription</key>
+    <string>VoiceSwap uses Face ID to securely confirm high-value transactions.</string>
+
+    <!-- Background Modes -->
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>bluetooth-central</string>
+        <string>audio</string>
+    </array>
+
+    <!-- Supported Interface Orientations -->
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+    </array>
+    <key>UISupportedInterfaceOrientations~ipad</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+
+    <!-- App Transport Security (for local development) -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+        <!-- Remove this in production -->
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+    </dict>
+
+    <!-- Launch Screen -->
+    <key>UILaunchScreen</key>
+    <dict>
+        <key>UIColorName</key>
+        <string>LaunchScreenBackground</string>
+        <key>UIImageName</key>
+        <string>LaunchLogo</string>
+    </dict>
+
+    <!-- Status Bar -->
+    <key>UIStatusBarStyle</key>
+    <string>UIStatusBarStyleLightContent</string>
+    <key>UIViewControllerBasedStatusBarAppearance</key>
+    <true/>
+
+    <!-- URL Schemes (Deep Links) -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.voiceswap.app</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>voiceswap</string>
+            </array>
+        </dict>
+    </array>
+
+    <!-- Associated Domains (Universal Links) -->
+    <!-- NOTE: Also add "Associated Domains" capability in Xcode with: -->
+    <!-- applinks:voiceswap.cc -->
+    <!-- webcredentials:voiceswap.cc -->
+</dict>
+</plist>

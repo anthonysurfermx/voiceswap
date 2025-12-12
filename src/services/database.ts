@@ -36,22 +36,22 @@ export async function initDatabase(): Promise<void> {
       routing_type TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
-      confirmed_at INTEGER,
-
-      INDEX idx_user_address (user_address),
-      INDEX idx_status (status),
-      INDEX idx_created_at (created_at)
+      confirmed_at INTEGER
     );
+
+    CREATE INDEX IF NOT EXISTS idx_tx_user_address ON transactions(user_address);
+    CREATE INDEX IF NOT EXISTS idx_tx_status ON transactions(status);
+    CREATE INDEX IF NOT EXISTS idx_tx_created_at ON transactions(created_at);
 
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       wallet_address TEXT UNIQUE NOT NULL,
       email TEXT,
       created_at INTEGER NOT NULL,
-      last_login INTEGER NOT NULL,
-
-      INDEX idx_wallet_address (wallet_address)
+      last_login INTEGER NOT NULL
     );
+
+    CREATE INDEX IF NOT EXISTS idx_users_wallet ON users(wallet_address);
   `);
 
   console.log('[Database] Initialized at:', dbPath);
