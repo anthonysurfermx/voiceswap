@@ -50,8 +50,8 @@ class ThirdwebAPIClient {
     });
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-      throw new Error(`Thirdweb API error: ${error.error || response.statusText}`);
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' })) as { error?: string };
+      throw new Error(`Thirdweb API error: ${errorData.error || response.statusText}`);
     }
 
     return response.json();
@@ -70,6 +70,44 @@ class ThirdwebAPIClient {
 }
 
 const client = new ThirdwebAPIClient();
+
+// API Response types
+interface AccountsResponse {
+  result?: string[];
+}
+
+interface CreateSmartWalletResponse {
+  result: {
+    smartWalletAddress: string;
+  };
+}
+
+interface TransactionResponse {
+  queueId?: string;
+  id?: string;
+  transactionHash?: string;
+  txHash?: string;
+}
+
+interface TransactionStatusResponse {
+  result: {
+    queueId: string;
+    status: 'queued' | 'sent' | 'mined' | 'errored' | 'cancelled';
+    transactionHash?: string;
+    blockNumber?: number;
+    errorMessage?: string;
+  };
+}
+
+interface TransactionListResponse {
+  result?: unknown[];
+}
+
+interface BalanceResponse {
+  result: {
+    balance: string;
+  };
+}
 
 /**
  * Smart account info
@@ -109,7 +147,7 @@ export async function getOrCreateSmartAccount(userAddress: string): Promise<Smar
     // Engine endpoint: GET /backend-wallet/{chain}/{address}/get-all-accounts
     const accounts = await client.get(
       `/backend-wallet/${CHAIN_ID}/${userAddress}/get-all-accounts`
-    );
+    ) as AccountsResponse;
 
     if (accounts.result && accounts.result.length > 0) {
       const account = accounts.result[0];
@@ -131,7 +169,7 @@ export async function getOrCreateSmartAccount(userAddress: string): Promise<Smar
       {
         account_admin_address: userAddress,
       }
-    );
+    ) as CreateSmartWalletResponse;
 
     const smartAccountAddress = createResult.result.smartWalletAddress;
 
@@ -177,7 +215,7 @@ export async function executeSwapViaEngine(params: {
       ],
       // Optional: enable gas sponsorship (paymaster)
       sponsorGas: true,
-    });
+    }) as TransactionResponse;
 
     console.log(`[Thirdweb] Transaction submitted:`, result);
 
@@ -205,7 +243,7 @@ export async function executeSwapViaEngine(params: {
  */
 export async function checkTransactionStatus(queueId: string): Promise<EngineTransactionResult> {
   try {
-    const result = await client.get(`/transaction/status/${queueId}`);
+    const result = await client.get(`/transaction/status/${queueId}`) as TransactionStatusResponse;
 
     return {
       queueId: result.result.queueId,
@@ -223,11 +261,11 @@ export async function checkTransactionStatus(queueId: string): Promise<EngineTra
 /**
  * Get all transactions for a smart account (for history)
  */
-export async function getAccountTransactions(smartAccountAddress: string): Promise<any[]> {
+export async function getAccountTransactions(smartAccountAddress: string): Promise<unknown[]> {
   try {
     const result = await client.get(
       `/transaction/get-all?accountAddress=${smartAccountAddress}`
-    );
+    ) as TransactionListResponse;
 
     return result.result || [];
   } catch (error) {
@@ -291,13 +329,13 @@ export async function getBackendWalletBalance(): Promise<{
   try {
     const result = await client.get(
       `/backend-wallet/${CHAIN_ID}/${BACKEND_WALLET_ADDRESS}/get-balance`
-    );
+    ) as BalanceResponse;
 
     const balanceWei = result.result.balance;
     const balanceEth = ethers.utils.formatEther(balanceWei);
 
     return {
-      address: BACKEND_WALLET_ADDRESS!,
+      address: BACKEND_WALLET_ADDRESS || '',
       balance: balanceWei,
       balanceEth,
     };

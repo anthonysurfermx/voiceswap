@@ -136,8 +136,8 @@ export function createPaymentInfoHeader(price: string, endpoint: string): Record
   return {
     'X-Payment-Required': 'true',
     'X-Payment-Price': price,
-    'X-Payment-Network': paymentNetwork.name,
-    'X-Payment-Receiver': process.env.PAYMENT_RECEIVER_ADDRESS || process.env.BACKEND_WALLET_ADDRESS!,
+    'X-Payment-Network': paymentNetwork.name ?? 'arbitrum-sepolia',
+    'X-Payment-Receiver': process.env.PAYMENT_RECEIVER_ADDRESS || process.env.BACKEND_WALLET_ADDRESS || '',
     'X-Payment-Endpoint': endpoint,
   };
 }

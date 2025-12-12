@@ -3,6 +3,8 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import swapRoutes from './routes/swap.js';
+import eventsRoutes from './routes/events.js';
+import { initDatabase, closeDatabase } from './services/database.js';
 
 const app = express();
 const PORT = process.env.PORT || 4021;
@@ -13,7 +15,7 @@ app.use(cors());
 app.use(express.json());
 
 // Get payment receiver address from env
-const PAYMENT_RECEIVER = process.env.PAYMENT_RECEIVER_ADDRESS;
+const PAYMENT_RECEIVER = process.env.PAYMENT_RECEIVER_ADDRESS ?? '';
 if (!PAYMENT_RECEIVER) {
   console.error('❌ PAYMENT_RECEIVER_ADDRESS not set in environment variables');
   console.error('   Please set your Ethereum address to receive x402 payments');
@@ -28,6 +30,9 @@ const PAYMENT_NETWORK: 'arbitrum' | 'arbitrum-sepolia' = SWAP_NETWORK === 'unich
 
 // Mount swap routes (x402 middleware is applied per-route in swap.ts)
 app.use('/', swapRoutes);
+
+// Mount SSE events routes for real-time transaction monitoring
+app.use('/events', eventsRoutes);
 
 // Root endpoint - service info
 app.get('/', (_req, res) => {
@@ -87,9 +92,15 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
   });
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`
+// Initialize database and start server
+async function startServer() {
+  try {
+    // Initialize SQLite database
+    await initDatabase();
+    console.log('[Database] SQLite initialized successfully');
+
+    app.listen(PORT, () => {
+      console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║                                                               ║
 ║   🔄 x402 Swap Executor v2.0 (Uniswap V4 on Unichain)        ║
@@ -109,10 +120,32 @@ app.listen(PORT, () => {
 ║   ├─ POST /execute  ($0.02)  - Execute swap on-chain         ║
 ║   ├─ GET  /status   ($0.001) - Check transaction status      ║
 ║   ├─ GET  /tokens   (FREE)   - List supported tokens         ║
+║   ├─ GET  /events   (FREE)   - SSE transaction monitoring    ║
 ║   └─ GET  /health   (FREE)   - Health check                  ║
 ║                                                               ║
 ╚═══════════════════════════════════════════════════════════════╝
-  `);
-});
+      `);
+    });
+
+    // Graceful shutdown
+    process.on('SIGINT', async () => {
+      console.log('\n[Server] Shutting down gracefully...');
+      await closeDatabase();
+      process.exit(0);
+    });
+
+    process.on('SIGTERM', async () => {
+      console.log('\n[Server] Received SIGTERM, shutting down...');
+      await closeDatabase();
+      process.exit(0);
+    });
+
+  } catch (error) {
+    console.error('[Server] Failed to start:', error);
+    process.exit(1);
+  }
+}
+
+startServer();
 
 export default app;
