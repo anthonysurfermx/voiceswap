@@ -1,6 +1,7 @@
 import { ethers } from 'ethers';
 import { getNetworkConfig, FEE_TIERS, type NetworkType } from '../config/networks.js';
 import type { QuoteResponse, RouteResponse, ExecuteResponse, StatusResponse } from '../types/api.js';
+import { multicall, encodeCall, decodeResult } from './multicall.js';
 
 // V4 Quoter ABI
 const V4_QUOTER_ABI = [
@@ -125,44 +126,57 @@ export class UniswapService {
 
   /**
    * Find the best pool for the pair by checking liquidity across tiers
+   * OPTIMIZED: Uses Multicall3 to batch all liquidity checks in a single RPC call
    */
   private async findBestPool(tokenIn: string, tokenOut: string): Promise<PoolKey> {
-    const stateView = new ethers.Contract(
-      this.networkConfig.contracts.STATE_VIEW,
-      STATE_VIEW_ABI,
-      this.provider
-    );
-
-    let bestPoolKey: PoolKey | null = null;
-    let maxLiquidity = ethers.BigNumber.from(0);
-
-    // Check all fee tiers
+    const stateViewInterface = new ethers.utils.Interface(STATE_VIEW_ABI);
     const tiers = Object.values(FEE_TIERS);
 
-    await Promise.all(tiers.map(async (tier) => {
-      try {
-        const poolKey = this.buildPoolKey(tokenIn, tokenOut, tier);
-        const poolId = this.getPoolId(poolKey);
+    // Build pool keys for all tiers
+    const poolKeys = tiers.map(tier => this.buildPoolKey(tokenIn, tokenOut, tier));
+    const poolIds = poolKeys.map(key => this.getPoolId(key));
 
-        // Check if pool has liquidity
-        const liquidity = await stateView.getLiquidity(poolId);
-
-        if (liquidity.gt(maxLiquidity)) {
-          maxLiquidity = liquidity;
-          bestPoolKey = poolKey;
-        }
-      } catch (error) {
-        // Pool might not exist or error fetching, ignore
-        // console.debug(`Failed to check pool for tier ${tier.fee}`, error);
-      }
+    // Prepare multicall for all liquidity checks
+    const calls = poolIds.map(poolId => ({
+      target: this.networkConfig.contracts.STATE_VIEW,
+      allowFailure: true, // Don't fail if pool doesn't exist
+      callData: encodeCall(stateViewInterface, 'getLiquidity', [poolId]),
     }));
 
-    if (!bestPoolKey) {
-      // Default to MEDIUM if no liquidity found anywhere (fallback)
+    try {
+      // Execute all calls in a single RPC request (HUGE performance gain)
+      const results = await multicall(this.provider, calls);
+
+      // Find pool with max liquidity
+      let bestPoolKey: PoolKey | null = null;
+      let maxLiquidity = ethers.BigNumber.from(0);
+
+      results.forEach((result, index) => {
+        if (result.success) {
+          try {
+            const [liquidity] = decodeResult(stateViewInterface, 'getLiquidity', result.returnData);
+
+            if (liquidity.gt(maxLiquidity)) {
+              maxLiquidity = liquidity;
+              bestPoolKey = poolKeys[index];
+            }
+          } catch (error) {
+            // Ignore decode errors
+          }
+        }
+      });
+
+      // Default to MEDIUM if no liquidity found
+      if (!bestPoolKey) {
+        return this.buildPoolKey(tokenIn, tokenOut, FEE_TIERS.MEDIUM);
+      }
+
+      return bestPoolKey;
+
+    } catch (error) {
+      console.warn('Multicall failed, falling back to MEDIUM tier:', error);
       return this.buildPoolKey(tokenIn, tokenOut, FEE_TIERS.MEDIUM);
     }
-
-    return bestPoolKey;
   }
 
   /**
