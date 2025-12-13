@@ -5,6 +5,7 @@
  */
 
 import { Router } from 'express';
+import { ethers } from 'ethers';
 import {
   parseQRCode,
   getWalletBalances,
@@ -26,6 +27,9 @@ import {
   extractPaymentDetails,
   healthCheck as openaiHealthCheck,
 } from '../services/openai.js';
+import { getUniswapService } from '../services/uniswap.js';
+import thirdwebEngine from '../services/thirdwebEngine.js';
+import { saveTransaction } from '../services/database.js';
 
 const router = Router();
 
@@ -217,8 +221,11 @@ router.post('/prepare', async (req, res) => {
  * For VoiceSwap, we use a server-side wallet to execute transfers.
  * This allows gasless transactions for the user.
  *
+ * IMPORTANT: Uses atomic batch transactions when swap is needed.
+ * If Swap + Transfer, both succeed or both fail together.
+ *
  * Body:
- * - userAddress: User's wallet address (must have USDC balance)
+ * - userAddress: User's wallet address
  * - merchantWallet: Merchant's wallet address
  * - amount: Amount in USDC
  */
@@ -233,77 +240,153 @@ router.post('/execute', async (req, res) => {
       });
     }
 
+    // Validate addresses
+    if (!ethers.utils.isAddress(userAddress) || !ethers.utils.isAddress(merchantWallet)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid wallet address format',
+      });
+    }
+
+    console.log(`[VoiceSwap] Payment request: ${amount} USDC from ${userAddress} to ${merchantWallet}`);
+
     // Get current balances
     const balances = await getWalletBalances(userAddress);
     const swapInfo = determineSwapToken(balances, amount);
 
-    // If user doesn't have enough USDC, we can't execute
-    if (!swapInfo.hasEnoughUSDC) {
-      // Need to swap first - return swap instructions
-      if (!swapInfo.swapFrom) {
-        return res.status(400).json({
+    // Convert amount to USDC units (6 decimals)
+    const amountInUnits = ethers.utils.parseUnits(amount.toString(), 6).toString();
+
+    // SCENARIO 1: User has enough USDC - Direct transfer
+    if (swapInfo.hasEnoughUSDC) {
+      console.log(`[VoiceSwap] User has USDC, executing direct transfer`);
+
+      try {
+        const result = await thirdwebEngine.executeERC20Transfer({
+          tokenAddress: SUPPORTED_TOKENS.USDC,
+          to: merchantWallet,
+          amount: amountInUnits,
+        });
+
+        // Save to database
+        await saveTransaction({
+          queueId: result.queueId,
+          userAddress,
+          tokenIn: SUPPORTED_TOKENS.USDC,
+          tokenOut: SUPPORTED_TOKENS.USDC,
+          amountIn: amount.toString(),
+          routingType: 'direct_transfer',
+        });
+
+        return res.json({
+          success: true,
+          data: {
+            action: 'transfer',
+            status: 'queued',
+            queueId: result.queueId,
+            txHash: result.transactionHash,
+            token: SUPPORTED_TOKENS.USDC,
+            tokenSymbol: 'USDC',
+            amount,
+            to: merchantWallet,
+            from: userAddress,
+            explorerUrl: result.transactionHash
+              ? `https://uniscan.xyz/tx/${result.transactionHash}`
+              : undefined,
+            message: `Payment of ${amount} USDC queued for ${merchantWallet.slice(0, 6)}...${merchantWallet.slice(-4)}`,
+          },
+        });
+      } catch (error) {
+        console.error('[VoiceSwap] Direct transfer failed:', error);
+        return res.status(500).json({
           success: false,
-          error: 'Insufficient funds. No swappable tokens available.',
+          error: `Transfer failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        });
+      }
+    }
+
+    // SCENARIO 2: User needs to swap first
+    if (!swapInfo.swapFrom) {
+      return res.status(400).json({
+        success: false,
+        error: 'Insufficient funds. You need ETH, WETH, or USDC on Unichain.',
+      });
+    }
+
+    console.log(`[VoiceSwap] User needs swap: ${swapInfo.swapFromSymbol} → USDC`);
+
+    // Determine token input address
+    const tokenIn = swapInfo.swapFrom === 'NATIVE_ETH'
+      ? SUPPORTED_TOKENS.WETH // For native ETH, we use WETH in the swap
+      : swapInfo.swapFrom;
+
+    try {
+      // Get Uniswap route with calldata
+      const uniswap = getUniswapService();
+      const route = await uniswap.getRoute(
+        tokenIn,
+        SUPPORTED_TOKENS.USDC,
+        amountInUnits, // Amount of USDC we want out
+        merchantWallet, // Recipient gets USDC directly
+        0.5 // 0.5% slippage
+      );
+
+      if (!route.calldata) {
+        return res.status(500).json({
+          success: false,
+          error: 'Failed to generate swap route',
         });
       }
 
-      // For now, return swap + transfer instructions
-      // TODO: Implement swap execution via Uniswap
-      res.json({
+      // For atomic execution: Swap outputs directly to merchant
+      // This is a single transaction that does swap AND sends to merchant
+      console.log(`[VoiceSwap] Executing atomic swap+transfer via Uniswap`);
+
+      const result = await thirdwebEngine.executeSwapViaEngine({
+        userAddress,
+        calldata: route.calldata,
+        value: swapInfo.swapFrom === 'NATIVE_ETH' ? route.value : '0',
+      });
+
+      // Save to database
+      await saveTransaction({
+        queueId: result.queueId,
+        userAddress,
+        tokenIn,
+        tokenOut: SUPPORTED_TOKENS.USDC,
+        amountIn: route.tokenIn?.amount || '0',
+        routingType: 'swap_and_transfer',
+      });
+
+      return res.json({
         success: true,
         data: {
           action: 'swap_and_transfer',
-          status: 'pending_swap',
-          steps: [
-            {
-              step: 1,
-              action: 'swap',
-              tokenIn: swapInfo.swapFrom,
-              tokenInSymbol: swapInfo.swapFromSymbol,
-              tokenOut: SUPPORTED_TOKENS.USDC,
-              tokenOutSymbol: 'USDC',
-              amountOut: amount,
-            },
-            {
-              step: 2,
-              action: 'transfer',
-              token: SUPPORTED_TOKENS.USDC,
-              amount,
-              to: merchantWallet,
-            },
-          ],
-          message: `Need to swap ${swapInfo.swapFromSymbol} to USDC first. Swap feature coming soon!`,
+          status: 'queued',
+          queueId: result.queueId,
+          txHash: result.transactionHash,
+          swap: {
+            tokenIn,
+            tokenInSymbol: swapInfo.swapFromSymbol,
+            tokenOut: SUPPORTED_TOKENS.USDC,
+            tokenOutSymbol: 'USDC',
+            amountOut: amount,
+          },
+          to: merchantWallet,
+          from: userAddress,
+          explorerUrl: result.transactionHash
+            ? `https://uniscan.xyz/tx/${result.transactionHash}`
+            : undefined,
+          message: `Swapping ${swapInfo.swapFromSymbol} to ${amount} USDC and sending to ${merchantWallet.slice(0, 6)}...${merchantWallet.slice(-4)}`,
         },
       });
-      return;
+    } catch (error) {
+      console.error('[VoiceSwap] Swap+Transfer failed:', error);
+      return res.status(500).json({
+        success: false,
+        error: `Swap failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      });
     }
-
-    // User has enough USDC - execute direct transfer
-    // For demo purposes, we simulate success
-    // In production, this would use the backend wallet to relay the transaction
-    // or use x402 to pay for the transaction
-
-    console.log(`[VoiceSwap] Executing payment: ${amount} USDC from ${userAddress} to ${merchantWallet}`);
-
-    // Generate a mock transaction hash for demo
-    // In production, this would be a real tx hash from the blockchain
-    const mockTxHash = `0x${Date.now().toString(16)}${'0'.repeat(48)}`.slice(0, 66);
-
-    res.json({
-      success: true,
-      data: {
-        action: 'transfer',
-        status: 'executed',
-        token: SUPPORTED_TOKENS.USDC,
-        tokenSymbol: 'USDC',
-        amount,
-        to: merchantWallet,
-        from: userAddress,
-        txHash: mockTxHash,
-        explorerUrl: `https://uniscan.xyz/tx/${mockTxHash}`,
-        message: `Successfully sent ${amount} USDC to ${merchantWallet.slice(0, 6)}...${merchantWallet.slice(-4)}`,
-      },
-    });
 
   } catch (error) {
     console.error('[VoiceSwap] Execute error:', error);

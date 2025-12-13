@@ -239,6 +239,96 @@ export async function executeSwapViaEngine(params: {
 }
 
 /**
+ * Execute a batch of transactions atomically via Thirdweb
+ *
+ * This ensures all transactions succeed or all fail together.
+ * Perfect for Swap + Transfer scenarios.
+ */
+export async function executeBatchTransactions(params: {
+  transactions: Array<{
+    to: string;
+    data: string;
+    value?: string;
+  }>;
+  description?: string;
+}): Promise<EngineTransactionResult> {
+  try {
+    console.log(`[Thirdweb] Executing batch of ${params.transactions.length} transactions`);
+    if (params.description) {
+      console.log(`[Thirdweb] Description: ${params.description}`);
+    }
+
+    // Execute batch via Thirdweb API
+    const result = await client.post('/transactions', {
+      chainId: CHAIN_ID.toString(),
+      from: BACKEND_WALLET_ADDRESS,
+      transactions: params.transactions.map(tx => ({
+        type: 'raw',
+        to: tx.to,
+        data: tx.data,
+        value: tx.value || '0',
+      })),
+      sponsorGas: true,
+    }) as TransactionResponse;
+
+    console.log(`[Thirdweb] Batch submitted:`, result);
+
+    return {
+      queueId: result.queueId || result.id || `batch-${Date.now()}`,
+      status: 'queued',
+      transactionHash: result.transactionHash || result.txHash,
+    };
+  } catch (error) {
+    console.error('[Thirdweb] Batch execution failed:', error);
+    throw new Error(`Batch execution failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+/**
+ * Execute a simple ERC20 transfer via Thirdweb
+ */
+export async function executeERC20Transfer(params: {
+  tokenAddress: string;
+  to: string;
+  amount: string; // Amount in wei/smallest unit
+}): Promise<EngineTransactionResult> {
+  try {
+    console.log(`[Thirdweb] Transferring ${params.amount} tokens to ${params.to}`);
+
+    // ERC20 transfer calldata
+    const iface = new ethers.utils.Interface([
+      'function transfer(address to, uint256 amount) returns (bool)',
+    ]);
+    const calldata = iface.encodeFunctionData('transfer', [params.to, params.amount]);
+
+    const result = await client.post('/transactions', {
+      chainId: CHAIN_ID.toString(),
+      from: BACKEND_WALLET_ADDRESS,
+      transactions: [
+        {
+          type: 'raw',
+          to: params.tokenAddress,
+          data: calldata,
+          value: '0',
+        },
+      ],
+      sponsorGas: true,
+    }) as TransactionResponse;
+
+    console.log(`[Thirdweb] Transfer submitted:`, result);
+
+    return {
+      queueId: result.queueId || result.id || `transfer-${Date.now()}`,
+      status: 'queued',
+      transactionHash: result.transactionHash || result.txHash,
+    };
+  } catch (error) {
+    console.error('[Thirdweb] Transfer failed:', error);
+    throw new Error(`Transfer failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+/**
  * Check transaction status from Engine queue
  */
 export async function checkTransactionStatus(queueId: string): Promise<EngineTransactionResult> {
@@ -349,6 +439,8 @@ export async function getBackendWalletBalance(): Promise<{
 export default {
   getOrCreateSmartAccount,
   executeSwapViaEngine,
+  executeBatchTransactions,
+  executeERC20Transfer,
   checkTransactionStatus,
   getAccountTransactions,
   cancelTransaction,
