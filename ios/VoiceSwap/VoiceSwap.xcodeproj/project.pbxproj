@@ -13,6 +13,7 @@
 		1A0000070000000000000001 /* VoiceSwapAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000080000000000000001 /* VoiceSwapAPIClient.swift */; };
 		1A0000090000000000000001 /* VoiceSwapViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000A0000000000000001 /* VoiceSwapViewModel.swift */; };
 		1A00000B0000000000000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1A00000C0000000000000001 /* Assets.xcassets */; };
+		1A00000D0000000000000001 /* WalletConnectManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000F0000000000000001 /* WalletConnectManager.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -23,6 +24,7 @@
 		1A00000A0000000000000001 /* VoiceSwapViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSwapViewModel.swift; sourceTree = "<group>"; };
 		1A00000C0000000000000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		1A00000E0000000000000001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		1A00000F0000000000000001 /* WalletConnectManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletConnectManager.swift; sourceTree = "<group>"; };
 		1A0000100000000000000001 /* VoiceSwap.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VoiceSwap.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A55428F42EECA1260047C027 /* MetaGlassesManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetaGlassesManager.swift; sourceTree = "<group>"; };
 		A55428F52EECA1260047C027 /* VoiceSwapAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSwapAPIClient.swift; sourceTree = "<group>"; };
@@ -75,8 +77,17 @@
 				1A0000020000000000000001 /* VoiceSwapApp.swift */,
 				1A0000340000000000000001 /* Views */,
 				1A0000350000000000000001 /* MetaWearables */,
+				1A0000360000000000000001 /* Wallet */,
 			);
 			path = Sources;
+			sourceTree = "<group>";
+		};
+		1A0000360000000000000001 /* Wallet */ = {
+			isa = PBXGroup;
+			children = (
+				1A00000F0000000000000001 /* WalletConnectManager.swift */,
+			);
+			path = Wallet;
 			sourceTree = "<group>";
 		};
 		1A0000340000000000000001 /* Views */ = {
@@ -204,6 +215,7 @@
 				1A0000050000000000000001 /* MetaGlassesManager.swift in Sources */,
 				1A0000070000000000000001 /* VoiceSwapAPIClient.swift in Sources */,
 				1A0000090000000000000001 /* VoiceSwapViewModel.swift in Sources */,
+				1A00000D0000000000000001 /* WalletConnectManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

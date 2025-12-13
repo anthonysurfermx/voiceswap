@@ -91,10 +91,14 @@ public struct MaxPayable: Decodable {
 
 public struct ExecutePaymentResponse: Decodable {
     public let action: String
+    public let status: String?
     public let token: String?
+    public let tokenSymbol: String?
     public let amount: String?
     public let to: String?
     public let from: String?
+    public let txHash: String?
+    public let explorerUrl: String?
     public let message: String
     public let steps: [PaymentStep]?
 }
@@ -116,7 +120,7 @@ public struct VoiceCommandResponse: Decodable {
     public let sessionId: String?
 }
 
-public struct PaymentSession: Decodable {
+public struct PaymentSession: Codable {
     public let id: String
     public let state: String
     public let userAddress: String
@@ -129,6 +133,24 @@ public struct PaymentSession: Decodable {
     public let updatedAt: Int
     public let txHash: String?
     public let error: String?
+}
+
+public struct PaymentDetailsResponse: Decodable {
+    public let amount: String?
+    public let currency: String?
+    public let recipient: String?
+    public let confidence: Double?
+}
+
+public struct SessionUpdateResponse: Decodable {
+    public let success: Bool
+    public let sessionId: String?
+}
+
+public struct HealthResponse: Decodable {
+    public let status: String
+    public let timestamp: Int?
+    public let openai: String?
 }
 
 // MARK: - API Client
@@ -145,7 +167,15 @@ public actor VoiceSwapAPIClient {
     // MARK: - Initialization
 
     private init() {
-        self.baseURL = ProcessInfo.processInfo.environment["VOICESWAP_API_URL"] ?? "http://localhost:4021"
+        // Use your Mac's local IP when testing on real device
+        // Change this to your actual local IP or production URL
+        #if DEBUG
+        // For simulator: localhost works
+        // For real device: use your Mac's IP (e.g., "http://192.168.1.X:4021")
+        self.baseURL = ProcessInfo.processInfo.environment["VOICESWAP_API_URL"] ?? "http://192.168.100.9:4021"
+        #else
+        self.baseURL = "https://voiceswap.cc"
+        #endif
 
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
@@ -182,7 +212,7 @@ public actor VoiceSwapAPIClient {
     }
 
     /// Extract payment details from natural language
-    public func extractPaymentDetails(transcript: String) async throws -> APIResponse<[String: Any]> {
+    public func extractPaymentDetails(transcript: String) async throws -> APIResponse<PaymentDetailsResponse> {
         let body: [String: Any] = ["transcript": transcript]
         return try await post("/voiceswap/ai/payment-details", body: body)
     }
@@ -261,18 +291,11 @@ public actor VoiceSwapAPIClient {
     /// Update session state
     public func updateSession(
         sessionId: String,
-        session: PaymentSession,
-        newState: String,
-        updates: [String: Any]?
-    ) async throws -> APIResponse<[String: Any]> {
-        var body: [String: Any] = [
-            "session": session,
+        newState: String
+    ) async throws -> APIResponse<SessionUpdateResponse> {
+        let body: [String: Any] = [
             "newState": newState
         ]
-
-        if let updates = updates {
-            body["updates"] = updates
-        }
 
         return try await put("/voiceswap/session/\(sessionId)", body: body)
     }
@@ -280,12 +303,12 @@ public actor VoiceSwapAPIClient {
     // MARK: - Health Check
 
     /// Check AI health
-    public func checkAIHealth() async throws -> APIResponse<[String: Any]> {
+    public func checkAIHealth() async throws -> APIResponse<HealthResponse> {
         return try await get("/voiceswap/ai/health")
     }
 
     /// Check overall service health
-    public func checkHealth() async throws -> APIResponse<[String: Any]> {
+    public func checkHealth() async throws -> APIResponse<HealthResponse> {
         return try await get("/health")
     }
 

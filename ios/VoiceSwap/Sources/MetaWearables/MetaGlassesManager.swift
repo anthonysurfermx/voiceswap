@@ -20,7 +20,7 @@ import Speech
 
 // MARK: - Meta Glasses Connection State
 
-public enum GlassesConnectionState {
+public enum GlassesConnectionState: Equatable {
     case disconnected
     case searching
     case connecting
@@ -92,7 +92,11 @@ public class MetaGlassesManager: NSObject, ObservableObject {
     // MARK: - Initialization
 
     private override init() {
-        self.apiBaseURL = ProcessInfo.processInfo.environment["VOICESWAP_API_URL"] ?? "http://localhost:4021"
+        #if DEBUG
+        self.apiBaseURL = ProcessInfo.processInfo.environment["VOICESWAP_API_URL"] ?? "http://192.168.100.9:4021"
+        #else
+        self.apiBaseURL = "https://voiceswap.cc"
+        #endif
         super.init()
         setupSpeechRecognition()
     }
@@ -124,14 +128,18 @@ public class MetaGlassesManager: NSObject, ObservableObject {
 
     /// Start listening for voice commands
     public func startListening() {
-        guard connectionState == .connected else {
-            print("[MetaGlasses] Cannot start listening - not connected")
-            return
+        // Allow listening even without glasses (use iPhone mic)
+        if connectionState == .disconnected {
+            // Auto-connect in iPhone mode
+            connectionState = .connected
+            batteryLevel = 100
+            print("[MetaGlasses] Using iPhone microphone mode")
         }
 
         do {
             try startSpeechRecognition()
             isListening = true
+            isWakeWordDetected = true // Skip wake word in direct mode
             print("[MetaGlasses] Started listening for voice commands")
         } catch {
             print("[MetaGlasses] Failed to start listening: \(error)")

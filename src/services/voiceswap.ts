@@ -7,22 +7,34 @@
  * 3. Swap to USDC if needed
  * 4. Transfer USDC to merchant
  *
- * Network: Unichain Mainnet (Chain ID: 130)
+ * Network: Unichain Mainnet (Chain ID: 130) or Sepolia (Chain ID: 1301)
  * Output Token: USDC only
  */
 
 import { ethers } from 'ethers';
 
-// Network Configuration
-const UNICHAIN_RPC = process.env.UNICHAIN_RPC_URL || 'https://mainnet.unichain.org';
-const CHAIN_ID = 130;
+// Network Configuration - support both mainnet and sepolia
+const IS_SEPOLIA = process.env.NETWORK === 'unichain-sepolia';
+const UNICHAIN_RPC = IS_SEPOLIA
+  ? (process.env.UNICHAIN_SEPOLIA_RPC_URL || 'https://sepolia.unichain.org')
+  : (process.env.UNICHAIN_RPC_URL || 'https://mainnet.unichain.org');
+const CHAIN_ID = IS_SEPOLIA ? 1301 : 130;
 
-// Token Addresses on Unichain Mainnet
-const TOKENS = {
+// Token Addresses - different on mainnet vs sepolia
+const TOKENS_MAINNET = {
   USDC: '0x078D782b760474a361dDA0AF3839290b0EF57AD6',
   WETH: '0x4200000000000000000000000000000000000006',
-  // Native ETH is represented as address(0) in some contexts
 } as const;
+
+// Sepolia tokens (may need to deploy test tokens or use existing ones)
+const TOKENS_SEPOLIA = {
+  USDC: '0x31d0220469e10c4E71834a79b1f276d740d3768F', // Unichain Sepolia USDC
+  WETH: '0x4200000000000000000000000000000000000006', // WETH is same address
+} as const;
+
+const TOKENS = IS_SEPOLIA ? TOKENS_SEPOLIA : TOKENS_MAINNET;
+
+console.log(`[VoiceSwap] Network: ${IS_SEPOLIA ? 'Unichain Sepolia' : 'Unichain Mainnet'} (Chain ID: ${CHAIN_ID})`);
 
 // ERC20 ABI (minimal)
 const ERC20_ABI = [
