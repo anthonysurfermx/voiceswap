@@ -264,15 +264,27 @@ public class VoiceSwapViewModel: ObservableObject {
             )
 
             if let data = response.data {
-                // For now, we just show success (actual execution would require wallet signing)
-                flowState = .success(txHash: "pending")
-                glassesManager.speak("Payment prepared successfully. \(data.message)", language: "en-US")
-                glassesManager.triggerHaptic(.success)
+                // Check if transaction was executed
+                if data.status == "executed", let txHash = data.txHash {
+                    flowState = .success(txHash: txHash)
+                    glassesManager.speak("Payment successful! \(data.message)", language: "en-US")
+                    glassesManager.triggerHaptic(.success)
+                } else if data.status == "pending_swap" {
+                    // Swap needed but not yet implemented
+                    flowState = .failed(error: data.message)
+                    glassesManager.speak(data.message, language: "en-US")
+                    glassesManager.triggerHaptic(.error)
+                } else {
+                    flowState = .success(txHash: data.txHash ?? "pending")
+                    glassesManager.speak(data.message, language: "en-US")
+                    glassesManager.triggerHaptic(.success)
+                }
 
                 // Clear payment context
                 clearPaymentContext()
 
-                // Refresh balances
+                // Refresh balances after a short delay
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
                 await refreshBalances()
             }
         } catch {
