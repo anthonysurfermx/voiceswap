@@ -232,6 +232,7 @@ function detectLanguage(text: string): 'en' | 'es' | 'other' {
  */
 export function generateResponse(intent: ParsedIntent, context?: {
   balance?: string;
+  ethBalance?: string;
   merchantName?: string;
   txHash?: string;
   error?: string;
@@ -250,10 +251,31 @@ export function generateResponse(intent: ParsedIntent, context?: {
         : 'Please scan the merchant QR code to continue.';
 
     case 'balance':
-      if (context?.balance) {
+      if (context?.balance !== undefined || context?.ethBalance !== undefined) {
+        const usdc = parseFloat(context.balance || '0');
+        const eth = parseFloat(context.ethBalance || '0');
+        // ETH price approximation (could use price feed API later)
+        const ETH_PRICE_USD = 3900;
+        const ethValueUSD = eth * ETH_PRICE_USD;
+        const totalUSD = Math.round(ethValueUSD + usdc);
+
+        // Build a natural response with total USD value
+        if (eth > 0 && usdc > 0) {
+          return isSpanish
+            ? `Tienes aproximadamente ${totalUSD} dólares disponibles: ${usdc.toFixed(2)} USDC y ${eth.toFixed(4)} ETH.`
+            : `You have about ${totalUSD} dollars available: ${usdc.toFixed(2)} USDC and ${eth.toFixed(4)} ETH.`;
+        } else if (eth > 0) {
+          return isSpanish
+            ? `Tienes aproximadamente ${totalUSD} dólares en ETH. Puedo intercambiarlo a USDC para pagos.`
+            : `You have about ${totalUSD} dollars in ETH. I can swap it to USDC for payments.`;
+        } else if (usdc > 0) {
+          return isSpanish
+            ? `Tienes ${usdc.toFixed(2)} dólares en USDC disponibles para pagar.`
+            : `You have ${usdc.toFixed(2)} dollars in USDC available to pay.`;
+        }
         return isSpanish
-          ? `Tu saldo es ${context.balance} USDC en Unichain.`
-          : `Your balance is ${context.balance} USDC on Unichain.`;
+          ? 'Tu wallet está vacía. Deposita ETH o USDC para hacer pagos.'
+          : 'Your wallet is empty. Deposit ETH or USDC to make payments.';
       }
       return isSpanish
         ? 'Consultando tu saldo...'

@@ -107,6 +107,34 @@
     <key>UIViewControllerBasedStatusBarAppearance</key>
     <true/>
 
+    <!-- Wallet App Detection (Required by Reown AppKit) -->
+    <!-- These schemes allow the app to detect installed wallets -->
+    <key>LSApplicationQueriesSchemes</key>
+    <array>
+        <string>metamask</string>
+        <string>trust</string>
+        <string>safe</string>
+        <string>rainbow</string>
+        <string>uniswap</string>
+        <string>zerion</string>
+        <string>imtokenv2</string>
+        <string>spot</string>
+        <string>omni</string>
+        <string>dfw</string>
+        <string>tpoutside</string>
+        <string>robinhood-wallet</string>
+        <string>frontier</string>
+        <string>blockchain-wallet</string>
+        <string>safepalwallet</string>
+        <string>bitkeep</string>
+        <string>exodus</string>
+        <string>okex</string>
+        <string>keplr</string>
+        <string>bnc</string>
+        <string>wc</string>
+        <string>cbwallet</string>
+    </array>
+
     <!-- URL Schemes (Deep Links) -->
     <key>CFBundleURLTypes</key>
     <array>
@@ -116,6 +144,7 @@
             <key>CFBundleURLSchemes</key>
             <array>
                 <string>voiceswap</string>
+                <string>wc</string>
             </array>
         </dict>
     </array>

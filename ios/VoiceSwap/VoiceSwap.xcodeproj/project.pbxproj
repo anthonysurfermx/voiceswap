@@ -14,6 +14,17 @@
 		1A0000090000000000000001 /* VoiceSwapViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000A0000000000000001 /* VoiceSwapViewModel.swift */; };
 		1A00000B0000000000000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1A00000C0000000000000001 /* Assets.xcassets */; };
 		1A00000D0000000000000001 /* WalletConnectManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000F0000000000000001 /* WalletConnectManager.swift */; };
+		A515AF1A2EED338A00AC5AD7 /* ReownAppKit in Frameworks */ = {isa = PBXBuildFile; productRef = A515AF192EED338A00AC5AD7 /* ReownAppKit */; };
+		A515AF1C2EED338A00AC5AD7 /* ReownAppKitUI in Frameworks */ = {isa = PBXBuildFile; productRef = A515AF1B2EED338A00AC5AD7 /* ReownAppKitUI */; };
+		A515AF1E2EED338A00AC5AD7 /* ReownRouter in Frameworks */ = {isa = PBXBuildFile; productRef = A515AF1D2EED338A00AC5AD7 /* ReownRouter */; };
+		A515AF202EED338A00AC5AD7 /* ReownWalletKit in Frameworks */ = {isa = PBXBuildFile; productRef = A515AF1F2EED338A00AC5AD7 /* ReownWalletKit */; };
+		A515AF222EED338A00AC5AD7 /* WalletConnect in Frameworks */ = {isa = PBXBuildFile; productRef = A515AF212EED338A00AC5AD7 /* WalletConnect */; };
+		A54F4D522EEDEAAE00B63C69 /* MWDATCamera in Frameworks */ = {isa = PBXBuildFile; productRef = A54F4D512EEDEAAE00B63C69 /* MWDATCamera */; };
+		A54F4D542EEDEAAE00B63C69 /* MWDATCore in Frameworks */ = {isa = PBXBuildFile; productRef = A54F4D532EEDEAAE00B63C69 /* MWDATCore */; };
+		A54F4D562EEDEAAE00B63C69 /* MWDATMockDevice in Frameworks */ = {isa = PBXBuildFile; productRef = A54F4D552EEDEAAE00B63C69 /* MWDATMockDevice */; };
+		B0C0152C2F0000000000001 /* VoiceSwapCryptoProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0C0152B2F0000000000001 /* VoiceSwapCryptoProvider.swift */; };
+		B0C015302F0000000000001 /* CryptoSwift in Frameworks */ = {isa = PBXBuildFile; productRef = B0C0152E2F0000000000001 /* CryptoSwift */; };
+		B0C015312F0000000000001 /* Web3 in Frameworks */ = {isa = PBXBuildFile; productRef = B0C0152F2F0000000000001 /* Web3 */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -26,11 +37,13 @@
 		1A00000E0000000000000001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		1A00000F0000000000000001 /* WalletConnectManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletConnectManager.swift; sourceTree = "<group>"; };
 		1A0000100000000000000001 /* VoiceSwap.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VoiceSwap.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A515AF232EEDAAEA00AC5AD7 /* VoiceSwap.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = VoiceSwap.entitlements; sourceTree = "<group>"; };
 		A55428F42EECA1260047C027 /* MetaGlassesManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetaGlassesManager.swift; sourceTree = "<group>"; };
 		A55428F52EECA1260047C027 /* VoiceSwapAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSwapAPIClient.swift; sourceTree = "<group>"; };
 		A55428F62EECA1260047C027 /* VoiceSwapViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSwapViewModel.swift; sourceTree = "<group>"; };
 		A55428F82EECA1260047C027 /* VoiceSwapMainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSwapMainView.swift; sourceTree = "<group>"; };
 		A55428FA2EECA1260047C027 /* VoiceSwapApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSwapApp.swift; sourceTree = "<group>"; };
+		B0C0152B2F0000000000001 /* VoiceSwapCryptoProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSwapCryptoProvider.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -38,6 +51,16 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B0C015302F0000000000001 /* CryptoSwift in Frameworks */,
+				A54F4D522EEDEAAE00B63C69 /* MWDATCamera in Frameworks */,
+				B0C015312F0000000000001 /* Web3 in Frameworks */,
+				A54F4D542EEDEAAE00B63C69 /* MWDATCore in Frameworks */,
+				A54F4D562EEDEAAE00B63C69 /* MWDATMockDevice in Frameworks */,
+				A515AF1A2EED338A00AC5AD7 /* ReownAppKit in Frameworks */,
+				A515AF222EED338A00AC5AD7 /* WalletConnect in Frameworks */,
+				A515AF1C2EED338A00AC5AD7 /* ReownAppKitUI in Frameworks */,
+				A515AF202EED338A00AC5AD7 /* ReownWalletKit in Frameworks */,
+				A515AF1E2EED338A00AC5AD7 /* ReownRouter in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -47,20 +70,20 @@
 		1A0000300000000000000001 = {
 			isa = PBXGroup;
 			children = (
+				A515AF232EEDAAEA00AC5AD7 /* VoiceSwap.entitlements */,
 				A55428FB2EECA1260047C027 /* Sources */,
-				1A0000310000000000000001 /*  */,
+				1A0000310000000000000001,
 				1A0000320000000000000001 /* Products */,
 			);
 			sourceTree = "<group>";
 		};
-		1A0000310000000000000001 /*  */ = {
+		1A0000310000000000000001 = {
 			isa = PBXGroup;
 			children = (
 				1A00000E0000000000000001 /* Info.plist */,
 				1A0000330000000000000001 /* Sources */,
 				1A00000C0000000000000001 /* Assets.xcassets */,
 			);
-			name = "";
 			sourceTree = "<group>";
 		};
 		1A0000320000000000000001 /* Products */ = {
@@ -82,14 +105,6 @@
 			path = Sources;
 			sourceTree = "<group>";
 		};
-		1A0000360000000000000001 /* Wallet */ = {
-			isa = PBXGroup;
-			children = (
-				1A00000F0000000000000001 /* WalletConnectManager.swift */,
-			);
-			path = Wallet;
-			sourceTree = "<group>";
-		};
 		1A0000340000000000000001 /* Views */ = {
 			isa = PBXGroup;
 			children = (
@@ -106,6 +121,15 @@
 				1A00000A0000000000000001 /* VoiceSwapViewModel.swift */,
 			);
 			path = MetaWearables;
+			sourceTree = "<group>";
+		};
+		1A0000360000000000000001 /* Wallet */ = {
+			isa = PBXGroup;
+			children = (
+				1A00000F0000000000000001 /* WalletConnectManager.swift */,
+				B0C0152B2F0000000000001 /* VoiceSwapCryptoProvider.swift */,
+			);
+			path = Wallet;
 			sourceTree = "<group>";
 		};
 		A55428F72EECA1260047C027 /* MetaWearables */ = {
@@ -153,6 +177,16 @@
 			);
 			name = VoiceSwap;
 			packageProductDependencies = (
+				A515AF192EED338A00AC5AD7 /* ReownAppKit */,
+				A515AF1B2EED338A00AC5AD7 /* ReownAppKitUI */,
+				A515AF1D2EED338A00AC5AD7 /* ReownRouter */,
+				A515AF1F2EED338A00AC5AD7 /* ReownWalletKit */,
+				A515AF212EED338A00AC5AD7 /* WalletConnect */,
+				B0C0152E2F0000000000001 /* CryptoSwift */,
+				B0C0152F2F0000000000001 /* Web3 */,
+				A54F4D512EEDEAAE00B63C69 /* MWDATCamera */,
+				A54F4D532EEDEAAE00B63C69 /* MWDATCore */,
+				A54F4D552EEDEAAE00B63C69 /* MWDATMockDevice */,
 			);
 			productName = VoiceSwap;
 			productReference = 1A0000100000000000000001 /* VoiceSwap.app */;
@@ -184,6 +218,10 @@
 			);
 			mainGroup = 1A0000300000000000000001;
 			packageReferences = (
+				A515AF182EED31A300AC5AD7 /* XCRemoteSwiftPackageReference "reown-swift" */,
+				B0C015252F0000000000001 /* XCRemoteSwiftPackageReference "CryptoSwift" */,
+				B0C015262F0000000000001 /* XCRemoteSwiftPackageReference "Web3" */,
+				C0D015372F0000000000001 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */,
 			);
 			productRefGroup = 1A0000320000000000000001 /* Products */;
 			projectDirPath = "";
@@ -216,6 +254,7 @@
 				1A0000070000000000000001 /* VoiceSwapAPIClient.swift in Sources */,
 				1A0000090000000000000001 /* VoiceSwapViewModel.swift in Sources */,
 				1A00000D0000000000000001 /* WalletConnectManager.swift in Sources */,
+				B0C0152C2F0000000000001 /* VoiceSwapCryptoProvider.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -274,7 +313,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
@@ -331,7 +370,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
@@ -346,6 +385,8 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = VoiceSwap.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = QZRTV6CMTT;
@@ -371,6 +412,7 @@
 				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.voiceswap.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
@@ -385,6 +427,8 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = VoiceSwap.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = QZRTV6CMTT;
@@ -410,6 +454,7 @@
 				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.voiceswap.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
@@ -441,6 +486,94 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A515AF182EED31A300AC5AD7 /* XCRemoteSwiftPackageReference "reown-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/reown-com/reown-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.0;
+			};
+		};
+		B0C015252F0000000000001 /* XCRemoteSwiftPackageReference "CryptoSwift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/krzyzanowskim/CryptoSwift.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.8.3;
+			};
+		};
+		B0C015262F0000000000001 /* XCRemoteSwiftPackageReference "Web3" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/Boilertalk/Web3.swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.8.8;
+			};
+		};
+		C0D015372F0000000000001 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/facebook/meta-wearables-dat-ios";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.2.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A515AF192EED338A00AC5AD7 /* ReownAppKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A515AF182EED31A300AC5AD7 /* XCRemoteSwiftPackageReference "reown-swift" */;
+			productName = ReownAppKit;
+		};
+		A515AF1B2EED338A00AC5AD7 /* ReownAppKitUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A515AF182EED31A300AC5AD7 /* XCRemoteSwiftPackageReference "reown-swift" */;
+			productName = ReownAppKitUI;
+		};
+		A515AF1D2EED338A00AC5AD7 /* ReownRouter */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A515AF182EED31A300AC5AD7 /* XCRemoteSwiftPackageReference "reown-swift" */;
+			productName = ReownRouter;
+		};
+		A515AF1F2EED338A00AC5AD7 /* ReownWalletKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A515AF182EED31A300AC5AD7 /* XCRemoteSwiftPackageReference "reown-swift" */;
+			productName = ReownWalletKit;
+		};
+		A515AF212EED338A00AC5AD7 /* WalletConnect */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A515AF182EED31A300AC5AD7 /* XCRemoteSwiftPackageReference "reown-swift" */;
+			productName = WalletConnect;
+		};
+		A54F4D512EEDEAAE00B63C69 /* MWDATCamera */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0D015372F0000000000001 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
+			productName = MWDATCamera;
+		};
+		A54F4D532EEDEAAE00B63C69 /* MWDATCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0D015372F0000000000001 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
+			productName = MWDATCore;
+		};
+		A54F4D552EEDEAAE00B63C69 /* MWDATMockDevice */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0D015372F0000000000001 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
+			productName = MWDATMockDevice;
+		};
+		B0C0152E2F0000000000001 /* CryptoSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B0C015252F0000000000001 /* XCRemoteSwiftPackageReference "CryptoSwift" */;
+			productName = CryptoSwift;
+		};
+		B0C0152F2F0000000000001 /* Web3 */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B0C015262F0000000000001 /* XCRemoteSwiftPackageReference "Web3" */;
+			productName = Web3;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 1A0000600000000000000001 /* Project object */;
 }
