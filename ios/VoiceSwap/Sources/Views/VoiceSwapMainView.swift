@@ -7,6 +7,7 @@
  */
 
 import SwiftUI
+import ReownAppKit
 
 // MARK: - Brutalist Design System
 
@@ -94,9 +95,10 @@ struct BrutalistButtonStyle: ButtonStyle {
 public struct VoiceSwapMainView: View {
     @EnvironmentObject var appState: AppState
     @StateObject private var viewModel = VoiceSwapViewModel()
-    @StateObject private var walletManager = WalletConnectManager.shared
+    @ObservedObject private var walletManager = WalletConnectManager.shared
     @State private var showingSettings = false
     @State private var testCommand = ""
+    @State private var showWalletSheet = false
 
     public init() {}
 
@@ -144,8 +146,8 @@ public struct VoiceSwapMainView: View {
                 viewModel.setWalletAddress(address)
             }
         }
-        .sheet(isPresented: $walletManager.showWalletModal) {
-            BrutalistWalletConnectView(walletManager: walletManager)
+        .sheet(isPresented: $showWalletSheet) {
+            BrutalistWalletConnectView(walletManager: walletManager, isPresented: $showWalletSheet)
         }
     }
 
@@ -210,67 +212,149 @@ public struct VoiceSwapMainView: View {
 
     // MARK: - Wallet Connection Card
 
+    private var walletIconColor: Color {
+        if walletManager.isConnected {
+            return BrutalistColors.success
+        } else if case .connecting = walletManager.connectionState {
+            return BrutalistColors.accent
+        } else {
+            return BrutalistColors.primary
+        }
+    }
+
+    private var walletIconName: String {
+        if walletManager.isConnected {
+            return "checkmark.circle.fill"
+        } else if case .connecting = walletManager.connectionState {
+            return "arrow.triangle.2.circlepath"
+        } else {
+            return "wallet.pass"
+        }
+    }
+
     private var walletConnectionCard: some View {
         BrutalistCard(backgroundColor: walletManager.isConnected ? BrutalistColors.success.opacity(0.2) : BrutalistColors.cardBg) {
-            HStack(spacing: 16) {
-                // Wallet icon
-                ZStack {
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(walletManager.isConnected ? BrutalistColors.success : BrutalistColors.primary)
-                        .frame(width: 50, height: 50)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(BrutalistColors.dark, lineWidth: 2)
-                        )
+            VStack(spacing: 12) {
+                HStack(spacing: 16) {
+                    // Wallet icon
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(walletIconColor)
+                            .frame(width: 50, height: 50)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .stroke(BrutalistColors.dark, lineWidth: 2)
+                            )
 
-                    Image(systemName: walletManager.isConnected ? "checkmark.circle.fill" : "wallet.pass")
-                        .font(.system(size: 24, weight: .bold))
-                        .foregroundColor(BrutalistColors.dark)
-                }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    if walletManager.isConnected, let address = walletManager.currentAddress {
-                        Text("CONNECTED")
-                            .font(.system(size: 14, weight: .black))
+                        Image(systemName: walletIconName)
+                            .font(.system(size: 24, weight: .bold))
                             .foregroundColor(BrutalistColors.dark)
+                    }
 
-                        Text("\(address.prefix(6))...\(address.suffix(4))")
-                            .font(.system(size: 12, weight: .medium, design: .monospaced))
-                            .foregroundColor(BrutalistColors.dark.opacity(0.6))
-                    } else {
-                        Text("NO WALLET")
-                            .font(.system(size: 14, weight: .black))
+                    VStack(alignment: .leading, spacing: 4) {
+                        if walletManager.isConnected, let address = walletManager.currentAddress {
+                            Text("CONNECTED")
+                                .font(.system(size: 14, weight: .black))
+                                .foregroundColor(BrutalistColors.dark)
+
+                            HStack(spacing: 6) {
+                                Text("\(address.prefix(6))...\(address.suffix(4))")
+                                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                    .foregroundColor(BrutalistColors.dark.opacity(0.6))
+
+                                if let walletName = walletManager.connectedWallet?.walletName {
+                                    Text("(\(walletName))")
+                                        .font(.system(size: 10, weight: .medium))
+                                        .foregroundColor(BrutalistColors.dark.opacity(0.4))
+                                }
+                            }
+                        } else if case .connecting = walletManager.connectionState {
+                            Text("CONNECTING...")
+                                .font(.system(size: 14, weight: .black))
+                                .foregroundColor(BrutalistColors.dark)
+
+                            Text("Return here after signing")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(BrutalistColors.accent)
+                        } else {
+                            Text("NO WALLET")
+                                .font(.system(size: 14, weight: .black))
+                                .foregroundColor(BrutalistColors.dark)
+
+                            Text("Connect to start")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(BrutalistColors.dark.opacity(0.6))
+                        }
+                    }
+
+                    Spacer()
+
+                    // Single action button - either disconnect or connect
+                    Button {
+                        print("[VoiceSwap] Wallet button tapped, isConnected: \(walletManager.isConnected)")
+                        if walletManager.isConnected {
+                            walletManager.disconnect()
+                        } else {
+                            print("[VoiceSwap] Calling walletManager.connect()")
+                            walletManager.connect()
+                        }
+                    } label: {
+                        Text(walletManager.isConnected ? "X" : "+")
+                            .font(.system(size: 24, weight: .black))
                             .foregroundColor(BrutalistColors.dark)
-
-                        Text("Connect to start")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(BrutalistColors.dark.opacity(0.6))
+                            .frame(width: 44, height: 44)
+                            .background(walletManager.isConnected ? BrutalistColors.accent : BrutalistColors.primary)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .stroke(BrutalistColors.dark, lineWidth: 2)
+                            )
                     }
                 }
 
-                Spacer()
-
-                Button(action: {
-                    if walletManager.isConnected {
-                        walletManager.disconnect()
+                // Network switch button (only show if connected but not on Unichain)
+                if walletManager.isConnected {
+                    if let wallet = walletManager.connectedWallet, wallet.chainId != 130 {
+                        Button {
+                            Task {
+                                await walletManager.switchToUnichain()
+                            }
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 12, weight: .bold))
+                                Text("SWITCH TO UNICHAIN")
+                                    .font(.system(size: 11, weight: .black))
+                                Image(systemName: "arrow.right.circle.fill")
+                                    .font(.system(size: 12, weight: .bold))
+                            }
+                            .foregroundColor(BrutalistColors.dark)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(BrutalistColors.primary)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .stroke(BrutalistColors.dark, lineWidth: 2)
+                            )
+                        }
                     } else {
-                        walletManager.showWalletModal = true
+                        // On Unichain - show confirmation
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(BrutalistColors.success)
+                                .frame(width: 8, height: 8)
+                            Text("UNICHAIN")
+                                .font(.system(size: 10, weight: .black))
+                                .foregroundColor(BrutalistColors.dark.opacity(0.6))
+                        }
                     }
-                }) {
-                    Text(walletManager.isConnected ? "X" : "+")
-                        .font(.system(size: 24, weight: .black))
-                        .foregroundColor(BrutalistColors.dark)
-                        .frame(width: 44, height: 44)
-                        .background(walletManager.isConnected ? BrutalistColors.accent : BrutalistColors.primary)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(BrutalistColors.dark, lineWidth: 2)
-                        )
                 }
             }
             .padding(16)
         }
+        // Force UI refresh when connection state changes
+        .id("wallet-card-\(walletManager.isConnected)-\(walletManager.currentAddress ?? "none")")
     }
 
     // MARK: - Balance Card
@@ -299,7 +383,7 @@ public struct VoiceSwapMainView: View {
                         .font(.system(size: 56, weight: .black))
                         .foregroundColor(BrutalistColors.dark)
 
-                    Text("USDC")
+                    Text("USD")
                         .font(.system(size: 18, weight: .black))
                         .foregroundColor(BrutalistColors.dark.opacity(0.6))
                 }
@@ -717,8 +801,8 @@ public struct VoiceSwapMainView: View {
 
 struct BrutalistWalletConnectView: View {
     @ObservedObject var walletManager: WalletConnectManager
+    @Binding var isPresented: Bool
     @State private var manualAddress: String = ""
-    @State private var showManualInput: Bool = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -735,7 +819,7 @@ struct BrutalistWalletConnectView: View {
 
                         Spacer()
 
-                        Button(action: { walletManager.showWalletModal = false }) {
+                        Button(action: { isPresented = false }) {
                             Image(systemName: "xmark")
                                 .font(.system(size: 20, weight: .black))
                                 .foregroundColor(BrutalistColors.dark)
@@ -767,55 +851,31 @@ struct BrutalistWalletConnectView: View {
                     }
                     .padding(.vertical, 10)
 
-                    Text("Choose your wallet")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(BrutalistColors.dark.opacity(0.6))
+                    // Unichain compatibility notice
+                    VStack(spacing: 8) {
+                        Text("UNICHAIN COMPATIBLE WALLETS")
+                            .font(.system(size: 10, weight: .black))
+                            .foregroundColor(BrutalistColors.dark.opacity(0.6))
 
-                    // Wallet Options
+                        Text("Use MetaMask or Rainbow for best experience")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(BrutalistColors.dark.opacity(0.8))
+                            .multilineTextAlignment(.center)
+                    }
+
+                    // Wallet buttons
                     VStack(spacing: 12) {
-                        // Uniswap Wallet
+                        // WalletConnect (opens AppKit modal with all wallets)
                         brutalistWalletButton(
-                            name: "Uniswap Wallet",
-                            icon: "u.circle.fill",
-                            color: Color(hex: "FF007A")
+                            name: "WalletConnect",
+                            subtitle: "MetaMask, Rainbow, etc.",
+                            icon: "link.circle.fill",
+                            color: Color(hex: "3396FF")
                         ) {
-                            openWalletApp("uniswap")
-                        }
-
-                        // MetaMask
-                        brutalistWalletButton(
-                            name: "MetaMask",
-                            icon: "m.circle.fill",
-                            color: Color.orange
-                        ) {
-                            openWalletApp("metamask")
-                        }
-
-                        // Rainbow
-                        brutalistWalletButton(
-                            name: "Rainbow",
-                            icon: "rainbow",
-                            color: Color.purple
-                        ) {
-                            openWalletApp("rainbow")
-                        }
-
-                        // Coinbase Wallet
-                        brutalistWalletButton(
-                            name: "Coinbase Wallet",
-                            icon: "c.circle.fill",
-                            color: Color.blue
-                        ) {
-                            openWalletApp("cbwallet")
-                        }
-
-                        // Trust Wallet
-                        brutalistWalletButton(
-                            name: "Trust Wallet",
-                            icon: "shield.fill",
-                            color: Color.cyan
-                        ) {
-                            openWalletApp("trust")
+                            isPresented = false
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                walletManager.connect()
+                            }
                         }
                     }
 
@@ -833,64 +893,57 @@ struct BrutalistWalletConnectView: View {
                     }
                     .padding(.vertical, 8)
 
-                    // Manual Input Toggle
-                    Button(action: {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            showManualInput.toggle()
-                        }
-                    }) {
+                    // Manual Input Section (always visible for reliability)
+                    VStack(alignment: .leading, spacing: 12) {
                         HStack(spacing: 8) {
                             Image(systemName: "keyboard")
                                 .font(.system(size: 14, weight: .bold))
-                            Text("ENTER ADDRESS MANUALLY")
+                            Text("PASTE YOUR ADDRESS")
                                 .font(.system(size: 12, weight: .black))
-                            Spacer()
-                            Image(systemName: showManualInput ? "chevron.up" : "chevron.down")
-                                .font(.system(size: 12, weight: .bold))
                         }
                         .foregroundColor(BrutalistColors.dark)
-                        .padding(14)
-                        .background(BrutalistColors.cardBg)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(BrutalistColors.dark, lineWidth: 2)
-                        )
-                    }
 
-                    // Manual Input Fields
-                    if showManualInput {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("WALLET ADDRESS")
-                                .font(.system(size: 10, weight: .black))
-                                .foregroundColor(BrutalistColors.dark.opacity(0.6))
+                        Text("Copy your wallet address and paste it below")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(BrutalistColors.dark.opacity(0.6))
 
-                            TextField("0x...", text: $manualAddress)
-                                .font(.system(size: 14, weight: .medium, design: .monospaced))
-                                .autocapitalization(.none)
-                                .disableAutocorrection(true)
-                                .padding(14)
-                                .background(BrutalistColors.cardBg)
-                                .clipShape(RoundedRectangle(cornerRadius: 4))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 4)
-                                        .stroke(BrutalistColors.dark, lineWidth: 2)
-                                )
+                        TextField("0x...", text: $manualAddress)
+                            .font(.system(size: 14, weight: .medium, design: .monospaced))
+                            .autocapitalization(.none)
+                            .disableAutocorrection(true)
+                            .padding(14)
+                            .background(BrutalistColors.cardBg)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .stroke(BrutalistColors.dark, lineWidth: 2)
+                            )
 
-                            BrutalistButton("Connect", icon: "link", backgroundColor: manualAddress.count == 42 ? BrutalistColors.success : BrutalistColors.cardBg) {
-                                walletManager.connectWithAddress(manualAddress)
+                        // Validation feedback
+                        if !manualAddress.isEmpty {
+                            HStack(spacing: 6) {
+                                Image(systemName: isValidAddress ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                                    .foregroundColor(isValidAddress ? BrutalistColors.success : BrutalistColors.accent)
+                                Text(isValidAddress ? "Valid address" : "Invalid address (needs 42 characters starting with 0x)")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundColor(isValidAddress ? BrutalistColors.success : BrutalistColors.accent)
                             }
-                            .disabled(manualAddress.count != 42)
-                            .opacity(manualAddress.count == 42 ? 1 : 0.6)
                         }
-                        .padding(16)
-                        .background(BrutalistColors.background)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(BrutalistColors.dark.opacity(0.3), lineWidth: 2)
-                        )
+
+                        BrutalistButton("Link Wallet", icon: "link", backgroundColor: isValidAddress ? BrutalistColors.success : BrutalistColors.cardBg) {
+                            walletManager.connectWithAddress(manualAddress)
+                            isPresented = false
+                        }
+                        .disabled(!isValidAddress)
+                        .opacity(isValidAddress ? 1 : 0.6)
                     }
+                    .padding(16)
+                    .background(BrutalistColors.cardBg)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(BrutalistColors.dark, lineWidth: 2)
+                    )
 
                     Spacer(minLength: 20)
 
@@ -905,18 +958,29 @@ struct BrutalistWalletConnectView: View {
                                         .stroke(BrutalistColors.dark, lineWidth: 1)
                                 )
 
-                            Text("UNICHAIN MAINNET")
-                                .font(.system(size: 12, weight: .black))
+                            Text("UNICHAIN MAINNET (CHAIN ID: 130)")
+                                .font(.system(size: 11, weight: .black))
                                 .foregroundColor(BrutalistColors.dark)
                         }
 
-                        HStack(spacing: 6) {
-                            Image(systemName: "lock.shield.fill")
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundColor(BrutalistColors.success)
-                            Text("Your keys never leave your device")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(BrutalistColors.dark.opacity(0.5))
+                        VStack(spacing: 4) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "server.rack")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundColor(BrutalistColors.success)
+                                Text("Payments executed via secure backend")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundColor(BrutalistColors.dark.opacity(0.5))
+                            }
+
+                            HStack(spacing: 6) {
+                                Image(systemName: "lock.shield.fill")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundColor(BrutalistColors.success)
+                                Text("Your keys stay in your wallet")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundColor(BrutalistColors.dark.opacity(0.5))
+                            }
                         }
                     }
                     .padding(.bottom, 30)
@@ -926,9 +990,15 @@ struct BrutalistWalletConnectView: View {
         }
     }
 
+    // MARK: - Validation
+
+    private var isValidAddress: Bool {
+        manualAddress.count == 42 && manualAddress.hasPrefix("0x")
+    }
+
     // MARK: - Wallet Button Component
 
-    private func brutalistWalletButton(name: String, icon: String, color: Color, action: @escaping () -> Void) -> some View {
+    private func brutalistWalletButton(name: String, subtitle: String? = nil, icon: String, color: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 14) {
                 // Icon box
@@ -946,9 +1016,17 @@ struct BrutalistWalletConnectView: View {
                         .foregroundColor(color)
                 }
 
-                Text(name.uppercased())
-                    .font(.system(size: 14, weight: .black))
-                    .foregroundColor(BrutalistColors.dark)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name.uppercased())
+                        .font(.system(size: 14, weight: .black))
+                        .foregroundColor(BrutalistColors.dark)
+
+                    if let subtitle = subtitle {
+                        Text(subtitle)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(BrutalistColors.dark.opacity(0.6))
+                    }
+                }
 
                 Spacer()
 
@@ -968,43 +1046,6 @@ struct BrutalistWalletConnectView: View {
         .buttonStyle(BrutalistButtonStyle())
     }
 
-    // MARK: - Open Wallet App
-
-    private func openWalletApp(_ wallet: String) {
-        let wcUri = generateWCUri()
-
-        var urlString: String?
-        switch wallet {
-        case "uniswap":
-            urlString = "uniswap://wc?uri=\(wcUri)"
-        case "metamask":
-            urlString = "metamask://wc?uri=\(wcUri)"
-        case "rainbow":
-            urlString = "rainbow://wc?uri=\(wcUri)"
-        case "cbwallet":
-            urlString = "cbwallet://wc?uri=\(wcUri)"
-        case "trust":
-            urlString = "trust://wc?uri=\(wcUri)"
-        default:
-            break
-        }
-
-        if let urlString = urlString,
-           let url = URL(string: urlString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "") {
-            UIApplication.shared.open(url)
-        }
-    }
-
-    private func generateWCUri() -> String {
-        let topic = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
-        return "wc:\(topic)@2?relay-protocol=irn&symKey=\(randomHex(32))"
-    }
-
-    private func randomHex(_ length: Int) -> String {
-        var bytes = [UInt8](repeating: 0, count: length)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        return bytes.map { String(format: "%02x", $0) }.joined()
-    }
 }
 
 // MARK: - Color Extension

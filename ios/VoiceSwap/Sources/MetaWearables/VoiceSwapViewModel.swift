@@ -111,7 +111,7 @@ public class VoiceSwapViewModel: ObservableObject {
             let response = try await apiClient.getWalletBalances(address: walletAddress)
 
             if let balances = response.data {
-                walletBalance = balances.totalUSDC
+                walletBalance = balances.totalUSD  // Total in USD (USDC + ETH)
                 ethBalance = balances.nativeETH.balance
             }
         } catch {
@@ -140,6 +140,9 @@ public class VoiceSwapViewModel: ObservableObject {
 
     /// Start listening for voice commands
     public func startListening() {
+        // IMPORTANT: Set delegate before starting to listen
+        // This ensures voice commands are routed back to the ViewModel
+        glassesManager.delegate = self
         glassesManager.startListening()
         flowState = .listening
     }
@@ -154,6 +157,7 @@ public class VoiceSwapViewModel: ObservableObject {
 
     /// Process a voice command manually (for testing without glasses)
     public func processVoiceCommand(_ transcript: String) async {
+        print("[ViewModel] Processing voice command: '\(transcript)' with wallet: \(walletAddress)")
         lastVoiceCommand = transcript
         flowState = .processing
 
@@ -164,20 +168,27 @@ public class VoiceSwapViewModel: ObservableObject {
                 merchantWallet: currentMerchantWallet
             )
 
+            print("[ViewModel] API response success: \(response.success)")
+
             guard let data = response.data else {
+                print("[ViewModel] No data in response!")
                 throw APIError.serverError("No data in response")
             }
 
+            print("[ViewModel] Voice response: '\(data.voiceResponse)'")
+            print("[ViewModel] Next action: \(data.nextAction)")
             lastResponse = data.voiceResponse
 
             // Speak the response
             let language = data.intent.language == "es" ? "es-ES" : "en-US"
+            print("[ViewModel] Speaking in language: \(language)")
             glassesManager.speak(data.voiceResponse, language: language)
 
             // Handle the next action
             await handleNextAction(data.nextAction, intent: data.intent)
 
         } catch {
+            print("[ViewModel] ERROR: \(error)")
             errorMessage = error.localizedDescription
             flowState = .failed(error: error.localizedDescription)
             glassesManager.speak("Sorry, there was an error", language: "en-US")
@@ -407,6 +418,7 @@ extension VoiceSwapViewModel: MetaGlassesDelegate {
     }
 
     nonisolated public func glassesDidReceiveVoiceCommand(_ result: VoiceCommandResult) {
+        print("[ViewModel] Delegate received voice command: '\(result.transcript)'")
         Task { @MainActor in
             await processVoiceCommand(result.transcript)
         }

@@ -2,21 +2,16 @@
  * MetaGlassesManager.swift
  * VoiceSwap - Voice-activated crypto payments for Meta Ray-Ban glasses
  *
- * This module manages the connection to Meta Ray-Ban smart glasses
- * using the Meta Wearables SDK (Device Access Toolkit - DAT)
- *
- * Features:
- * - Bluetooth connection management
- * - Voice command capture via glasses microphone
- * - Camera access for QR code scanning
- * - Text-to-Speech for voice responses
- * - Haptic feedback for confirmations
+ * This module manages voice commands and audio for VoiceSwap.
+ * Currently uses iPhone microphone with future Meta Glasses SDK integration.
  */
 
 import Foundation
 import Combine
 import AVFoundation
 import Speech
+import UIKit
+import CoreImage
 
 // MARK: - Meta Glasses Connection State
 
@@ -56,6 +51,16 @@ public protocol MetaGlassesDelegate: AnyObject {
     func glassesDidEncounterError(_ error: Error)
 }
 
+// MARK: - Haptic Patterns
+
+public enum HapticPattern {
+    case short      // Single short vibration
+    case double     // Two short vibrations
+    case long       // One long vibration
+    case success    // Success pattern
+    case error      // Error pattern
+}
+
 // MARK: - Meta Glasses Manager
 
 @MainActor
@@ -69,6 +74,7 @@ public class MetaGlassesManager: NSObject, ObservableObject {
     @Published public private(set) var isListening: Bool = false
     @Published public private(set) var batteryLevel: Int = 0
     @Published public private(set) var lastTranscript: String = ""
+    @Published public private(set) var isStreamingCamera: Bool = false
 
     // MARK: - Delegate
     public weak var delegate: MetaGlassesDelegate?
@@ -77,7 +83,7 @@ public class MetaGlassesManager: NSObject, ObservableObject {
     private var speechRecognizer: SFSpeechRecognizer?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
-    private let audioEngine = AVAudioEngine()
+    private var audioEngine: AVAudioEngine!
     private let synthesizer = AVSpeechSynthesizer()
 
     // VoiceSwap API client
@@ -88,6 +94,11 @@ public class MetaGlassesManager: NSObject, ObservableObject {
     // Wake word detection
     private let wakeWords = ["hey voiceswap", "oye voiceswap", "voice swap", "pagar", "pay"]
     private var isWakeWordDetected = false
+    private var isDirectMode = false
+    private var pendingTranscript = ""
+
+    // QR Detection
+    private var qrDetector: CIDetector?
 
     // MARK: - Initialization
 
@@ -97,8 +108,18 @@ public class MetaGlassesManager: NSObject, ObservableObject {
         #else
         self.apiBaseURL = "https://voiceswap.cc"
         #endif
+        self.audioEngine = AVAudioEngine()
         super.init()
+
+        // Initialize QR detector
+        self.qrDetector = CIDetector(                     
+            ofType: CIDetectorTypeQRCode,
+            context: nil,
+            options: [CIDetectorAccuracy: CIDetectorAccuracyHigh]
+        )
+
         setupSpeechRecognition()
+        print("[MetaGlasses] Initialized - using iPhone microphone mode")
     }
 
     // MARK: - Public Methods
@@ -109,38 +130,45 @@ public class MetaGlassesManager: NSObject, ObservableObject {
         print("[MetaGlasses] Configured with wallet: \(walletAddress.prefix(10))...")
     }
 
-    /// Connect to Meta Ray-Ban glasses
+    /// Connect to Meta Ray-Ban glasses (currently simulated)
     public func connectToGlasses() async throws {
         connectionState = .searching
 
-        // TODO: Implement actual Meta Wearables SDK connection
-        // For now, simulate connection for development
-        try await simulateGlassesConnection()
+        // Simulate connection delay
+        try await Task.sleep(nanoseconds: 1_500_000_000)
+
+        connectionState = .connected
+        batteryLevel = 100
+        isDirectMode = true
+        delegate?.glassesDidConnect()
+        print("[MetaGlasses] Connected (iPhone mode)")
     }
 
     /// Disconnect from glasses
     public func disconnect() {
         stopListening()
+        stopCameraStream()
         connectionState = .disconnected
+        isDirectMode = false
+        isWakeWordDetected = false
         delegate?.glassesDidDisconnect()
         print("[MetaGlasses] Disconnected")
     }
 
     /// Start listening for voice commands
     public func startListening() {
-        // Allow listening even without glasses (use iPhone mic)
         if connectionState == .disconnected {
-            // Auto-connect in iPhone mode
             connectionState = .connected
             batteryLevel = 100
+            isDirectMode = true
             print("[MetaGlasses] Using iPhone microphone mode")
         }
 
         do {
             try startSpeechRecognition()
             isListening = true
-            isWakeWordDetected = true // Skip wake word in direct mode
-            print("[MetaGlasses] Started listening for voice commands")
+            isWakeWordDetected = isDirectMode
+            print("[MetaGlasses] Started listening (directMode: \(isDirectMode))")
         } catch {
             print("[MetaGlasses] Failed to start listening: \(error)")
             delegate?.glassesDidEncounterError(error)
@@ -149,14 +177,32 @@ public class MetaGlassesManager: NSObject, ObservableObject {
 
     /// Stop listening for voice commands
     public func stopListening() {
-        audioEngine.stop()
+        let transcriptToProcess = pendingTranscript
+        let shouldProcess = !transcriptToProcess.isEmpty && isWakeWordDetected
+
+        cleanupAudioEngine()
         recognitionRequest?.endAudio()
         recognitionTask?.cancel()
+        recognitionRequest = nil
+        recognitionTask = nil
         isListening = false
-        print("[MetaGlasses] Stopped listening")
+
+        print("[MetaGlasses] Stopped listening (pending: '\(transcriptToProcess)')")
+
+        if shouldProcess {
+            pendingTranscript = ""
+            let result = VoiceCommandResult(
+                transcript: transcriptToProcess,
+                confidence: 0.9,
+                language: detectLanguage(transcriptToProcess),
+                timestamp: Date()
+            )
+            print("[MetaGlasses] Processing pending command: \(transcriptToProcess)")
+            delegate?.glassesDidReceiveVoiceCommand(result)
+        }
     }
 
-    /// Speak text through glasses speakers
+    /// Speak text through speakers
     public func speak(_ text: String, language: String = "en-US") {
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = AVSpeechSynthesisVoice(language: language)
@@ -168,25 +214,40 @@ public class MetaGlassesManager: NSObject, ObservableObject {
         print("[MetaGlasses] Speaking: \(text)")
     }
 
-    /// Trigger haptic feedback on glasses
+    /// Trigger haptic feedback
     public func triggerHaptic(_ pattern: HapticPattern) {
-        // TODO: Implement actual haptic feedback via Meta SDK
         print("[MetaGlasses] Haptic feedback: \(pattern)")
+
+        let generator = UINotificationFeedbackGenerator()
+        switch pattern {
+        case .short:
+            generator.notificationOccurred(.warning)
+        case .double, .long, .success:
+            generator.notificationOccurred(.success)
+        case .error:
+            generator.notificationOccurred(.error)
+        }
     }
 
-    /// Capture photo for QR scanning
-    public func captureForQRScan() async throws -> QRScanResult? {
-        // TODO: Implement actual camera capture via Meta SDK
-        print("[MetaGlasses] Capturing for QR scan...")
+    // MARK: - Camera Streaming (Placeholder)
 
-        // Simulate QR detection for development
+    public func startCameraStream() {
+        print("[MetaGlasses] Camera streaming not available in iPhone mode")
+        isStreamingCamera = false
+    }
+
+    public func stopCameraStream() {
+        isStreamingCamera = false
+        print("[MetaGlasses] Stopped camera stream")
+    }
+
+    public func captureForQRScan() async throws -> QRScanResult? {
         return nil
     }
 
     // MARK: - Private Methods
 
     private func setupSpeechRecognition() {
-        // Request authorization
         SFSpeechRecognizer.requestAuthorization { [weak self] status in
             DispatchQueue.main.async {
                 switch status {
@@ -203,16 +264,22 @@ public class MetaGlassesManager: NSObject, ObservableObject {
     }
 
     private func startSpeechRecognition() throws {
-        // Cancel any existing task
         recognitionTask?.cancel()
         recognitionTask = nil
 
-        // Configure audio session
+        if audioEngine != nil {
+            if audioEngine.isRunning {
+                audioEngine.stop()
+            }
+            audioEngine.inputNode.removeTap(onBus: 0)
+        }
+
         let audioSession = AVAudioSession.sharedInstance()
-        try audioSession.setCategory(.record, mode: .measurement, options: .duckOthers)
+        try audioSession.setCategory(.playAndRecord, mode: .measurement, options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers])
         try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
 
-        // Create recognition request
+        audioEngine = AVAudioEngine()
+
         recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
         guard let recognitionRequest = recognitionRequest else {
             throw NSError(domain: "MetaGlasses", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unable to create recognition request"])
@@ -221,52 +288,76 @@ public class MetaGlassesManager: NSObject, ObservableObject {
         recognitionRequest.shouldReportPartialResults = true
         recognitionRequest.requiresOnDeviceRecognition = false
 
-        // Get input node
         let inputNode = audioEngine.inputNode
         let recordingFormat = inputNode.outputFormat(forBus: 0)
+
+        guard recordingFormat.sampleRate > 0 && recordingFormat.channelCount > 0 else {
+            throw NSError(domain: "MetaGlasses", code: 2, userInfo: [NSLocalizedDescriptionKey: "Invalid audio format"])
+        }
+
+        print("[MetaGlasses] Audio format: \(recordingFormat.sampleRate) Hz, \(recordingFormat.channelCount) ch")
 
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, _ in
             self?.recognitionRequest?.append(buffer)
         }
 
-        // Start recognition task
         recognitionTask = speechRecognizer?.recognitionTask(with: recognitionRequest) { [weak self] result, error in
             guard let self = self else { return }
+
+            if let error = error {
+                print("[MetaGlasses] Recognition error: \(error.localizedDescription)")
+            }
 
             if let result = result {
                 let transcript = result.bestTranscription.formattedString
                 self.lastTranscript = transcript
 
-                // Check for wake word or process command
+                if !transcript.isEmpty {
+                    self.pendingTranscript = transcript
+                }
+
                 Task { @MainActor in
-                    await self.processTranscript(transcript, isFinal: result.isFinal)
+                    let transcriptToProcess = transcript.isEmpty ? self.pendingTranscript : transcript
+                    await self.processTranscript(transcriptToProcess, isFinal: result.isFinal)
                 }
             }
 
             if error != nil || result?.isFinal == true {
-                self.audioEngine.stop()
-                inputNode.removeTap(onBus: 0)
+                self.cleanupAudioEngine()
                 self.recognitionRequest = nil
                 self.recognitionTask = nil
 
-                // Restart listening if still connected
                 if self.connectionState == .connected && self.isListening {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        try? self.startSpeechRecognition()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        if !self.synthesizer.isSpeaking {
+                            try? self.startSpeechRecognition()
+                        } else {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                try? self.startSpeechRecognition()
+                            }
+                        }
                     }
                 }
             }
         }
 
-        // Start audio engine
         audioEngine.prepare()
         try audioEngine.start()
     }
 
+    private func cleanupAudioEngine() {
+        guard audioEngine != nil else { return }
+        if audioEngine.isRunning {
+            audioEngine.stop()
+        }
+        audioEngine.inputNode.removeTap(onBus: 0)
+    }
+
     private func processTranscript(_ transcript: String, isFinal: Bool) async {
+        guard !transcript.isEmpty else { return }
+
         let lowercased = transcript.lowercased()
 
-        // Check for wake word
         if !isWakeWordDetected {
             for wakeWord in wakeWords {
                 if lowercased.contains(wakeWord) {
@@ -280,9 +371,12 @@ public class MetaGlassesManager: NSObject, ObservableObject {
             return
         }
 
-        // Process command if wake word was detected and this is final
         if isFinal && isWakeWordDetected {
-            isWakeWordDetected = false
+            if !isDirectMode {
+                isWakeWordDetected = false
+            }
+
+            self.pendingTranscript = ""
 
             let result = VoiceCommandResult(
                 transcript: transcript,
@@ -291,119 +385,14 @@ public class MetaGlassesManager: NSObject, ObservableObject {
                 timestamp: Date()
             )
 
-            // Send to VoiceSwap API for processing
-            await processVoiceCommand(result)
+            print("[MetaGlasses] Processing voice command: \(transcript)")
 
-            delegate?.glassesDidReceiveVoiceCommand(result)
-        }
-    }
-
-    private func processVoiceCommand(_ command: VoiceCommandResult) async {
-        guard let walletAddress = userWalletAddress else {
-            speak("Please connect your wallet first", language: "en-US")
-            return
-        }
-
-        do {
-            // Call VoiceSwap AI endpoint
-            let response = try await callVoiceSwapAPI(
-                endpoint: "/voiceswap/ai/process",
-                body: [
-                    "transcript": command.transcript,
-                    "userAddress": walletAddress,
-                    "merchantWallet": currentMerchantWallet as Any
-                ]
-            )
-
-            // Speak the response
-            if let voiceResponse = response["data"] as? [String: Any],
-               let speechText = voiceResponse["voiceResponse"] as? String {
-
-                let language = command.language == "es" ? "es-ES" : "en-US"
-                speak(speechText, language: language)
-
-                // Handle next action
-                if let nextAction = voiceResponse["nextAction"] as? String {
-                    await handleNextAction(nextAction, response: voiceResponse)
-                }
+            if let delegate = delegate {
+                delegate.glassesDidReceiveVoiceCommand(result)
+            } else {
+                print("[MetaGlasses] WARNING: delegate is nil!")
             }
-        } catch {
-            print("[MetaGlasses] API error: \(error)")
-            speak("Sorry, there was an error processing your request", language: "en-US")
         }
-    }
-
-    private func handleNextAction(_ action: String, response: [String: Any]) async {
-        switch action {
-        case "scan_qr":
-            speak("Please look at the QR code", language: "en-US")
-            // Trigger QR scan
-
-        case "await_confirmation":
-            triggerHaptic(.double)
-            // Wait for confirm/cancel voice command
-
-        case "execute_transaction":
-            triggerHaptic(.long)
-            // Execute the payment
-            await executePayment()
-
-        case "cancel_transaction":
-            triggerHaptic(.short)
-            currentMerchantWallet = nil
-
-        case "show_balance":
-            triggerHaptic(.short)
-
-        default:
-            break
-        }
-    }
-
-    private func executePayment() async {
-        guard let walletAddress = userWalletAddress,
-              let merchantWallet = currentMerchantWallet else {
-            return
-        }
-
-        do {
-            let response = try await callVoiceSwapAPI(
-                endpoint: "/voiceswap/execute",
-                body: [
-                    "userAddress": walletAddress,
-                    "merchantWallet": merchantWallet,
-                    "amount": "10" // TODO: Get from context
-                ]
-            )
-
-            if let data = response["data"] as? [String: Any],
-               let message = data["message"] as? String {
-                speak(message, language: "en-US")
-                triggerHaptic(.success)
-            }
-        } catch {
-            speak("Payment failed. Please try again.", language: "en-US")
-            triggerHaptic(.error)
-        }
-    }
-
-    private func callVoiceSwapAPI(endpoint: String, body: [String: Any]) async throws -> [String: Any] {
-        guard let url = URL(string: "\(apiBaseURL)\(endpoint)") else {
-            throw NSError(domain: "MetaGlasses", code: 2, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, _) = try await URLSession.shared.data(for: request)
-
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw NSError(domain: "MetaGlasses", code: 3, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
-        }
-
-        return json
     }
 
     private func detectLanguage(_ text: String) -> String {
@@ -418,26 +407,6 @@ public class MetaGlassesManager: NSObject, ObservableObject {
 
         return "en"
     }
-
-    private func simulateGlassesConnection() async throws {
-        // Simulate connection delay
-        try await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
-
-        connectionState = .connected
-        batteryLevel = 85
-        delegate?.glassesDidConnect()
-        print("[MetaGlasses] Connected (simulated)")
-    }
-}
-
-// MARK: - Haptic Patterns
-
-public enum HapticPattern {
-    case short      // Single short vibration
-    case double     // Two short vibrations
-    case long       // One long vibration
-    case success    // Success pattern
-    case error      // Error pattern
 }
 
 // MARK: - AVSpeechSynthesizerDelegate

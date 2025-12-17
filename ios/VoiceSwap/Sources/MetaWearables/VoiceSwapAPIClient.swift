@@ -38,6 +38,7 @@ public struct AIProcessResponse: Decodable {
 
 public struct ContextInfo: Decodable {
     public let balance: String?
+    public let ethBalance: String?
     public let merchantName: String?
 }
 
@@ -47,6 +48,8 @@ public struct WalletBalances: Decodable {
     public let nativeETH: TokenBalance
     public let tokens: [TokenBalance]
     public let totalUSDC: String
+    public let totalUSD: String
+    public let ethPriceUSD: Double
 }
 
 public struct TokenBalance: Decodable {

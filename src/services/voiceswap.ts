@@ -68,7 +68,9 @@ export interface WalletBalances {
   chainId: number;
   nativeETH: TokenBalance;
   tokens: TokenBalance[];
-  totalUSDC: string; // Total value if converted to USDC
+  totalUSDC: string; // USDC balance only
+  totalUSD: string;  // Total value in USD (USDC + ETH converted)
+  ethPriceUSD: number; // Current ETH price used for calculation
 }
 
 /**
@@ -178,6 +180,14 @@ export async function getWalletBalances(userAddress: string): Promise<WalletBala
   const wethFormatted = ethers.utils.formatEther(wethBalance);
   const usdcFormatted = ethers.utils.formatUnits(usdcBalance, 6);
 
+  // Calculate total USD value (USDC + ETH)
+  const ETH_PRICE_USD = 3900; // TODO: Get from price oracle
+  const ethValue = parseFloat(ethFormatted);
+  const wethValue = parseFloat(wethFormatted);
+  const usdcValue = parseFloat(usdcFormatted);
+  const totalETHValue = (ethValue + wethValue) * ETH_PRICE_USD;
+  const totalUSD = (usdcValue + totalETHValue).toFixed(2);
+
   return {
     address: checksumAddress,
     chainId: CHAIN_ID,
@@ -204,7 +214,9 @@ export async function getWalletBalances(userAddress: string): Promise<WalletBala
         decimals: 6,
       },
     ],
-    totalUSDC: usdcFormatted, // For now, just USDC balance (later we can add price conversion)
+    totalUSDC: usdcFormatted,
+    totalUSD: totalUSD,
+    ethPriceUSD: ETH_PRICE_USD,
   };
 }
 

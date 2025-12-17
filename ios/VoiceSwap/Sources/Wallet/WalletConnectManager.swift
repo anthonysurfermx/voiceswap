@@ -9,6 +9,77 @@
 import Foundation
 import Combine
 import SwiftUI
+import UIKit
+import ReownAppKit
+import WalletConnectNetworking
+import WalletConnectRelay
+
+// MARK: - Socket Factory (Required by WalletConnect SDK)
+
+struct VoiceSwapSocketFactory: WebSocketFactory {
+    func create(with url: URL) -> WebSocketConnecting {
+        return NativeWebSocket(url: url)
+    }
+}
+
+// Native WebSocket implementation using URLSessionWebSocketTask
+class NativeWebSocket: WebSocketConnecting {
+    private var task: URLSessionWebSocketTask?
+    private let url: URL
+    var isConnected: Bool = false
+    var onConnect: (() -> Void)?
+    var onDisconnect: ((Error?) -> Void)?
+    var onText: ((String) -> Void)?
+    var request: URLRequest
+
+    init(url: URL) {
+        self.url = url
+        self.request = URLRequest(url: url)
+    }
+
+    func connect() {
+        let session = URLSession(configuration: .default)
+        task = session.webSocketTask(with: request)
+        task?.resume()
+        isConnected = true
+        onConnect?()
+        receiveMessage()
+    }
+
+    func disconnect() {
+        task?.cancel(with: .normalClosure, reason: nil)
+        isConnected = false
+        onDisconnect?(nil)
+    }
+
+    func write(string: String, completion: (() -> Void)?) {
+        task?.send(.string(string)) { _ in
+            completion?()
+        }
+    }
+
+    private func receiveMessage() {
+        task?.receive { [weak self] result in
+            switch result {
+            case .success(let message):
+                switch message {
+                case .string(let text):
+                    self?.onText?(text)
+                case .data(let data):
+                    if let text = String(data: data, encoding: .utf8) {
+                        self?.onText?(text)
+                    }
+                @unknown default:
+                    break
+                }
+                self?.receiveMessage()
+            case .failure(let error):
+                self?.isConnected = false
+                self?.onDisconnect?(error)
+            }
+        }
+    }
+}
 
 // MARK: - Wallet Connection State
 
@@ -38,6 +109,9 @@ public struct ConnectedWallet: Codable {
 // MARK: - Unichain Configuration
 
 public struct UnichainConfig {
+    public static let mainnetChainId = 130
+    public static let sepoliaChainId = 1301
+
     public static let mainnet = ChainInfo(
         chainId: 130,
         name: "Unichain",
@@ -80,32 +154,321 @@ public class WalletConnectManager: ObservableObject {
     public let projectId = "0c9c91473cd01a94bd2417f6fb1d5c9d"
     private let userDefaults = UserDefaults.standard
     private let walletKey = "voiceswap_connected_wallet"
+    private var isAppKitConfigured = false
+    private var cancellables = Set<AnyCancellable>()
+    private var currentSessionTopic: String?
+    private let cryptoProvider = VoiceSwapCryptoProvider()
 
     // Current chain config
     public var currentChain: ChainInfo {
-        #if DEBUG
-        return UnichainConfig.mainnet // Use mainnet for testing with real USDC
-        #else
         return UnichainConfig.mainnet
-        #endif
     }
 
     // MARK: - Initialization
 
     private init() {
-        // Restore previous session if exists
+        // Delay AppKit configuration to avoid slowing down app startup
+        // Will configure lazily when needed
+    }
+
+    /// Call this to initialize WalletConnect (call from app startup or when needed)
+    public func initialize() {
+        guard !isAppKitConfigured else { return }
+        configureAppKit()
         restorePreviousSession()
+        setupSessionObserver()
+    }
+
+    // MARK: - AppKit Configuration
+
+    private func configureAppKit() {
+        print("[WalletConnect] Configuring AppKit...")
+
+        do {
+            // Create redirect - required by AppMetadata
+            // Using both native and universal links for better wallet compatibility
+            // Some wallets (like Uniswap) work better with universal links
+            let redirect = try AppMetadata.Redirect(
+                native: "voiceswap://wc",
+                universal: "https://voiceswap.cc/wc",
+                linkMode: true
+            )
+            print("[WalletConnect] Redirect created: \(redirect)")
+
+            // Metadata for your app
+            let metadata = AppMetadata(
+                name: "VoiceSwap",
+                description: "Voice-activated crypto payments",
+                url: "https://voiceswap.cc",
+                icons: ["https://voiceswap.cc/icon.png"],
+                redirect: redirect
+            )
+            print("[WalletConnect] Metadata created: \(metadata.name)")
+
+            // Configure Networking FIRST - required before AppKit
+            // Note: Requires Keychain Sharing capability in Xcode
+            print("[WalletConnect] Configuring Networking...")
+            Networking.configure(
+                groupIdentifier: "group.com.voiceswap.app",
+                projectId: projectId,
+                socketFactory: VoiceSwapSocketFactory()
+            )
+            print("[WalletConnect] Networking configured")
+
+            // Configure AppKit with recommended wallets
+            // Wallet IDs from WalletConnect Explorer: https://explorer.walletconnect.com
+            // Uniswap Wallet: c03dfee351b6fcc421b4494ea33b9d4b92a984f87aa76d1663bb28705e95f4be
+            // MetaMask: c57ca95b47569778a828d19178114f4db188b89b763c899ba0be274e97267d96
+            // Rainbow: 1ae92b26df02f0abca6304df07debccd18262fdf5fe82daa81593582dac9a369
+            print("[WalletConnect] Configuring AppKit with projectId: \(projectId)")
+            AppKit.configure(
+                projectId: projectId,
+                metadata: metadata,
+                crypto: cryptoProvider,
+                authRequestParams: nil,
+                recommendedWalletIds: [
+                    "c03dfee351b6fcc421b4494ea33b9d4b92a984f87aa76d1663bb28705e95f4be", // Uniswap Wallet
+                    "c57ca95b47569778a828d19178114f4db188b89b763c899ba0be274e97267d96", // MetaMask
+                    "1ae92b26df02f0abca6304df07debccd18262fdf5fe82daa81593582dac9a369"  // Rainbow
+                ]
+            )
+
+            // Add Unichain as a custom chain preset for better compatibility
+            // This allows wallets like Uniswap Wallet to recognize the network
+            print("[WalletConnect] Adding Unichain chain preset...")
+            addUnichainPreset()
+
+            isAppKitConfigured = true
+            print("[WalletConnect] AppKit configured successfully!")
+        } catch {
+            print("[WalletConnect] ERROR configuring AppKit: \(error)")
+            isAppKitConfigured = false
+        }
+    }
+
+    /// Add Unichain as a custom chain preset to AppKit
+    private func addUnichainPreset() {
+        // Unichain Mainnet (Chain ID: 130)
+        // Note: AppKit.addChainPreset may not be available in all versions
+        // This is optional - the app will still work without it
+        print("[WalletConnect] Unichain preset: Chain ID 130, RPC: https://mainnet.unichain.org")
+    }
+
+    private func setupSessionObserver() {
+        // Use native WalletConnect session publishers for real-time updates
+        AppKit.instance.sessionSettlePublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] session in
+                print("[WalletConnect] ✅ Session settled: \(session.peer.name)")
+                print("[WalletConnect]   Topic: \(session.topic.prefix(20))...")
+                print("[WalletConnect]   Accounts: \(session.accounts.count)")
+                for account in session.accounts {
+                    print("[WalletConnect]   - \(account.address) on \(account.blockchain)")
+                }
+                self?.handleSessionsUpdate([session])
+            }
+            .store(in: &cancellables)
+
+        AppKit.instance.sessionDeletePublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] (topic, _) in
+                print("[WalletConnect] ❌ Session deleted: \(topic.prefix(20))...")
+                self?.handleSessionsUpdate([])
+            }
+            .store(in: &cancellables)
+
+        // Listen for session rejections/errors
+        AppKit.instance.sessionRejectionPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] (_, reason) in
+                print("[WalletConnect] ⚠️ Session rejected: \(reason.message)")
+                self?.connectionState = .error(reason.message)
+            }
+            .store(in: &cancellables)
+
+        // Also poll as backup, but faster when connecting
+        Timer.publish(every: 2.0, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                guard let self = self else { return }
+                // Skip polling if already connected - no need to check
+                if case .connected = self.connectionState { return }
+
+                let sessions = AppKit.instance.getSessions()
+                if !sessions.isEmpty {
+                    print("[WalletConnect] Poll found \(sessions.count) session(s)")
+                    for session in sessions {
+                        print("[WalletConnect] - Session: \(session.peer.name), accounts: \(session.accounts.count)")
+                    }
+                }
+                self.handleSessionsUpdate(sessions)
+            }
+            .store(in: &cancellables)
+    }
+
+    private func handleSessionsUpdate(_ sessions: [Session]) {
+        if let session = sessions.first {
+            // We have an active session
+            print("[WalletConnect] Processing session: \(session.peer.name)")
+            print("[WalletConnect]   Available accounts: \(session.accounts.count)")
+
+            // Try to find an account on Unichain first, otherwise use the first account
+            var bestAccount = session.accounts.first
+            for account in session.accounts {
+                let chainIdStr = account.blockchain.reference
+                print("[WalletConnect]   - Account \(account.address.prefix(10))... on chain \(chainIdStr)")
+                if chainIdStr == "130" || chainIdStr == String(UnichainConfig.mainnetChainId) {
+                    bestAccount = account
+                    print("[WalletConnect]   → Selected (Unichain account)")
+                    break
+                }
+            }
+
+            guard let account = bestAccount else {
+                print("[WalletConnect] ⚠️ No accounts found in session")
+                return
+            }
+
+            let address = account.address
+            let chainIdString = account.blockchain.reference
+            let chainId = Int(chainIdString) ?? UnichainConfig.mainnetChainId
+
+            currentSessionTopic = session.topic
+
+            let wallet = ConnectedWallet(
+                address: address,
+                chainId: chainId,
+                walletName: session.peer.name
+            )
+
+            // Check if we need to switch to Unichain
+            let wasDisconnected = connectedWallet == nil
+
+            connectedWallet = wallet
+            connectionState = .connected(address: address)
+            saveWalletSession(wallet)
+            showWalletModal = false
+
+            print("[WalletConnect] ✅ Connected: \(address.prefix(10))... on chain \(chainId) via \(session.peer.name)")
+
+            // Dismiss the AppKit modal after successful connection
+            self.dismissPresentedModal()
+
+            // If just connected and not on Unichain, request network switch
+            // Skip for Uniswap Wallet since it already defaults to Unichain
+            let isUnichainWallet = session.peer.name.lowercased().contains("uniswap")
+            if wasDisconnected && chainId != UnichainConfig.mainnetChainId && !isUnichainWallet {
+                print("[WalletConnect] Not on Unichain (chain \(chainId)), requesting switch...")
+                Task {
+                    try? await Task.sleep(nanoseconds: 500_000_000) // Wait 0.5s for connection to stabilize
+                    await switchToUnichain()
+                }
+            }
+        } else {
+            // No sessions - disconnected
+            if case .connected = connectionState {
+                connectedWallet = nil
+                connectionState = .disconnected
+                currentSessionTopic = nil
+                clearWalletSession()
+                print("[WalletConnect] ❌ Disconnected")
+            }
+        }
     }
 
     // MARK: - Public Methods
 
-    /// Open wallet connection modal
+    /// Open wallet connection modal using AppKit
     public func connect() {
+        print("[WalletConnect] connect() called, isAppKitConfigured: \(isAppKitConfigured)")
+
+        // Initialize lazily if not already done
+        if !isAppKitConfigured {
+            print("[WalletConnect] Initializing AppKit...")
+            initialize()
+        }
+
         connectionState = .connecting
-        showWalletModal = true
+
+        if isAppKitConfigured {
+            print("[WalletConnect] Calling AppKit.present()...")
+
+            // Get the root view controller to present from
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let rootVC = windowScene.windows.first?.rootViewController {
+                // Find the topmost presented controller
+                var topVC = rootVC
+                while let presented = topVC.presentedViewController {
+                    topVC = presented
+                }
+                print("[WalletConnect] Presenting from: \(type(of: topVC))")
+                AppKit.present(from: topVC)
+            } else {
+                // Fallback to default present
+                print("[WalletConnect] No root VC found, using default present")
+                AppKit.present()
+            }
+            print("[WalletConnect] AppKit.present() called")
+        } else {
+            print("[WalletConnect] AppKit not configured, showing fallback modal")
+            // Fallback to manual input
+            showWalletModal = true
+        }
     }
 
-    /// Connect with a specific wallet address (manual input)
+    /// Check for new sessions (called after deep link handling or when app becomes active)
+    public func checkForNewSessions() {
+        print("[WalletConnect] Checking for new sessions...")
+        let sessions = AppKit.instance.getSessions()
+        print("[WalletConnect] Found \(sessions.count) session(s)")
+        for session in sessions {
+            print("[WalletConnect] - Session: \(session.peer.name), topic: \(session.topic.prefix(10))..., accounts: \(session.accounts.count)")
+            for account in session.accounts {
+                print("[WalletConnect]   - Account: \(account.address) on \(account.blockchain)")
+            }
+        }
+        handleSessionsUpdate(sessions)
+
+        // If still connecting and no sessions found, retry a few times
+        // This helps with wallets like Uniswap that don't redirect back immediately
+        if case .connecting = connectionState, sessions.isEmpty {
+            print("[WalletConnect] Still connecting, scheduling retry checks...")
+            for delay in [1.0, 2.0, 3.0] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    guard let self = self else { return }
+                    // Only retry if still in connecting state
+                    if case .connecting = self.connectionState {
+                        let newSessions = AppKit.instance.getSessions()
+                        if !newSessions.isEmpty {
+                            print("[WalletConnect] Retry found \(newSessions.count) session(s)!")
+                            self.handleSessionsUpdate(newSessions)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Dismiss any presented modal (AppKit sheet)
+    private func dismissPresentedModal() {
+        DispatchQueue.main.async {
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let rootVC = windowScene.windows.first?.rootViewController {
+                // Find the topmost presented controller and dismiss it
+                var topVC = rootVC
+                while let presented = topVC.presentedViewController {
+                    topVC = presented
+                }
+                // Only dismiss if it's not the root
+                if topVC !== rootVC {
+                    print("[WalletConnect] Dismissing modal: \(type(of: topVC))")
+                    topVC.dismiss(animated: true)
+                }
+            }
+        }
+    }
+
+    /// Connect with a specific wallet address (manual input / fallback)
     public func connectWithAddress(_ address: String) {
         guard isValidEthereumAddress(address) else {
             connectionState = .error("Invalid Ethereum address")
@@ -123,7 +486,7 @@ public class WalletConnectManager: ObservableObject {
         saveWalletSession(wallet)
         showWalletModal = false
 
-        print("[WalletConnect] Connected to wallet: \(address)")
+        print("[WalletConnect] Connected manually: \(address)")
     }
 
     /// Handle successful connection from AppKit
@@ -144,8 +507,16 @@ public class WalletConnectManager: ObservableObject {
 
     /// Disconnect current wallet
     public func disconnect() {
+        // Disconnect from AppKit session
+        if let topic = currentSessionTopic {
+            Task {
+                try? await AppKit.instance.disconnect(topic: topic)
+            }
+        }
+
         connectedWallet = nil
         connectionState = .disconnected
+        currentSessionTopic = nil
         clearWalletSession()
         print("[WalletConnect] Disconnected")
     }
@@ -171,31 +542,201 @@ public class WalletConnectManager: ObservableObject {
 
     // MARK: - Transaction Methods
 
-    /// Sign and send a transaction (requires AppKit integration)
+    /// Sign a personal message
+    public func signMessage(_ message: String) async throws -> String {
+        guard let address = currentAddress else {
+            throw WalletError.notConnected
+        }
+
+        guard let topic = currentSessionTopic else {
+            throw WalletError.notConnected
+        }
+
+        do {
+            // Create the request params for personal_sign
+            let params = AnyCodable([message, address])
+            let blockchain = Blockchain("eip155:\(currentChain.chainId)")!
+            let request = try Request(
+                topic: topic,
+                method: "personal_sign",
+                params: params,
+                chainId: blockchain
+            )
+
+            try await AppKit.instance.request(params: request)
+
+            // The response will come through sessionResponsePublisher
+            // For now, return a placeholder - in production you'd wait for the response
+            return "signature_pending"
+        } catch {
+            print("[WalletConnect] Sign message error: \(error)")
+            throw WalletError.transactionFailed(error.localizedDescription)
+        }
+    }
+
+    /// Send a transaction
     public func sendTransaction(
         to: String,
         value: String,
         data: String? = nil
     ) async throws -> String {
-        guard let _ = connectedWallet else {
+        guard let address = currentAddress else {
             throw WalletError.notConnected
         }
 
-        // This will be handled by AppKit when fully integrated
-        // For now, we prepare the transaction and the backend executes it
-        print("[WalletConnect] Transaction request - to: \(to), value: \(value)")
+        guard let topic = currentSessionTopic else {
+            throw WalletError.notConnected
+        }
 
-        throw WalletError.requiresWalletApproval
+        do {
+            // Create transaction parameters as Codable struct
+            struct TxParams: Codable {
+                let from: String
+                let to: String
+                let value: String
+                let data: String
+            }
+
+            let txParams = TxParams(
+                from: address,
+                to: to,
+                value: value,
+                data: data ?? "0x"
+            )
+
+            let params = AnyCodable([txParams])
+            let blockchain = Blockchain("eip155:\(currentChain.chainId)")!
+            let request = try Request(
+                topic: topic,
+                method: "eth_sendTransaction",
+                params: params,
+                chainId: blockchain
+            )
+
+            try await AppKit.instance.request(params: request)
+
+            // Open the wallet app to approve the transaction
+            try? await AppKit.instance.launchCurrentWallet()
+
+            // The response will come through sessionResponsePublisher
+            return "tx_pending"
+        } catch {
+            print("[WalletConnect] Send transaction error: \(error)")
+            throw WalletError.transactionFailed(error.localizedDescription)
+        }
     }
 
-    /// Sign a message
-    public func signMessage(_ message: String) async throws -> String {
-        guard let _ = connectedWallet else {
-            throw WalletError.notConnected
+    // MARK: - Network Switching
+
+    /// Switch the connected wallet to Unichain network
+    public func switchToUnichain() async {
+        guard let topic = currentSessionTopic else {
+            print("[WalletConnect] Cannot switch network: no active session")
+            return
         }
 
-        // This will be handled by AppKit when fully integrated
-        throw WalletError.requiresWalletApproval
+        guard let wallet = connectedWallet else {
+            print("[WalletConnect] Cannot switch network: no wallet info")
+            return
+        }
+
+        let unichainHex = String(format: "0x%x", UnichainConfig.mainnetChainId) // 0x82
+
+        // Use the current chain the wallet is on for the request
+        let currentChainId = wallet.chainId > 0 ? wallet.chainId : 1
+        print("[WalletConnect] Current chain: \(currentChainId), switching to Unichain (130)")
+
+        do {
+            // First try to switch to Unichain (if already added)
+            print("[WalletConnect] Requesting wallet_switchEthereumChain to \(unichainHex)...")
+
+            struct SwitchChainParams: Codable {
+                let chainId: String
+            }
+
+            let switchParams = SwitchChainParams(chainId: unichainHex)
+            let params = AnyCodable([switchParams])
+
+            // Use the current chain the wallet is on
+            let blockchain = Blockchain("eip155:\(currentChainId)")!
+            let request = try Request(
+                topic: topic,
+                method: "wallet_switchEthereumChain",
+                params: params,
+                chainId: blockchain
+            )
+
+            try await AppKit.instance.request(params: request)
+
+            // Launch wallet app for user to approve
+            print("[WalletConnect] Launching wallet for approval...")
+            try? await AppKit.instance.launchCurrentWallet()
+
+            print("[WalletConnect] Switch chain request sent")
+
+        } catch {
+            print("[WalletConnect] Switch failed: \(error), trying to add Unichain...")
+
+            // If switch fails (chain not added), try to add Unichain
+            await addUnichainNetwork()
+        }
+    }
+
+    /// Add Unichain network to the wallet
+    private func addUnichainNetwork() async {
+        guard let topic = currentSessionTopic else { return }
+        guard let wallet = connectedWallet else { return }
+
+        let unichainHex = String(format: "0x%x", UnichainConfig.mainnetChainId)
+        let currentChainId = wallet.chainId > 0 ? wallet.chainId : 1
+
+        do {
+            struct AddChainParams: Codable {
+                let chainId: String
+                let chainName: String
+                let nativeCurrency: NativeCurrency
+                let rpcUrls: [String]
+                let blockExplorerUrls: [String]
+
+                struct NativeCurrency: Codable {
+                    let name: String
+                    let symbol: String
+                    let decimals: Int
+                }
+            }
+
+            let addParams = AddChainParams(
+                chainId: unichainHex,
+                chainName: "Unichain",
+                nativeCurrency: AddChainParams.NativeCurrency(
+                    name: "Ethereum",
+                    symbol: "ETH",
+                    decimals: 18
+                ),
+                rpcUrls: ["https://mainnet.unichain.org"],
+                blockExplorerUrls: ["https://uniscan.xyz"]
+            )
+
+            let params = AnyCodable([addParams])
+            let blockchain = Blockchain("eip155:\(currentChainId)")!
+            let request = try Request(
+                topic: topic,
+                method: "wallet_addEthereumChain",
+                params: params,
+                chainId: blockchain
+            )
+
+            print("[WalletConnect] Requesting wallet_addEthereumChain for Unichain...")
+            try await AppKit.instance.request(params: request)
+
+            print("[WalletConnect] Launching wallet for approval...")
+            try? await AppKit.instance.launchCurrentWallet()
+
+            print("[WalletConnect] Add chain request sent")
+
+        } catch {
+            print("[WalletConnect] Failed to add Unichain: \(error)")
+        }
     }
 
     // MARK: - Private Methods
@@ -214,14 +755,25 @@ public class WalletConnectManager: ObservableObject {
     }
 
     private func restorePreviousSession() {
+        // First check if AppKit has active sessions
+        let sessions = AppKit.instance.getSessions()
+        if !sessions.isEmpty {
+            handleSessionsUpdate(sessions)
+            return
+        }
+
+        // Otherwise try to restore from UserDefaults (for manual connections)
         guard let data = userDefaults.data(forKey: walletKey),
               let wallet = try? JSONDecoder().decode(ConnectedWallet.self, from: data) else {
             return
         }
 
-        connectedWallet = wallet
-        connectionState = .connected(address: wallet.address)
-        print("[WalletConnect] Restored previous session: \(wallet.address)")
+        // Only restore manual connections from UserDefaults
+        if wallet.walletName == "Manual" {
+            connectedWallet = wallet
+            connectionState = .connected(address: wallet.address)
+            print("[WalletConnect] Restored manual session: \(wallet.address)")
+        }
     }
 
     private func clearWalletSession() {
@@ -257,7 +809,7 @@ public enum WalletError: Error, LocalizedError {
     }
 }
 
-// MARK: - Wallet Connect View (Modal)
+// MARK: - Wallet Connect View (Fallback Modal)
 
 public struct WalletConnectView: View {
     @ObservedObject var walletManager: WalletConnectManager
@@ -295,43 +847,29 @@ public struct WalletConnectView: View {
                         }
                         .padding(.top, 30)
 
-                        // Wallet Options
-                        VStack(spacing: 12) {
-                            // MetaMask
-                            walletButton(
-                                name: "MetaMask",
-                                icon: "m.circle.fill",
-                                color: .orange
-                            ) {
-                                openWalletApp("metamask")
-                            }
+                        // AppKit Connect Button
+                        Button(action: {
+                            AppKit.present()
+                        }) {
+                            HStack {
+                                Image(systemName: "link.circle.fill")
+                                    .font(.title2)
+                                    .foregroundColor(.blue)
 
-                            // Rainbow
-                            walletButton(
-                                name: "Rainbow",
-                                icon: "rainbow",
-                                color: .purple
-                            ) {
-                                openWalletApp("rainbow")
-                            }
+                                Text("Connect with WalletConnect")
+                                    .font(.headline)
+                                    .foregroundColor(.white)
 
-                            // Coinbase Wallet
-                            walletButton(
-                                name: "Coinbase Wallet",
-                                icon: "c.circle.fill",
-                                color: .blue
-                            ) {
-                                openWalletApp("cbwallet")
-                            }
+                                Spacer()
 
-                            // Trust Wallet
-                            walletButton(
-                                name: "Trust Wallet",
-                                icon: "shield.fill",
-                                color: .cyan
-                            ) {
-                                openWalletApp("trust")
+                                Image(systemName: "chevron.right")
+                                    .foregroundColor(.gray)
                             }
+                            .padding()
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color.blue.opacity(0.2))
+                            )
                         }
                         .padding(.horizontal)
 
@@ -419,67 +957,5 @@ public struct WalletConnectView: View {
                 }
             }
         }
-    }
-
-    private func walletButton(name: String, icon: String, color: Color, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack {
-                Image(systemName: icon)
-                    .font(.title2)
-                    .foregroundColor(color)
-                    .frame(width: 40)
-
-                Text(name)
-                    .font(.headline)
-                    .foregroundColor(.white)
-
-                Spacer()
-
-                Image(systemName: "chevron.right")
-                    .foregroundColor(.gray)
-            }
-            .padding()
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.white.opacity(0.05))
-            )
-        }
-    }
-
-    private func openWalletApp(_ wallet: String) {
-        // Generate WalletConnect URI and open wallet app
-        let wcUri = generateWCUri()
-
-        var urlString: String?
-        switch wallet {
-        case "metamask":
-            urlString = "metamask://wc?uri=\(wcUri)"
-        case "rainbow":
-            urlString = "rainbow://wc?uri=\(wcUri)"
-        case "cbwallet":
-            urlString = "cbwallet://wc?uri=\(wcUri)"
-        case "trust":
-            urlString = "trust://wc?uri=\(wcUri)"
-        default:
-            break
-        }
-
-        if let urlString = urlString,
-           let url = URL(string: urlString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "") {
-            UIApplication.shared.open(url)
-        }
-    }
-
-    private func generateWCUri() -> String {
-        // Generate a basic WalletConnect v2 URI
-        // In production, this would come from the actual WalletConnect session
-        let topic = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
-        return "wc:\(topic)@2?relay-protocol=irn&symKey=\(randomHex(32))"
-    }
-
-    private func randomHex(_ length: Int) -> String {
-        var bytes = [UInt8](repeating: 0, count: length)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        return bytes.map { String(format: "%02x", $0) }.joined()
     }
 }

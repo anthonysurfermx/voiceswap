@@ -1,4 +1,4 @@
-/**
+ /**
  * VoiceSwapApp.swift
  * VoiceSwap - Main App Entry Point
  *
@@ -8,10 +8,12 @@
 
 import SwiftUI
 import UserNotifications
+import ReownAppKit
 
 @main
 struct VoiceSwapApp: App {
     @StateObject private var appState = AppState()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
@@ -24,11 +26,31 @@ struct VoiceSwapApp: App {
                     handleDeepLink(url)
                 }
         }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                // App became active - check for wallet sessions
+                // This handles the case where user connected in wallet app and returned
+                // Check immediately and again after delays for wallets that don't redirect
+                print("[VoiceSwap] App became active - checking wallet sessions")
+                WalletConnectManager.shared.checkForNewSessions()
+
+                // Additional checks for wallets like Uniswap that don't auto-redirect
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    WalletConnectManager.shared.checkForNewSessions()
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    WalletConnectManager.shared.checkForNewSessions()
+                }
+            }
+        }
     }
 
     private func setupApp() {
         // Request necessary permissions
         requestPermissions()
+
+        // Initialize WalletConnect
+        WalletConnectManager.shared.initialize()
 
         // Configure app
         print("[VoiceSwap] App started")
@@ -53,6 +75,18 @@ struct VoiceSwapApp: App {
 
     private func handleDeepLink(_ url: URL) {
         print("[VoiceSwap] Received deep link: \(url)")
+        print("[VoiceSwap] Deep link scheme: \(url.scheme ?? "nil"), host: \(url.host ?? "nil")")
+
+        // Handle WalletConnect deep links first
+        if url.scheme == "wc" || url.absoluteString.contains("wc:") {
+            print("[VoiceSwap] Handling WalletConnect deep link")
+            AppKit.instance.handleDeeplink(url)
+            // Also trigger a session check after handling the deep link
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                WalletConnectManager.shared.checkForNewSessions()
+            }
+            return
+        }
 
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: true) else {
             print("[VoiceSwap] Invalid URL components")
@@ -61,11 +95,26 @@ struct VoiceSwapApp: App {
 
         // Handle voiceswap:// scheme
         if url.scheme == "voiceswap" {
+            // Check if it's a WalletConnect callback
+            if url.host == "wc" || url.absoluteString.contains("wc") {
+                print("[VoiceSwap] Handling voiceswap WC callback")
+                AppKit.instance.handleDeeplink(url)
+                // Also trigger a session check
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    WalletConnectManager.shared.checkForNewSessions()
+                }
+                return
+            }
             handleVoiceSwapURL(components)
         }
         // Handle Universal Links (https://voiceswap.cc/...)
         else if url.host == "voiceswap.cc" {
             handleUniversalLink(components)
+        }
+
+        // Always check for sessions when app receives any deep link (wallet might be returning)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            WalletConnectManager.shared.checkForNewSessions()
         }
     }
 

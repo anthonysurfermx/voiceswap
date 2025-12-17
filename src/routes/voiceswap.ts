@@ -652,6 +652,7 @@ router.post('/ai/process', async (req, res) => {
     // Build context for response generation
     const context: {
       balance?: string;
+      ethBalance?: string;
       merchantName?: string;
     } = {};
 
@@ -661,6 +662,7 @@ router.post('/ai/process', async (req, res) => {
         const balances = await getWalletBalances(userAddress);
         const usdcBalance = balances.tokens.find(t => t.symbol === 'USDC');
         context.balance = usdcBalance?.balance || '0';
+        context.ethBalance = balances.nativeETH.balance;
       } catch (e) {
         console.error('[VoiceSwap] Failed to get balances:', e);
       }
