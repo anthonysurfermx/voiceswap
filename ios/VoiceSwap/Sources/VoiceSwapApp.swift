@@ -28,19 +28,9 @@ struct VoiceSwapApp: App {
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
-                // App became active - check for wallet sessions
-                // This handles the case where user connected in wallet app and returned
-                // Check immediately and again after delays for wallets that don't redirect
-                print("[VoiceSwap] App became active - checking wallet sessions")
+                // Check for wallet sessions only once when app becomes active
+                // The checkForNewSessions function handles retries internally
                 WalletConnectManager.shared.checkForNewSessions()
-
-                // Additional checks for wallets like Uniswap that don't auto-redirect
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    WalletConnectManager.shared.checkForNewSessions()
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                    WalletConnectManager.shared.checkForNewSessions()
-                }
             }
         }
     }
@@ -119,7 +109,26 @@ struct VoiceSwapApp: App {
     }
 
     private func handleVoiceSwapURL(_ components: URLComponents) {
-        guard let host = components.host else { return }
+        let queryItems = components.queryItems ?? []
+
+        print("[VoiceSwap] Processing voiceswap URL, queryItems count: \(queryItems.count)")
+        for item in queryItems {
+            print("[VoiceSwap]   - \(item.name): \(item.value?.prefix(20) ?? "nil")...")
+        }
+
+        // Check for Meta Wearables callback (no host or empty host, has metaWearablesAction parameter)
+        if let metaAction = queryItems.first(where: { $0.name == "metaWearablesAction" })?.value {
+            print("[VoiceSwap] Meta Wearables callback: \(metaAction)")
+            handleMetaWearablesCallback(queryItems: queryItems, action: metaAction)
+            return
+        }
+
+        // Get host, treating empty string same as nil
+        let host = components.host
+        guard let host = host, !host.isEmpty else {
+            print("[VoiceSwap] Unknown deep link format (no host or empty host)")
+            return
+        }
 
         switch host {
         case "pay":
@@ -136,6 +145,36 @@ struct VoiceSwapApp: App {
 
         default:
             print("[VoiceSwap] Unknown deep link host: \(host)")
+        }
+    }
+
+    private func handleMetaWearablesCallback(queryItems: [URLQueryItem], action: String) {
+        switch action {
+        case "register":
+            // User authorized the connection in Meta View app
+            let authorityKey = queryItems.first(where: { $0.name == "authorityKey" })?.value
+            let constellationGroupId = queryItems.first(where: { $0.name == "constellationGroupId" })?.value
+            let attestationValidated = queryItems.first(where: { $0.name == "attestationValidated" })?.value
+
+            print("[VoiceSwap] Meta Wearables registration callback:")
+            print("  - authorityKey: \(authorityKey?.prefix(20) ?? "nil")...")
+            print("  - constellationGroupId: \(constellationGroupId ?? "nil")")
+            print("  - attestationValidated: \(attestationValidated ?? "nil")")
+
+            // Notify MetaGlassesManager to complete the connection
+            Task { @MainActor in
+                await MetaGlassesManager.shared.handleRegistrationCallback(
+                    authorityKey: authorityKey,
+                    constellationGroupId: constellationGroupId
+                )
+            }
+
+        case "unregister":
+            print("[VoiceSwap] Meta Wearables unregistration callback")
+            MetaGlassesManager.shared.disconnect()
+
+        default:
+            print("[VoiceSwap] Unknown Meta Wearables action: \(action)")
         }
     }
 

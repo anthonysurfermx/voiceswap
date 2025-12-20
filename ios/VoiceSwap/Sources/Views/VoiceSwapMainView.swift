@@ -96,6 +96,7 @@ public struct VoiceSwapMainView: View {
     @EnvironmentObject var appState: AppState
     @StateObject private var viewModel = VoiceSwapViewModel()
     @ObservedObject private var walletManager = WalletConnectManager.shared
+    @StateObject private var glassesManager = MetaGlassesManager.shared
     @State private var showingSettings = false
     @State private var testCommand = ""
     @State private var showWalletSheet = false
@@ -115,6 +116,9 @@ public struct VoiceSwapMainView: View {
 
                     // Wallet Connection Card
                     walletConnectionCard
+
+                    // Meta AI Glasses Connection Card
+                    metaGlassesCard
 
                     // Balance Card (only show if wallet connected)
                     if walletManager.isConnected {
@@ -256,38 +260,37 @@ public struct VoiceSwapMainView: View {
                             Text("CONNECTED")
                                 .font(.system(size: 14, weight: .black))
                                 .foregroundColor(BrutalistColors.dark)
+                                .lineLimit(1)
 
-                            HStack(spacing: 6) {
-                                Text("\(address.prefix(6))...\(address.suffix(4))")
-                                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                                    .foregroundColor(BrutalistColors.dark.opacity(0.6))
-
-                                if let walletName = walletManager.connectedWallet?.walletName {
-                                    Text("(\(walletName))")
-                                        .font(.system(size: 10, weight: .medium))
-                                        .foregroundColor(BrutalistColors.dark.opacity(0.4))
-                                }
-                            }
+                            Text("\(address.prefix(6))...\(address.suffix(4))")
+                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                .foregroundColor(BrutalistColors.dark.opacity(0.6))
+                                .lineLimit(1)
                         } else if case .connecting = walletManager.connectionState {
                             Text("CONNECTING...")
                                 .font(.system(size: 14, weight: .black))
                                 .foregroundColor(BrutalistColors.dark)
+                                .lineLimit(1)
 
                             Text("Return here after signing")
                                 .font(.system(size: 12, weight: .medium))
                                 .foregroundColor(BrutalistColors.accent)
+                                .lineLimit(1)
                         } else {
                             Text("NO WALLET")
                                 .font(.system(size: 14, weight: .black))
                                 .foregroundColor(BrutalistColors.dark)
+                                .lineLimit(1)
 
                             Text("Connect to start")
                                 .font(.system(size: 12, weight: .medium))
                                 .foregroundColor(BrutalistColors.dark.opacity(0.6))
+                                .lineLimit(1)
                         }
                     }
+                    .fixedSize(horizontal: false, vertical: true)
 
-                    Spacer()
+                    Spacer(minLength: 8)
 
                     // Single action button - either disconnect or connect
                     Button {
@@ -355,6 +358,223 @@ public struct VoiceSwapMainView: View {
         }
         // Force UI refresh when connection state changes
         .id("wallet-card-\(walletManager.isConnected)-\(walletManager.currentAddress ?? "none")")
+    }
+
+    // MARK: - Meta Glasses Connection Card
+
+    private var metaGlassesCard: some View {
+        BrutalistCard(backgroundColor: glassesManager.isConnected ? BrutalistColors.success.opacity(0.2) : BrutalistColors.cardBg) {
+            VStack(spacing: 12) {
+                HStack(spacing: 16) {
+                    // Glasses icon
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(glassesManager.isConnected ? BrutalistColors.success : BrutalistColors.primary)
+                            .frame(width: 50, height: 50)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .stroke(BrutalistColors.dark, lineWidth: 2)
+                            )
+
+                        Image(systemName: glassesManager.isConnected ? "eyeglasses" : "eye.trianglebadge.exclamationmark")
+                            .font(.system(size: 24, weight: .bold))
+                            .foregroundColor(BrutalistColors.dark)
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(glassesConnectionTitle)
+                            .font(.system(size: 14, weight: .black))
+                            .foregroundColor(BrutalistColors.dark)
+                            .lineLimit(1)
+
+                        Text(glassesConnectionSubtitle)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(BrutalistColors.dark.opacity(0.6))
+                            .lineLimit(1)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+
+                    Spacer(minLength: 8)
+
+                    // Connect/Disconnect button
+                    Button {
+                        if glassesManager.isConnected {
+                            glassesManager.disconnect()
+                        } else {
+                            Task { await glassesManager.connect() }
+                        }
+                    } label: {
+                        Text(glassesManager.isConnected ? "X" : "+")
+                            .font(.system(size: 24, weight: .black))
+                            .foregroundColor(BrutalistColors.dark)
+                            .frame(width: 44, height: 44)
+                            .background(glassesManager.isConnected ? BrutalistColors.accent : BrutalistColors.primary)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .stroke(BrutalistColors.dark, lineWidth: 2)
+                            )
+                    }
+                }
+
+                // Show status row when connected or error
+                if glassesManager.isConnected {
+                    VStack(spacing: 8) {
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(glassesManager.isStreaming ? BrutalistColors.success : (glassesManager.devices.isEmpty ? BrutalistColors.accent : BrutalistColors.primary))
+                                .frame(width: 8, height: 8)
+
+                            if glassesManager.isStreaming {
+                                Text("STREAMING")
+                                    .font(.system(size: 10, weight: .black))
+                                    .foregroundColor(BrutalistColors.dark.opacity(0.6))
+                            } else if glassesManager.devices.isEmpty {
+                                Text("WAITING FOR BLUETOOTH")
+                                    .font(.system(size: 10, weight: .black))
+                                    .foregroundColor(BrutalistColors.accent)
+                            } else {
+                                Text("GLASSES CONNECTED")
+                                    .font(.system(size: 10, weight: .black))
+                                    .foregroundColor(BrutalistColors.dark.opacity(0.6))
+                            }
+
+                            Spacer()
+
+                            // Show camera button only if BT connected
+                            if !glassesManager.isStreaming && !glassesManager.devices.isEmpty {
+                                Button {
+                                    Task { await glassesManager.startCameraStream() }
+                                } label: {
+                                    Text("START CAMERA")
+                                        .font(.system(size: 10, weight: .black))
+                                        .foregroundColor(BrutalistColors.dark)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
+                                        .background(BrutalistColors.success)
+                                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 4)
+                                                .stroke(BrutalistColors.dark, lineWidth: 2)
+                                        )
+                                }
+                            }
+                        }
+
+                        // Show Bluetooth instructions when registered but no BT device
+                        if glassesManager.devices.isEmpty && !glassesManager.isStreaming {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("To connect via Bluetooth:")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundColor(BrutalistColors.dark.opacity(0.8))
+
+                                HStack(alignment: .top, spacing: 8) {
+                                    Text("1.")
+                                        .font(.system(size: 10, weight: .bold))
+                                    Text("Make sure glasses are powered on (tap temple)")
+                                        .font(.system(size: 10, weight: .medium))
+                                }
+                                .foregroundColor(BrutalistColors.dark.opacity(0.6))
+
+                                HStack(alignment: .top, spacing: 8) {
+                                    Text("2.")
+                                        .font(.system(size: 10, weight: .bold))
+                                    Text("Open iOS Settings > Bluetooth")
+                                        .font(.system(size: 10, weight: .medium))
+                                }
+                                .foregroundColor(BrutalistColors.dark.opacity(0.6))
+
+                                HStack(alignment: .top, spacing: 8) {
+                                    Text("3.")
+                                        .font(.system(size: 10, weight: .bold))
+                                    Text("Connect to \"Ray-Ban | Meta\"")
+                                        .font(.system(size: 10, weight: .medium))
+                                }
+                                .foregroundColor(BrutalistColors.dark.opacity(0.6))
+
+                                Button {
+                                    if let url = URL(string: "App-prefs:Bluetooth") {
+                                        UIApplication.shared.open(url)
+                                    }
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "gear")
+                                            .font(.system(size: 11, weight: .bold))
+                                        Text("OPEN BLUETOOTH SETTINGS")
+                                            .font(.system(size: 10, weight: .black))
+                                    }
+                                    .foregroundColor(BrutalistColors.dark)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 8)
+                                    .background(BrutalistColors.primary)
+                                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 4)
+                                            .stroke(BrutalistColors.dark, lineWidth: 2)
+                                    )
+                                }
+                                .padding(.top, 4)
+                            }
+                            .padding(10)
+                            .background(BrutalistColors.background.opacity(0.5))
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                        }
+                    }
+                } else if case .error = glassesManager.connectionState {
+                    // Show retry button for errors
+                    Button {
+                        Task { await glassesManager.connect() }
+                    } label: {
+                        Text("TAP TO RETRY")
+                            .font(.system(size: 10, weight: .black))
+                            .foregroundColor(BrutalistColors.dark)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .background(BrutalistColors.accent.opacity(0.3))
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                    }
+                }
+            }
+            .padding(16)
+        }
+        // Force UI refresh when state changes
+        .id("glasses-card-\(glassesManager.isConnected)-\(glassesManager.isStreaming)-\(glassesManager.devices.count)")
+    }
+
+    private var glassesConnectionTitle: String {
+        switch glassesManager.connectionState {
+        case .disconnected:
+            return "META AI GLASSES"
+        case .searching, .connecting:
+            return "CONNECTING..."
+        case .registered, .connected, .streaming:
+            return "CONNECTED"
+        case .error:
+            return "ERROR"
+        }
+    }
+
+    private var glassesConnectionSubtitle: String {
+        switch glassesManager.connectionState {
+        case .disconnected:
+            return "Tap to pair Ray-Ban Meta"
+        case .searching:
+            return "Searching for glasses..."
+        case .connecting:
+            return "Opening Meta View app..."
+        case .registered:
+            // Registered but no Bluetooth device yet
+            if glassesManager.devices.isEmpty {
+                return "Put on glasses to connect"
+            }
+            return "Ready for voice commands"
+        case .connected:
+            return "Ready for voice commands"
+        case .streaming:
+            return "Camera streaming active"
+        case .error(let message):
+            return message
+        }
     }
 
     // MARK: - Balance Card

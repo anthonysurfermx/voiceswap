@@ -191,12 +191,10 @@ public actor VoiceSwapAPIClient {
     // MARK: - Initialization
 
     private init() {
-        // Use your Mac's local IP when testing on real device
-        // Change this to your actual local IP or production URL
+        // Use production API by default, or override with environment variable for local development
+        // To test locally: set VOICESWAP_API_URL environment variable (e.g., "http://192.168.1.X:4021")
         #if DEBUG
-        // For simulator: localhost works
-        // For real device: use your Mac's IP (e.g., "http://192.168.1.X:4021")
-        self.baseURL = ProcessInfo.processInfo.environment["VOICESWAP_API_URL"] ?? "http://192.168.100.9:4021"
+        self.baseURL = ProcessInfo.processInfo.environment["VOICESWAP_API_URL"] ?? "https://voiceswap.vercel.app"
         #else
         self.baseURL = "https://voiceswap.vercel.app"
         #endif
