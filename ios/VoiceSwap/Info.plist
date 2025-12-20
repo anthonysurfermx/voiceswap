@@ -62,11 +62,19 @@
     <key>NSFaceIDUsageDescription</key>
     <string>VoiceSwap uses Face ID to securely confirm high-value transactions.</string>
 
-    <!-- Background Modes -->
+    <!-- Background Modes (Required for Meta Wearables DAT) -->
     <key>UIBackgroundModes</key>
     <array>
         <string>bluetooth-central</string>
+        <string>bluetooth-peripheral</string>
+        <string>external-accessory</string>
         <string>audio</string>
+    </array>
+
+    <!-- External Accessory Protocol for Meta Glasses -->
+    <key>UISupportedExternalAccessoryProtocols</key>
+    <array>
+        <string>com.meta.ar.wearable</string>
     </array>
 
     <!-- Supported Interface Orientations -->
@@ -111,6 +119,7 @@
     <!-- These schemes allow the app to detect installed wallets -->
     <key>LSApplicationQueriesSchemes</key>
     <array>
+        <string>fb-viewapp</string>
         <string>metamask</string>
         <string>trust</string>
         <string>safe</string>

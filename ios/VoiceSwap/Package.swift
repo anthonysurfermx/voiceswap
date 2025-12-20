@@ -6,8 +6,8 @@ import PackageDescription
 let package = Package(
     name: "VoiceSwap",
     platforms: [
-        .iOS(.v16),
-        .macOS(.v13)
+        .iOS(.v17),  // Meta Wearables DAT requires iOS 17+
+        .macOS(.v14)
     ],
     products: [
         .library(
@@ -16,13 +16,16 @@ let package = Package(
         ),
     ],
     dependencies: [
-        // Add any external dependencies here
-        // Example: .package(url: "https://github.com/example/package.git", from: "1.0.0"),
+        // Meta Wearables Device Access Toolkit
+        .package(url: "https://github.com/facebook/meta-wearables-dat-ios.git", from: "0.3.0"),
     ],
     targets: [
         .target(
             name: "VoiceSwap",
-            dependencies: [],
+            dependencies: [
+                .product(name: "MWDATCore", package: "meta-wearables-dat-ios"),
+                .product(name: "MWDATCamera", package: "meta-wearables-dat-ios"),
+            ],
             path: "Sources",
             resources: [
                 .process("Resources")
