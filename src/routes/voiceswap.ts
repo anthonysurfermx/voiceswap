@@ -215,8 +215,107 @@ router.post('/prepare', async (req, res) => {
 });
 
 /**
+ * POST /voiceswap/prepare-tx
+ * Prepare transaction data for client-side signing via WalletConnect
+ *
+ * This endpoint returns the raw transaction data that the iOS app
+ * will send to the user's wallet for signing via WalletConnect.
+ * This ensures the user controls their own funds.
+ *
+ * Body:
+ * - userAddress: User's wallet address
+ * - merchantWallet: Merchant's wallet address
+ * - amount: Amount in USDC
+ *
+ * Returns:
+ * - transaction: { to, value, data } ready to be signed
+ * - tokenAddress: USDC contract address
+ * - needsApproval: If token approval is needed first
+ */
+router.post('/prepare-tx', async (req, res) => {
+  try {
+    const { userAddress, merchantWallet, amount } = req.body;
+
+    if (!userAddress || !merchantWallet || !amount) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: userAddress, merchantWallet, amount',
+      });
+    }
+
+    // Validate addresses
+    if (!ethers.utils.isAddress(userAddress) || !ethers.utils.isAddress(merchantWallet)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid wallet address format',
+      });
+    }
+
+    console.log(`[VoiceSwap] Preparing tx: ${amount} USDC from ${userAddress} to ${merchantWallet}`);
+
+    // Get current balances to check if user has enough USDC
+    const balances = await getWalletBalances(userAddress);
+    const swapInfo = determineSwapToken(balances, amount);
+
+    // Convert amount to USDC units (6 decimals)
+    const amountInUnits = ethers.utils.parseUnits(amount.toString(), 6);
+
+    // For now, we only support direct USDC transfers (no swap)
+    // Swaps require more complex routing that should stay server-side
+    if (!swapInfo.hasEnoughUSDC) {
+      return res.status(400).json({
+        success: false,
+        error: 'Insufficient USDC balance. Swap functionality coming soon.',
+        needsSwap: true,
+        swapFromToken: swapInfo.swapFromSymbol,
+        currentBalance: balances.totalUSDC,
+        requiredAmount: amount,
+      });
+    }
+
+    // Build ERC20 transfer calldata
+    // transfer(address to, uint256 amount)
+    const iface = new ethers.utils.Interface([
+      'function transfer(address to, uint256 amount) returns (bool)',
+    ]);
+    const transferData = iface.encodeFunctionData('transfer', [merchantWallet, amountInUnits]);
+
+    // Return transaction data for WalletConnect
+    res.json({
+      success: true,
+      data: {
+        transaction: {
+          to: SUPPORTED_TOKENS.USDC,  // USDC contract address
+          value: '0x0',               // No ETH value for ERC20 transfer
+          data: transferData,         // Encoded transfer call
+          from: userAddress,          // User's address
+          chainId: 130,               // Unichain mainnet
+        },
+        tokenAddress: SUPPORTED_TOKENS.USDC,
+        tokenSymbol: 'USDC',
+        amount: amount,
+        recipient: merchantWallet,
+        recipientShort: `${merchantWallet.slice(0, 6)}...${merchantWallet.slice(-4)}`,
+        message: `Transfer ${amount} USDC to ${merchantWallet.slice(0, 6)}...${merchantWallet.slice(-4)}`,
+        explorerBaseUrl: 'https://uniscan.xyz/tx/',
+      },
+    });
+
+  } catch (error) {
+    console.error('[VoiceSwap] Prepare-tx error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to prepare transaction',
+    });
+  }
+});
+
+/**
  * POST /voiceswap/execute
  * Execute the payment using backend wallet (gasless for user)
+ *
+ * DEPRECATED: Use /voiceswap/prepare-tx for client-side signing instead.
+ * This endpoint is kept for backwards compatibility.
  *
  * For VoiceSwap, we use a server-side wallet to execute transfers.
  * This allows gasless transactions for the user.

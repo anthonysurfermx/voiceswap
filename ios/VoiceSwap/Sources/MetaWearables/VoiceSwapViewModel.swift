@@ -256,7 +256,8 @@ public class VoiceSwapViewModel: ObservableObject {
         }
     }
 
-    /// Confirm and execute payment
+    /// Confirm and execute payment using WalletConnect
+    /// The user's wallet will sign and broadcast the transaction
     public func confirmPayment() async {
         guard let merchantWallet = currentMerchantWallet,
               let amount = currentAmount else {
@@ -265,40 +266,69 @@ public class VoiceSwapViewModel: ObservableObject {
         }
 
         flowState = .executing
-        glassesManager.speak("Processing your payment", language: "en-US")
+        glassesManager.speak("Opening your wallet for approval", language: "en-US")
 
         do {
-            let response = try await apiClient.executePayment(
+            // Step 1: Get transaction data from backend
+            print("[ViewModel] Preparing transaction...")
+            let prepareResponse = try await apiClient.prepareTransaction(
                 userAddress: walletAddress,
                 merchantWallet: merchantWallet,
                 amount: amount
             )
 
-            if let data = response.data {
-                // Check if transaction was executed
-                if data.status == "executed", let txHash = data.txHash {
-                    flowState = .success(txHash: txHash)
-                    glassesManager.speak("Payment successful! \(data.message)", language: "en-US")
-                    glassesManager.triggerHaptic(.success)
-                } else if data.status == "pending_swap" {
-                    // Swap needed but not yet implemented
-                    flowState = .failed(error: data.message)
-                    glassesManager.speak(data.message, language: "en-US")
-                    glassesManager.triggerHaptic(.error)
-                } else {
-                    flowState = .success(txHash: data.txHash ?? "pending")
-                    glassesManager.speak(data.message, language: "en-US")
-                    glassesManager.triggerHaptic(.success)
-                }
-
-                // Clear payment context
-                clearPaymentContext()
-
-                // Refresh balances after a short delay
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                await refreshBalances()
+            guard let txData = prepareResponse.data else {
+                throw APIError.serverError(prepareResponse.error ?? "Failed to prepare transaction")
             }
+
+            print("[ViewModel] Transaction prepared:")
+            print("[ViewModel]   to: \(txData.transaction.to)")
+            print("[ViewModel]   amount: \(txData.amount) \(txData.tokenSymbol)")
+
+            // Step 2: Send transaction via WalletConnect
+            // This will open the user's wallet for approval
+            glassesManager.speak("Please approve the transaction in your wallet", language: "en-US")
+            glassesManager.triggerHaptic(.double)
+
+            let walletManager = WalletConnectManager.shared
+            let txHash = try await walletManager.sendTransaction(
+                to: txData.transaction.to,
+                value: txData.transaction.value,
+                data: txData.transaction.data
+            )
+
+            print("[ViewModel] ✅ Transaction confirmed: \(txHash)")
+
+            // Step 3: Success!
+            flowState = .success(txHash: txHash)
+            let explorerUrl = "\(txData.explorerBaseUrl)\(txHash)"
+            glassesManager.speak("Payment successful! \(txData.amount) USDC sent to \(txData.recipientShort)", language: "en-US")
+            glassesManager.triggerHaptic(.success)
+
+            print("[ViewModel] Explorer: \(explorerUrl)")
+
+            // Clear payment context
+            clearPaymentContext()
+
+            // Refresh balances after a short delay
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            await refreshBalances()
+
+        } catch WalletError.userRejected {
+            print("[ViewModel] User rejected transaction")
+            flowState = .cancelled
+            glassesManager.speak("Transaction cancelled", language: "en-US")
+            glassesManager.triggerHaptic(.short)
+            clearPaymentContext()
+
+        } catch WalletError.notConnected {
+            print("[ViewModel] Wallet not connected")
+            flowState = .failed(error: "Wallet not connected. Please connect your wallet first.")
+            glassesManager.speak("Please connect your wallet first", language: "en-US")
+            glassesManager.triggerHaptic(.error)
+
         } catch {
+            print("[ViewModel] Payment error: \(error)")
             flowState = .failed(error: error.localizedDescription)
             glassesManager.speak("Payment failed. Please try again.", language: "en-US")
             glassesManager.triggerHaptic(.error)

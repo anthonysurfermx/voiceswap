@@ -106,7 +106,7 @@ public class MetaGlassesManager: NSObject, ObservableObject {
         #if DEBUG
         self.apiBaseURL = ProcessInfo.processInfo.environment["VOICESWAP_API_URL"] ?? "http://192.168.100.9:4021"
         #else
-        self.apiBaseURL = "https://voiceswap.cc"
+        self.apiBaseURL = "https://voiceswap.vercel.app"
         #endif
         self.audioEngine = AVAudioEngine()
         super.init()

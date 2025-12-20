@@ -14,7 +14,10 @@ let db: Database | null = null;
  * Initialize database and create tables
  */
 export async function initDatabase(): Promise<void> {
-  const dbPath = process.env.DATABASE_PATH || path.join(process.cwd(), 'voiceswap.db');
+  // Use /tmp for Vercel serverless, otherwise use cwd
+  const isVercel = process.env.VERCEL === '1';
+  const dbPath = process.env.DATABASE_PATH ||
+    (isVercel ? '/tmp/voiceswap.db' : path.join(process.cwd(), 'voiceswap.db'));
 
   db = await open({
     filename: dbPath,
