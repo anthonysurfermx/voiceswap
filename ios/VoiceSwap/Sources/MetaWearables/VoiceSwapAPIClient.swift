@@ -150,6 +150,27 @@ public struct SessionUpdateResponse: Decodable {
     public let sessionId: String?
 }
 
+// MARK: - Transaction Preparation (for WalletConnect signing)
+
+public struct PrepareTransactionResponse: Decodable {
+    public let transaction: TransactionData
+    public let tokenAddress: String
+    public let tokenSymbol: String
+    public let amount: String
+    public let recipient: String
+    public let recipientShort: String
+    public let message: String
+    public let explorerBaseUrl: String
+}
+
+public struct TransactionData: Decodable {
+    public let to: String
+    public let value: String
+    public let data: String
+    public let from: String
+    public let chainId: Int
+}
+
 public struct HealthResponse: Decodable {
     public let status: String
     public let timestamp: Int?
@@ -177,7 +198,7 @@ public actor VoiceSwapAPIClient {
         // For real device: use your Mac's IP (e.g., "http://192.168.1.X:4021")
         self.baseURL = ProcessInfo.processInfo.environment["VOICESWAP_API_URL"] ?? "http://192.168.100.9:4021"
         #else
-        self.baseURL = "https://voiceswap.cc"
+        self.baseURL = "https://voiceswap.vercel.app"
         #endif
 
         let config = URLSessionConfiguration.default
@@ -255,7 +276,7 @@ public actor VoiceSwapAPIClient {
         return try await post("/voiceswap/prepare", body: body)
     }
 
-    /// Execute payment
+    /// Execute payment (DEPRECATED - use prepareTransaction + WalletConnect instead)
     public func executePayment(
         userAddress: String,
         merchantWallet: String,
@@ -267,6 +288,21 @@ public actor VoiceSwapAPIClient {
             "amount": amount
         ]
         return try await post("/voiceswap/execute", body: body)
+    }
+
+    /// Prepare transaction for client-side signing via WalletConnect
+    /// Returns transaction data (to, value, data) ready to be sent to the user's wallet
+    public func prepareTransaction(
+        userAddress: String,
+        merchantWallet: String,
+        amount: String
+    ) async throws -> APIResponse<PrepareTransactionResponse> {
+        let body: [String: Any] = [
+            "userAddress": userAddress,
+            "merchantWallet": merchantWallet,
+            "amount": amount
+        ]
+        return try await post("/voiceswap/prepare-tx", body: body)
     }
 
     /// Process voice confirmation

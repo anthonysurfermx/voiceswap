@@ -42,3 +42,4 @@ mobile-app/android/
 
 # Expo EAS
 .eas/
+.vercel

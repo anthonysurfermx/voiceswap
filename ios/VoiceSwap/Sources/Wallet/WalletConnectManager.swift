@@ -542,6 +542,9 @@ public class WalletConnectManager: ObservableObject {
 
     // MARK: - Transaction Methods
 
+    /// Continuation for waiting on transaction response
+    private var transactionContinuation: CheckedContinuation<String, Error>?
+
     /// Sign a personal message
     public func signMessage(_ message: String) async throws -> String {
         guard let address = currentAddress else {
@@ -574,7 +577,8 @@ public class WalletConnectManager: ObservableObject {
         }
     }
 
-    /// Send a transaction
+    /// Send a transaction and wait for the transaction hash
+    /// This method opens the wallet app and waits for the user to approve
     public func sendTransaction(
         to: String,
         value: String,
@@ -588,24 +592,25 @@ public class WalletConnectManager: ObservableObject {
             throw WalletError.notConnected
         }
 
+        // Create transaction parameters as Codable struct
+        struct TxParams: Codable {
+            let from: String
+            let to: String
+            let value: String
+            let data: String
+        }
+
+        let txParams = TxParams(
+            from: address,
+            to: to,
+            value: value,
+            data: data ?? "0x"
+        )
+
+        let params = AnyCodable([txParams])
+        let blockchain = Blockchain("eip155:\(currentChain.chainId)")!
+
         do {
-            // Create transaction parameters as Codable struct
-            struct TxParams: Codable {
-                let from: String
-                let to: String
-                let value: String
-                let data: String
-            }
-
-            let txParams = TxParams(
-                from: address,
-                to: to,
-                value: value,
-                data: data ?? "0x"
-            )
-
-            let params = AnyCodable([txParams])
-            let blockchain = Blockchain("eip155:\(currentChain.chainId)")!
             let request = try Request(
                 topic: topic,
                 method: "eth_sendTransaction",
@@ -613,17 +618,73 @@ public class WalletConnectManager: ObservableObject {
                 chainId: blockchain
             )
 
-            try await AppKit.instance.request(params: request)
+            print("[WalletConnect] Sending transaction request...")
+            print("[WalletConnect]   to: \(to)")
+            print("[WalletConnect]   value: \(value)")
+            print("[WalletConnect]   data: \(data?.prefix(20) ?? "0x")...")
 
-            // Open the wallet app to approve the transaction
-            try? await AppKit.instance.launchCurrentWallet()
+            // Use withCheckedThrowingContinuation to wait for response
+            return try await withCheckedThrowingContinuation { continuation in
+                self.transactionContinuation = continuation
 
-            // The response will come through sessionResponsePublisher
-            return "tx_pending"
+                Task {
+                    do {
+                        try await AppKit.instance.request(params: request)
+
+                        // Open the wallet app to approve the transaction
+                        print("[WalletConnect] Opening wallet for approval...")
+                        try? await AppKit.instance.launchCurrentWallet()
+
+                        // Set up response listener
+                        self.setupTransactionResponseListener()
+
+                    } catch {
+                        print("[WalletConnect] Request failed: \(error)")
+                        self.transactionContinuation?.resume(throwing: WalletError.transactionFailed(error.localizedDescription))
+                        self.transactionContinuation = nil
+                    }
+                }
+
+                // Timeout after 2 minutes
+                Task {
+                    try? await Task.sleep(nanoseconds: 120_000_000_000)
+                    if self.transactionContinuation != nil {
+                        print("[WalletConnect] Transaction timeout")
+                        self.transactionContinuation?.resume(throwing: WalletError.transactionFailed("Transaction timed out. Please try again."))
+                        self.transactionContinuation = nil
+                    }
+                }
+            }
         } catch {
             print("[WalletConnect] Send transaction error: \(error)")
             throw WalletError.transactionFailed(error.localizedDescription)
         }
+    }
+
+    /// Set up listener for transaction response
+    private func setupTransactionResponseListener() {
+        AppKit.instance.sessionResponsePublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] response in
+                guard let self = self, let continuation = self.transactionContinuation else { return }
+
+                print("[WalletConnect] Received session response")
+
+                // Check if response contains transaction hash
+                if let result = try? response.result.get(String.self) {
+                    print("[WalletConnect] ✅ Transaction hash: \(result)")
+                    continuation.resume(returning: result)
+                } else if case .failure(let error) = response.result {
+                    print("[WalletConnect] ❌ Transaction rejected: \(error)")
+                    continuation.resume(throwing: WalletError.userRejected)
+                } else {
+                    print("[WalletConnect] ⚠️ Unknown response format")
+                    continuation.resume(throwing: WalletError.transactionFailed("Unknown response"))
+                }
+
+                self.transactionContinuation = nil
+            }
+            .store(in: &cancellables)
     }
 
     // MARK: - Network Switching
