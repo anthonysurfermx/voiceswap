@@ -142,6 +142,23 @@ export function parseQRCode(qrData: string): PaymentRequest | null {
       };
     }
 
+    // Check if it's a deep link format (voiceswap://pay?wallet=...)
+    const deepLinkMatch = qrData.match(/^(?:voiceswap|unichain):\/\/pay\?(.*)$/);
+    if (deepLinkMatch) {
+      const params = new URLSearchParams(deepLinkMatch[1]);
+      const wallet = params.get('wallet');
+      if (!wallet || !ethers.utils.isAddress(wallet)) {
+        return null;
+      }
+
+      return {
+        merchantWallet: ethers.utils.getAddress(wallet),
+        amount: params.get('amount') || undefined,
+        merchantName: params.get('name') || undefined,
+        orderId: params.get('orderId') || undefined,
+      };
+    }
+
     // Check if wallet address is embedded in text
     const addressMatch = qrData.match(/0x[a-fA-F0-9]{40}/);
     if (addressMatch) {
