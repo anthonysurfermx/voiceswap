@@ -143,6 +143,20 @@ public class MetaGlassesManager: NSObject, ObservableObject {
     @Published public private(set) var devices: [DeviceIdentifier] = []
     @Published public private(set) var lastDetectedQR: QRScanResult?
 
+    // MARK: - Computed Properties
+    public var isConnected: Bool {
+        switch connectionState {
+        case .connected, .registered, .streaming:
+            return true
+        default:
+            return false
+        }
+    }
+
+    public var isStreaming: Bool {
+        return connectionState == .streaming
+    }
+
     // MARK: - Delegate
     public weak var delegate: MetaGlassesDelegate?
 
@@ -181,8 +195,9 @@ public class MetaGlassesManager: NSObject, ObservableObject {
     // MARK: - Initialization
 
     private override init() {
+        // Use production API by default, or override with environment variable for local development
         #if DEBUG
-        self.apiBaseURL = ProcessInfo.processInfo.environment["VOICESWAP_API_URL"] ?? "http://192.168.100.9:4021"
+        self.apiBaseURL = ProcessInfo.processInfo.environment["VOICESWAP_API_URL"] ?? "https://voiceswap.vercel.app"
         #else
         self.apiBaseURL = "https://voiceswap.vercel.app"
         #endif
@@ -190,20 +205,29 @@ public class MetaGlassesManager: NSObject, ObservableObject {
 
         super.init()
 
-        // Initialize QR detector
-        self.qrDetector = CIDetector(
-            ofType: CIDetectorTypeQRCode,
-            context: nil,
-            options: [CIDetectorAccuracy: CIDetectorAccuracyHigh]
-        )
+        // Defer heavy initialization to not block app startup
+        Task { @MainActor in
+            // Initialize QR detector
+            self.qrDetector = CIDetector(
+                ofType: CIDetectorTypeQRCode,
+                context: nil,
+                options: [CIDetectorAccuracy: CIDetectorAccuracyHigh]
+            )
 
-        // Initialize Meta Wearables SDK
-        initializeWearablesSDK()
+            // Initialize Meta Wearables SDK
+            self.initializeWearablesSDK()
 
-        // Setup speech recognition
-        setupSpeechRecognition()
+            // Setup speech recognition
+            self.setupSpeechRecognition()
 
-        print("[MetaGlasses] Initialized with Meta Wearables DAT SDK")
+            // Restore registration state if previously registered
+            if UserDefaults.standard.bool(forKey: "metaGlassesRegistered") {
+                self.connectionState = .registered
+                self.setupDeviceStream()
+            }
+
+            print("[MetaGlasses] Initialized")
+        }
     }
 
     // MARK: - Meta Wearables SDK Setup
@@ -228,13 +252,13 @@ public class MetaGlassesManager: NSObject, ObservableObject {
             for await registrationState in wearables.registrationStateStream() {
                 await MainActor.run {
                     switch registrationState {
-                    case .unregistered:
-                        self.connectionState = .disconnected
                     case .registering:
                         self.connectionState = .connecting
                     case .registered:
                         self.connectionState = .registered
                         self.setupDeviceStream()
+                    @unknown default:
+                        self.connectionState = .disconnected
                     }
                 }
             }
@@ -242,19 +266,51 @@ public class MetaGlassesManager: NSObject, ObservableObject {
     }
 
     private func setupDeviceStream() {
-        guard let wearables = wearables else { return }
+        guard let wearables = wearables else {
+            print("[MetaGlasses] Cannot setup device stream - SDK not initialized")
+            return
+        }
+
+        print("[MetaGlasses] Setting up device stream to listen for Bluetooth-connected glasses...")
 
         deviceStreamTask?.cancel()
         deviceStreamTask = Task {
+            print("[MetaGlasses] Device stream task started, waiting for Bluetooth devices...")
+            var hasReceivedUpdate = false
+
             for await devices in wearables.devicesStream() {
+                hasReceivedUpdate = true
                 await MainActor.run {
+                    let previousCount = self.devices.count
                     self.devices = devices
-                    if !devices.isEmpty {
+
+                    print("[MetaGlasses] Device stream update: \(devices.count) device(s) found")
+
+                    if devices.isEmpty {
+                        print("[MetaGlasses] No glasses connected via Bluetooth")
+                        print("[MetaGlasses] Make sure glasses are:")
+                        print("[MetaGlasses]   1. Powered on (tap temple to wake)")
+                        print("[MetaGlasses]   2. Connected in iOS Settings > Bluetooth")
+                        print("[MetaGlasses]   3. Not connected to another device")
+
+                        // Keep registered state but inform user
+                        if self.connectionState == .registered {
+                            // Stay in registered state - glasses are registered but not BT connected
+                            print("[MetaGlasses] Registered with Meta View, awaiting Bluetooth connection")
+                        }
+                    } else {
                         self.connectionState = .connected
                         self.delegate?.glassesDidConnect()
-                        print("[MetaGlasses] Device connected: \(devices.count) device(s)")
+                        print("[MetaGlasses] Device connected via Bluetooth: \(devices.count) device(s)")
+                        for (index, device) in devices.enumerated() {
+                            print("[MetaGlasses]   Device \(index + 1): \(device)")
+                        }
                     }
                 }
+            }
+
+            if !hasReceivedUpdate {
+                print("[MetaGlasses] Device stream ended without any updates")
             }
         }
     }
@@ -267,13 +323,61 @@ public class MetaGlassesManager: NSObject, ObservableObject {
         print("[MetaGlasses] Configured with wallet: \(walletAddress.prefix(10))...")
     }
 
+    /// Connect to Meta Ray-Ban glasses (convenience method)
+    public func connect() async {
+        do {
+            try await connectToGlasses()
+        } catch {
+            print("[MetaGlasses] Connect error: \(error)")
+        }
+    }
+
+    /// Handle registration callback from Meta View app
+    public func handleRegistrationCallback(authorityKey: String?, constellationGroupId: String?) async {
+        guard wearables != nil else {
+            connectionState = .error("SDK not initialized")
+            return
+        }
+
+        // The deep link with valid authorityKey and constellationGroupId indicates successful registration
+        if authorityKey != nil && constellationGroupId != nil {
+            print("[MetaGlasses] Registration successful")
+
+            // Save registration state
+            UserDefaults.standard.set(true, forKey: "metaGlassesRegistered")
+
+            // Set to registered
+            connectionState = .registered
+
+            // Setup device stream to listen for connected devices
+            setupDeviceStream()
+
+            // Brief wait for device to connect
+            for _ in 1...4 {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                if !devices.isEmpty || connectionState == .connected {
+                    print("[MetaGlasses] Device connected")
+                    return
+                }
+            }
+        } else {
+            connectionState = .error("Registration failed - please try again")
+        }
+    }
+
     /// Connect to Meta Ray-Ban glasses
     public func connectToGlasses() async throws {
         guard let wearables = wearables else {
             throw NSError(domain: "MetaGlasses", code: 1, userInfo: [NSLocalizedDescriptionKey: "Wearables SDK not initialized"])
         }
 
-        connectionState = .searching
+        // If already registered/connected, don't re-register
+        if isConnected {
+            print("[MetaGlasses] Already connected, skipping registration")
+            return
+        }
+
+        connectionState = .connecting
 
         do {
             try wearables.startRegistration()
@@ -297,10 +401,12 @@ public class MetaGlassesManager: NSObject, ObservableObject {
             }
         }
 
+        // Clear saved registration
+        UserDefaults.standard.removeObject(forKey: "metaGlassesRegistered")
+
         connectionState = .disconnected
         devices = []
         delegate?.glassesDidDisconnect()
-        print("[MetaGlasses] Disconnected")
     }
 
     // MARK: - Camera Streaming
@@ -309,21 +415,44 @@ public class MetaGlassesManager: NSObject, ObservableObject {
     public func startCameraStream() async {
         guard let wearables = wearables else {
             print("[MetaGlasses] Cannot start stream - SDK not initialized")
+            connectionState = .error("SDK not initialized")
             return
         }
+
+        // Must be registered first
+        guard isConnected else {
+            print("[MetaGlasses] Cannot start stream - not connected")
+            connectionState = .error("Connect to glasses first")
+            return
+        }
+
+        // Check if we have any devices connected via Bluetooth
+        if devices.isEmpty {
+            print("[MetaGlasses] No glasses connected via Bluetooth")
+            connectionState = .error("Put on glasses and connect via Bluetooth first")
+            return
+        }
+
+        print("[MetaGlasses] Starting camera stream...")
+        print("[MetaGlasses] Connected devices: \(devices.count)")
 
         // Check camera permission
         do {
             let status = try await wearables.checkPermissionStatus(.camera)
+            print("[MetaGlasses] Camera permission status: \(status)")
             if status != .granted {
+                print("[MetaGlasses] Requesting camera permission - this will open Meta View...")
                 let requestStatus = try await wearables.requestPermission(.camera)
                 if requestStatus != .granted {
-                    print("[MetaGlasses] Camera permission denied")
+                    print("[MetaGlasses] Camera permission denied by user")
+                    connectionState = .error("Camera denied - approve in Meta View")
                     return
                 }
             }
         } catch {
             print("[MetaGlasses] Permission error: \(error)")
+            // Permission error 0 means no device connected via Bluetooth
+            connectionState = .error("Connect glasses via Bluetooth in iOS Settings")
             return
         }
 

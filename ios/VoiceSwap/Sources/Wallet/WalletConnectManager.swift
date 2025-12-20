@@ -174,28 +174,26 @@ public class WalletConnectManager: ObservableObject {
     /// Call this to initialize WalletConnect (call from app startup or when needed)
     public func initialize() {
         guard !isAppKitConfigured else { return }
-        configureAppKit()
-        restorePreviousSession()
-        setupSessionObserver()
+
+        // Defer initialization to avoid blocking app startup
+        // AppKit.configure makes network calls that can take 30+ seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.configureAppKit()
+            self?.restorePreviousSession()
+            self?.setupSessionObserver()
+        }
     }
 
     // MARK: - AppKit Configuration
 
     private func configureAppKit() {
-        print("[WalletConnect] Configuring AppKit...")
-
         do {
-            // Create redirect - required by AppMetadata
-            // Using both native and universal links for better wallet compatibility
-            // Some wallets (like Uniswap) work better with universal links
             let redirect = try AppMetadata.Redirect(
                 native: "voiceswap://wc",
                 universal: "https://voiceswap.cc/wc",
                 linkMode: true
             )
-            print("[WalletConnect] Redirect created: \(redirect)")
 
-            // Metadata for your app
             let metadata = AppMetadata(
                 name: "VoiceSwap",
                 description: "Voice-activated crypto payments",
@@ -203,81 +201,105 @@ public class WalletConnectManager: ObservableObject {
                 icons: ["https://voiceswap.cc/icon.png"],
                 redirect: redirect
             )
-            print("[WalletConnect] Metadata created: \(metadata.name)")
 
-            // Configure Networking FIRST - required before AppKit
-            // Note: Requires Keychain Sharing capability in Xcode
-            print("[WalletConnect] Configuring Networking...")
             Networking.configure(
                 groupIdentifier: "group.com.voiceswap.app",
                 projectId: projectId,
                 socketFactory: VoiceSwapSocketFactory()
             )
-            print("[WalletConnect] Networking configured")
 
-            // Configure AppKit with recommended wallets
-            // Wallet IDs from WalletConnect Explorer: https://explorer.walletconnect.com
-            // Uniswap Wallet: c03dfee351b6fcc421b4494ea33b9d4b92a984f87aa76d1663bb28705e95f4be
-            // MetaMask: c57ca95b47569778a828d19178114f4db188b89b763c899ba0be274e97267d96
-            // Rainbow: 1ae92b26df02f0abca6304df07debccd18262fdf5fe82daa81593582dac9a369
-            print("[WalletConnect] Configuring AppKit with projectId: \(projectId)")
             AppKit.configure(
                 projectId: projectId,
                 metadata: metadata,
                 crypto: cryptoProvider,
+                sessionParams: makeSessionParams(),
                 authRequestParams: nil,
                 recommendedWalletIds: [
-                    "c03dfee351b6fcc421b4494ea33b9d4b92a984f87aa76d1663bb28705e95f4be", // Uniswap Wallet
+                    "c03dfee351b6fcc421b4494ea33b9d4b92a984f87aa76d1663bb28705e95f4be", // Uniswap
                     "c57ca95b47569778a828d19178114f4db188b89b763c899ba0be274e97267d96", // MetaMask
                     "1ae92b26df02f0abca6304df07debccd18262fdf5fe82daa81593582dac9a369"  // Rainbow
                 ]
             )
 
-            // Add Unichain as a custom chain preset for better compatibility
-            // This allows wallets like Uniswap Wallet to recognize the network
-            print("[WalletConnect] Adding Unichain chain preset...")
             addUnichainPreset()
-
             isAppKitConfigured = true
-            print("[WalletConnect] AppKit configured successfully!")
+            print("[WalletConnect] Configured")
         } catch {
-            print("[WalletConnect] ERROR configuring AppKit: \(error)")
+            print("[WalletConnect] Config error: \(error)")
             isAppKitConfigured = false
         }
     }
 
     /// Add Unichain as a custom chain preset to AppKit
     private func addUnichainPreset() {
-        // Unichain Mainnet (Chain ID: 130)
-        // Note: AppKit.addChainPreset may not be available in all versions
-        // This is optional - the app will still work without it
-        print("[WalletConnect] Unichain preset: Chain ID 130, RPC: https://mainnet.unichain.org")
+        let chain = Chain(
+            chainName: "Unichain",
+            chainNamespace: "eip155",
+            chainReference: String(UnichainConfig.mainnetChainId),
+            requiredMethods: [
+                "personal_sign",
+                "eth_signTypedData",
+                "eth_sendTransaction"
+            ],
+            optionalMethods: [
+                "wallet_switchEthereumChain",
+                "wallet_addEthereumChain"
+            ],
+            events: [
+                "chainChanged",
+                "accountsChanged"
+            ],
+            token: .init(name: "Ether", symbol: "ETH", decimal: 18),
+            rpcUrl: UnichainConfig.mainnet.rpcUrl,
+            blockExplorerUrl: UnichainConfig.mainnet.explorer,
+            imageId: "unichain"
+        )
+
+        AppKit.instance.addChainPreset(chain)
+        AppKit.instance.selectChain(chain)
+    }
+
+    private func makeSessionParams() -> SessionParams {
+        let methods: Set<String> = [
+            "personal_sign",
+            "eth_signTypedData",
+            "eth_sendTransaction",
+            "wallet_switchEthereumChain",
+            "wallet_addEthereumChain"
+        ]
+        let events: Set<String> = [
+            "chainChanged",
+            "accountsChanged"
+        ]
+        let chains: [Blockchain] = [
+            Blockchain("eip155:\(UnichainConfig.mainnetChainId)")!
+        ]
+        let namespaces: [String: ProposalNamespace] = [
+            "eip155": ProposalNamespace(
+                chains: chains,
+                methods: methods,
+                events: events
+            )
+        ]
+
+        return SessionParams(namespaces: namespaces)
     }
 
     private func setupSessionObserver() {
-        // Use native WalletConnect session publishers for real-time updates
         AppKit.instance.sessionSettlePublisher
             .receive(on: DispatchQueue.main)
             .sink { [weak self] session in
-                print("[WalletConnect] ✅ Session settled: \(session.peer.name)")
-                print("[WalletConnect]   Topic: \(session.topic.prefix(20))...")
-                print("[WalletConnect]   Accounts: \(session.accounts.count)")
-                for account in session.accounts {
-                    print("[WalletConnect]   - \(account.address) on \(account.blockchain)")
-                }
                 self?.handleSessionsUpdate([session])
             }
             .store(in: &cancellables)
 
         AppKit.instance.sessionDeletePublisher
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] (topic, _) in
-                print("[WalletConnect] ❌ Session deleted: \(topic.prefix(20))...")
+            .sink { [weak self] (_, _) in
                 self?.handleSessionsUpdate([])
             }
             .store(in: &cancellables)
 
-        // Listen for session rejections/errors
         AppKit.instance.sessionRejectionPublisher
             .receive(on: DispatchQueue.main)
             .sink { [weak self] (_, reason) in
@@ -286,24 +308,8 @@ public class WalletConnectManager: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // Also poll as backup, but faster when connecting
-        Timer.publish(every: 2.0, on: .main, in: .common)
-            .autoconnect()
-            .sink { [weak self] _ in
-                guard let self = self else { return }
-                // Skip polling if already connected - no need to check
-                if case .connected = self.connectionState { return }
-
-                let sessions = AppKit.instance.getSessions()
-                if !sessions.isEmpty {
-                    print("[WalletConnect] Poll found \(sessions.count) session(s)")
-                    for session in sessions {
-                        print("[WalletConnect] - Session: \(session.peer.name), accounts: \(session.accounts.count)")
-                    }
-                }
-                self.handleSessionsUpdate(sessions)
-            }
-            .store(in: &cancellables)
+        // Poll only when in connecting state (not continuously)
+        // The sessionSettlePublisher should handle most updates automatically
     }
 
     private func handleSessionsUpdate(_ sessions: [Session]) {
@@ -418,29 +424,26 @@ public class WalletConnectManager: ObservableObject {
 
     /// Check for new sessions (called after deep link handling or when app becomes active)
     public func checkForNewSessions() {
-        print("[WalletConnect] Checking for new sessions...")
+        // Skip if already connected - no need to check
+        if case .connected = connectionState { return }
+
+        // Only check if not configured yet or in connecting state
+        guard isAppKitConfigured else { return }
+
         let sessions = AppKit.instance.getSessions()
-        print("[WalletConnect] Found \(sessions.count) session(s)")
-        for session in sessions {
-            print("[WalletConnect] - Session: \(session.peer.name), topic: \(session.topic.prefix(10))..., accounts: \(session.accounts.count)")
-            for account in session.accounts {
-                print("[WalletConnect]   - Account: \(account.address) on \(account.blockchain)")
-            }
+        if !sessions.isEmpty {
+            handleSessionsUpdate(sessions)
+            return
         }
-        handleSessionsUpdate(sessions)
 
         // If still connecting and no sessions found, retry a few times
-        // This helps with wallets like Uniswap that don't redirect back immediately
-        if case .connecting = connectionState, sessions.isEmpty {
-            print("[WalletConnect] Still connecting, scheduling retry checks...")
-            for delay in [1.0, 2.0, 3.0] {
+        if case .connecting = connectionState {
+            for delay in [0.5, 1.5, 2.5] {
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                     guard let self = self else { return }
-                    // Only retry if still in connecting state
                     if case .connecting = self.connectionState {
                         let newSessions = AppKit.instance.getSessions()
                         if !newSessions.isEmpty {
-                            print("[WalletConnect] Retry found \(newSessions.count) session(s)!")
                             self.handleSessionsUpdate(newSessions)
                         }
                     }
@@ -670,16 +673,22 @@ public class WalletConnectManager: ObservableObject {
 
                 print("[WalletConnect] Received session response")
 
-                // Check if response contains transaction hash
-                if let result = try? response.result.get(String.self) {
-                    print("[WalletConnect] ✅ Transaction hash: \(result)")
-                    continuation.resume(returning: result)
-                } else if case .failure(let error) = response.result {
-                    print("[WalletConnect] ❌ Transaction rejected: \(error)")
+                // RPCResult is an enum with .response(AnyCodable) or .error(JSONRPCError)
+                switch response.result {
+                case .response(let anyCodable):
+                    // Try to extract the transaction hash string
+                    if let txHash = anyCodable.value as? String {
+                        print("[WalletConnect] ✅ Transaction hash: \(txHash)")
+                        continuation.resume(returning: txHash)
+                    } else {
+                        print("[WalletConnect] ⚠️ Unexpected response type: \(type(of: anyCodable.value))")
+                        // Try to convert to string anyway
+                        let txHash = String(describing: anyCodable.value)
+                        continuation.resume(returning: txHash)
+                    }
+                case .error(let rpcError):
+                    print("[WalletConnect] ❌ Transaction rejected: \(rpcError.message)")
                     continuation.resume(throwing: WalletError.userRejected)
-                } else {
-                    print("[WalletConnect] ⚠️ Unknown response format")
-                    continuation.resume(throwing: WalletError.transactionFailed("Unknown response"))
                 }
 
                 self.transactionContinuation = nil
