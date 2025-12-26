@@ -55,6 +55,22 @@ export async function initDatabase(): Promise<void> {
     );
 
     CREATE INDEX IF NOT EXISTS idx_users_wallet ON users(wallet_address);
+
+    -- Merchant payments table for tracking received payments with concepts
+    CREATE TABLE IF NOT EXISTS merchant_payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      merchant_wallet TEXT NOT NULL,
+      tx_hash TEXT UNIQUE NOT NULL,
+      from_address TEXT NOT NULL,
+      amount TEXT NOT NULL,
+      concept TEXT,
+      block_number INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_merchant_wallet ON merchant_payments(merchant_wallet);
+    CREATE INDEX IF NOT EXISTS idx_merchant_tx_hash ON merchant_payments(tx_hash);
+    CREATE INDEX IF NOT EXISTS idx_merchant_block ON merchant_payments(block_number);
   `);
 
   console.log('[Database] Initialized at:', dbPath);
@@ -221,6 +237,147 @@ export async function getAnalytics() {
   ]);
 
   return stats;
+}
+
+// ============================================
+// Merchant Payments
+// ============================================
+
+export interface MerchantPayment {
+  id?: number;
+  merchant_wallet: string;
+  tx_hash: string;
+  from_address: string;
+  amount: string;
+  concept: string | null;
+  block_number: number;
+  created_at: number;
+}
+
+/**
+ * Save or update a merchant payment
+ * If txHash already exists, updates the concept
+ */
+export async function saveMerchantPayment(data: {
+  merchantWallet: string;
+  txHash: string;
+  fromAddress: string;
+  amount: string;
+  concept?: string;
+  blockNumber: number;
+}): Promise<void> {
+  const db = getDb();
+  const now = Date.now();
+
+  await db.run(
+    `INSERT INTO merchant_payments (merchant_wallet, tx_hash, from_address, amount, concept, block_number, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(tx_hash) DO UPDATE SET concept = excluded.concept`,
+    [
+      data.merchantWallet.toLowerCase(),
+      data.txHash.toLowerCase(),
+      data.fromAddress.toLowerCase(),
+      data.amount,
+      data.concept || null,
+      data.blockNumber,
+      now,
+    ]
+  );
+}
+
+/**
+ * Get merchant payments with optional concept filter
+ */
+export async function getMerchantPayments(
+  merchantWallet: string,
+  options: {
+    limit?: number;
+    offset?: number;
+    concept?: string;
+  } = {}
+): Promise<MerchantPayment[]> {
+  const db = getDb();
+  const { limit = 50, offset = 0, concept } = options;
+
+  let query = `SELECT * FROM merchant_payments WHERE merchant_wallet = ?`;
+  const params: any[] = [merchantWallet.toLowerCase()];
+
+  if (concept) {
+    query += ` AND concept = ?`;
+    params.push(concept);
+  }
+
+  query += ` ORDER BY block_number DESC LIMIT ? OFFSET ?`;
+  params.push(limit, offset);
+
+  return await db.all(query, params);
+}
+
+/**
+ * Get payment by txHash
+ */
+export async function getMerchantPaymentByTxHash(txHash: string): Promise<MerchantPayment | null> {
+  const db = getDb();
+  return await db.get(
+    'SELECT * FROM merchant_payments WHERE tx_hash = ?',
+    [txHash.toLowerCase()]
+  );
+}
+
+/**
+ * Update concept for a payment
+ */
+export async function updatePaymentConcept(txHash: string, concept: string): Promise<void> {
+  const db = getDb();
+  await db.run(
+    'UPDATE merchant_payments SET concept = ? WHERE tx_hash = ?',
+    [concept, txHash.toLowerCase()]
+  );
+}
+
+/**
+ * Get merchant payment stats
+ */
+export async function getMerchantStats(merchantWallet: string): Promise<{
+  totalPayments: number;
+  totalAmount: string;
+  uniquePayers: number;
+  conceptBreakdown: { concept: string; count: number; total: string }[];
+}> {
+  const db = getDb();
+
+  const stats = await db.get(
+    `SELECT
+      COUNT(*) as totalPayments,
+      COALESCE(SUM(CAST(amount AS REAL)), 0) as totalAmount,
+      COUNT(DISTINCT from_address) as uniquePayers
+    FROM merchant_payments
+    WHERE merchant_wallet = ?`,
+    [merchantWallet.toLowerCase()]
+  );
+
+  const conceptBreakdown = await db.all(
+    `SELECT
+      COALESCE(concept, 'Sin concepto') as concept,
+      COUNT(*) as count,
+      COALESCE(SUM(CAST(amount AS REAL)), 0) as total
+    FROM merchant_payments
+    WHERE merchant_wallet = ?
+    GROUP BY concept
+    ORDER BY total DESC`,
+    [merchantWallet.toLowerCase()]
+  );
+
+  return {
+    totalPayments: stats?.totalPayments || 0,
+    totalAmount: (stats?.totalAmount || 0).toFixed(2),
+    uniquePayers: stats?.uniquePayers || 0,
+    conceptBreakdown: conceptBreakdown.map(c => ({
+      concept: c.concept,
+      count: c.count,
+      total: c.total.toFixed(2),
+    })),
+  };
 }
 
 /**

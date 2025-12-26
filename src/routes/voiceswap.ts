@@ -20,6 +20,8 @@ import {
   type PaymentSession,
   createPaymentSession,
   updateSessionState,
+  generateMerchantQRData,
+  generatePaymentWebURL,
 } from '../services/voiceswap.js';
 import {
   parseIntent,
@@ -29,7 +31,14 @@ import {
 } from '../services/openai.js';
 import { getUniswapService } from '../services/uniswap.js';
 import thirdwebEngine from '../services/thirdwebEngine.js';
-import { saveTransaction } from '../services/database.js';
+import {
+  saveTransaction,
+  saveMerchantPayment,
+  getMerchantPayments,
+  getMerchantPaymentByTxHash,
+  updatePaymentConcept,
+  getMerchantStats,
+} from '../services/database.js';
 
 const router = Router();
 
@@ -822,6 +831,101 @@ router.post('/ai/process', async (req, res) => {
 });
 
 /**
+ * GET /voiceswap/tx/:txHash
+ * Get transaction status and receipt from Unichain
+ *
+ * Returns:
+ * - status: 'pending' | 'confirmed' | 'failed'
+ * - confirmations: Number of block confirmations
+ * - receipt: Transaction receipt if confirmed
+ */
+router.get('/tx/:txHash', async (req, res) => {
+  try {
+    const { txHash } = req.params;
+
+    if (!txHash || !txHash.startsWith('0x')) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid transaction hash',
+      });
+    }
+
+    console.log(`[VoiceSwap] Checking tx status: ${txHash}`);
+
+    // Create provider for Unichain
+    const provider = new ethers.providers.JsonRpcProvider(
+      NETWORK_CONFIG.rpcUrl,
+      { name: 'unichain', chainId: NETWORK_CONFIG.chainId }
+    );
+
+    // Get transaction receipt
+    const receipt = await provider.getTransactionReceipt(txHash);
+
+    if (!receipt) {
+      // Transaction not yet mined
+      // Check if it exists in the mempool
+      const tx = await provider.getTransaction(txHash);
+
+      if (!tx) {
+        return res.json({
+          success: true,
+          data: {
+            txHash,
+            status: 'not_found',
+            message: 'Transaction not found. It may have been dropped or not yet broadcasted.',
+          },
+        });
+      }
+
+      return res.json({
+        success: true,
+        data: {
+          txHash,
+          status: 'pending',
+          message: 'Transaction is pending confirmation',
+          from: tx.from,
+          to: tx.to,
+          value: tx.value.toString(),
+          nonce: tx.nonce,
+        },
+      });
+    }
+
+    // Transaction was mined
+    const currentBlock = await provider.getBlockNumber();
+    const confirmations = currentBlock - receipt.blockNumber;
+
+    // Check if transaction was successful
+    const isSuccess = receipt.status === 1;
+
+    res.json({
+      success: true,
+      data: {
+        txHash,
+        status: isSuccess ? 'confirmed' : 'failed',
+        confirmations,
+        blockNumber: receipt.blockNumber,
+        gasUsed: receipt.gasUsed.toString(),
+        effectiveGasPrice: receipt.effectiveGasPrice?.toString(),
+        from: receipt.from,
+        to: receipt.to,
+        explorerUrl: `https://uniscan.xyz/tx/${txHash}`,
+        message: isSuccess
+          ? `Transaction confirmed with ${confirmations} confirmations`
+          : 'Transaction failed on-chain',
+      },
+    });
+
+  } catch (error) {
+    console.error('[VoiceSwap] Tx status error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to check transaction status',
+    });
+  }
+});
+
+/**
  * GET /voiceswap/ai/health
  * Check OpenAI API health and configuration
  */
@@ -843,6 +947,331 @@ router.get('/ai/health', async (_req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to check AI health',
+    });
+  }
+});
+
+// ============================================
+// Merchant QR Code Generation
+// ============================================
+
+/**
+ * POST /voiceswap/generate-qr
+ * Generate QR code data for a merchant payment request
+ *
+ * This endpoint is used by the merchant's "Receive" page to generate
+ * QR codes that customers can scan with VoiceSwap or any standard wallet.
+ *
+ * Body:
+ * - merchantWallet: Merchant's wallet address (required)
+ * - amount: Amount in USDC, e.g., "10.00" (optional)
+ * - merchantName: Display name for the merchant (optional)
+ *
+ * Returns multiple QR code formats:
+ * - voiceswap: Deep link for VoiceSwap app (voiceswap://pay?...)
+ * - eip681: Standard format for Zerion, MetaMask, etc. (ethereum:...)
+ * - webUrl: Shareable web link (https://voiceswap.cc/pay/...)
+ * - address: Plain wallet address (fallback)
+ */
+router.post('/generate-qr', (req, res) => {
+  try {
+    const { merchantWallet, amount, merchantName } = req.body;
+
+    if (!merchantWallet) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing merchantWallet in request body',
+      });
+    }
+
+    // Validate wallet address
+    if (!ethers.utils.isAddress(merchantWallet)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid wallet address format',
+      });
+    }
+
+    // Validate amount if provided
+    if (amount) {
+      const amountNum = parseFloat(amount);
+      if (isNaN(amountNum) || amountNum <= 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid amount. Must be a positive number.',
+        });
+      }
+    }
+
+    // Generate QR data in multiple formats
+    const qrData = generateMerchantQRData(merchantWallet, amount, merchantName);
+    const webUrl = generatePaymentWebURL(merchantWallet, amount, merchantName);
+
+    console.log(`[VoiceSwap] Generated QR for merchant ${qrData.displayMerchant}: ${qrData.displayAmount}`);
+
+    res.json({
+      success: true,
+      data: {
+        // QR code content options (frontend chooses which to display)
+        qrFormats: {
+          // For VoiceSwap app - includes all payment details
+          voiceswap: qrData.voiceswap,
+          // For standard wallets (Zerion, MetaMask, Rainbow)
+          eip681: qrData.eip681,
+          // Plain address (universal fallback)
+          address: qrData.address,
+        },
+        // Web URL for sharing
+        webUrl,
+        // Display info for the merchant's screen
+        display: {
+          amount: qrData.displayAmount,
+          merchant: qrData.displayMerchant,
+          network: 'Unichain',
+          token: 'USDC',
+        },
+        // Instructions for the merchant to show customers
+        instructions: {
+          voiceswap: 'Scan with VoiceSwap app on Meta Ray-Ban glasses',
+          standard: 'Scan with any crypto wallet (Zerion, MetaMask, Rainbow)',
+        },
+      },
+    });
+  } catch (error) {
+    console.error('[VoiceSwap] Generate QR error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to generate QR code data',
+    });
+  }
+});
+
+/**
+ * GET /voiceswap/qr/:wallet
+ * Quick QR code data generation via GET request
+ *
+ * Query params:
+ * - amount: Amount in USDC (optional)
+ * - name: Merchant name (optional)
+ */
+router.get('/qr/:wallet', (req, res) => {
+  try {
+    const { wallet } = req.params;
+    const amount = req.query.amount as string | undefined;
+    const merchantName = req.query.name as string | undefined;
+
+    if (!ethers.utils.isAddress(wallet)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid wallet address',
+      });
+    }
+
+    const qrData = generateMerchantQRData(wallet, amount, merchantName);
+    const webUrl = generatePaymentWebURL(wallet, amount, merchantName);
+
+    res.json({
+      success: true,
+      data: {
+        voiceswap: qrData.voiceswap,
+        eip681: qrData.eip681,
+        address: qrData.address,
+        webUrl,
+        display: {
+          amount: qrData.displayAmount,
+          merchant: qrData.displayMerchant,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('[VoiceSwap] QR GET error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to generate QR code data',
+    });
+  }
+});
+
+// ============================================
+// Merchant Payments Management
+// ============================================
+
+/**
+ * POST /voiceswap/merchant/payment
+ * Save a payment received by merchant with concept
+ *
+ * Body:
+ * - merchantWallet: Merchant's wallet address
+ * - txHash: Transaction hash
+ * - fromAddress: Payer's address
+ * - amount: Amount in USDC
+ * - concept: Payment concept/category (optional)
+ * - blockNumber: Block number
+ */
+router.post('/merchant/payment', async (req, res) => {
+  try {
+    const { merchantWallet, txHash, fromAddress, amount, concept, blockNumber } = req.body;
+
+    if (!merchantWallet || !txHash || !fromAddress || !amount || blockNumber === undefined) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: merchantWallet, txHash, fromAddress, amount, blockNumber',
+      });
+    }
+
+    if (!ethers.utils.isAddress(merchantWallet) || !ethers.utils.isAddress(fromAddress)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid wallet address format',
+      });
+    }
+
+    await saveMerchantPayment({
+      merchantWallet,
+      txHash,
+      fromAddress,
+      amount: amount.toString(),
+      concept,
+      blockNumber,
+    });
+
+    console.log(`[VoiceSwap] Saved merchant payment: ${amount} USDC, concept: ${concept || 'none'}`);
+
+    res.json({
+      success: true,
+      data: {
+        txHash,
+        concept,
+        message: 'Payment saved successfully',
+      },
+    });
+  } catch (error) {
+    console.error('[VoiceSwap] Save merchant payment error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to save payment',
+    });
+  }
+});
+
+/**
+ * GET /voiceswap/merchant/payments/:wallet
+ * Get merchant payment history with concepts
+ *
+ * Query params:
+ * - limit: Number of results (default 50)
+ * - offset: Pagination offset (default 0)
+ * - concept: Filter by concept (optional)
+ */
+router.get('/merchant/payments/:wallet', async (req, res) => {
+  try {
+    const { wallet } = req.params;
+    const limit = parseInt(req.query.limit as string) || 50;
+    const offset = parseInt(req.query.offset as string) || 0;
+    const concept = req.query.concept as string | undefined;
+
+    if (!ethers.utils.isAddress(wallet)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid wallet address',
+      });
+    }
+
+    const payments = await getMerchantPayments(wallet, { limit, offset, concept });
+
+    res.json({
+      success: true,
+      data: {
+        payments,
+        pagination: {
+          limit,
+          offset,
+          count: payments.length,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('[VoiceSwap] Get merchant payments error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get payments',
+    });
+  }
+});
+
+/**
+ * PUT /voiceswap/merchant/payment/:txHash/concept
+ * Update the concept of an existing payment
+ *
+ * Body:
+ * - concept: New concept value
+ */
+router.put('/merchant/payment/:txHash/concept', async (req, res) => {
+  try {
+    const { txHash } = req.params;
+    const { concept } = req.body;
+
+    if (!concept) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing concept in request body',
+      });
+    }
+
+    // Check if payment exists
+    const existing = await getMerchantPaymentByTxHash(txHash);
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        error: 'Payment not found',
+      });
+    }
+
+    await updatePaymentConcept(txHash, concept);
+
+    res.json({
+      success: true,
+      data: {
+        txHash,
+        concept,
+        message: 'Concept updated successfully',
+      },
+    });
+  } catch (error) {
+    console.error('[VoiceSwap] Update payment concept error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update concept',
+    });
+  }
+});
+
+/**
+ * GET /voiceswap/merchant/stats/:wallet
+ * Get merchant payment statistics
+ */
+router.get('/merchant/stats/:wallet', async (req, res) => {
+  try {
+    const { wallet } = req.params;
+
+    if (!ethers.utils.isAddress(wallet)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid wallet address',
+      });
+    }
+
+    const stats = await getMerchantStats(wallet);
+
+    res.json({
+      success: true,
+      data: stats,
+    });
+  } catch (error) {
+    console.error('[VoiceSwap] Get merchant stats error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get stats',
     });
   }
 });
