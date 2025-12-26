@@ -153,6 +153,7 @@
             <key>CFBundleURLSchemes</key>
             <array>
                 <string>voiceswap</string>
+                <string>voiceswap.cc</string>
                 <string>wc</string>
             </array>
         </dict>

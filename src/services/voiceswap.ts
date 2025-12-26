@@ -101,6 +101,9 @@ export interface PaymentResult {
  * - Simple: "0x..." (just wallet address)
  * - JSON: {"wallet": "0x...", "amount": "10.00", "name": "Store"}
  * - URI: "unichain:0x...?amount=10.00&name=Store"
+ * - Deep link: "voiceswap://pay?wallet=0x...&amount=10.00"
+ * - EIP-681: "ethereum:0x...@130" or "ethereum:0x...@130/transfer?address=...&uint256=..."
+ *   (Standard format used by Zerion, MetaMask, Rainbow, etc.)
  */
 export function parseQRCode(qrData: string): PaymentRequest | null {
   try {
@@ -123,6 +126,70 @@ export function parseQRCode(qrData: string): PaymentRequest | null {
         merchantName: data.name || data.merchantName,
         orderId: data.orderId,
       };
+    }
+
+    // Check if it's EIP-681 format (ethereum:0x...@chainId or ethereum:0x...@chainId/transfer?...)
+    // This is the standard format used by Zerion, MetaMask, Rainbow, etc.
+    // Examples:
+    //   ethereum:0x1234...@130 (simple address on Unichain)
+    //   ethereum:0x1234...@130?value=1000000000000000000 (send ETH)
+    //   ethereum:0xUSDC@130/transfer?address=0xRecipient&uint256=1000000 (ERC20 transfer)
+    const eip681Match = qrData.match(/^ethereum:(0x[a-fA-F0-9]{40})(?:@(\d+))?(?:\/([a-zA-Z]+))?(?:\?(.*))?$/);
+    if (eip681Match) {
+      const targetAddress = eip681Match[1];
+      const chainId = eip681Match[2] ? parseInt(eip681Match[2]) : undefined;
+      const functionName = eip681Match[3]; // e.g., "transfer" for ERC20
+      const queryString = eip681Match[4];
+      const params = new URLSearchParams(queryString || '');
+
+      // Log for debugging
+      console.log('[VoiceSwap] EIP-681 QR parsed:', { targetAddress, chainId, functionName, params: Object.fromEntries(params) });
+
+      // If it's an ERC20 transfer call (ethereum:TOKEN_CONTRACT/transfer?address=RECIPIENT&uint256=AMOUNT)
+      if (functionName === 'transfer') {
+        const recipientAddress = params.get('address');
+        const amountWei = params.get('uint256');
+
+        if (recipientAddress && ethers.utils.isAddress(recipientAddress)) {
+          // Convert uint256 (wei for USDC = 6 decimals) to readable amount
+          let amount: string | undefined;
+          if (amountWei) {
+            try {
+              // USDC has 6 decimals
+              amount = ethers.utils.formatUnits(amountWei, 6);
+            } catch {
+              // If parsing fails, leave amount undefined
+            }
+          }
+
+          return {
+            merchantWallet: ethers.utils.getAddress(recipientAddress),
+            amount,
+          };
+        }
+      }
+
+      // Simple ethereum:ADDRESS format (direct payment to address)
+      // or ethereum:ADDRESS?value=X (ETH payment)
+      if (ethers.utils.isAddress(targetAddress)) {
+        let amount: string | undefined;
+        const valueWei = params.get('value');
+        if (valueWei) {
+          try {
+            // ETH has 18 decimals, convert to USD estimate (rough)
+            const ethAmount = parseFloat(ethers.utils.formatEther(valueWei));
+            // TODO: Get real ETH price
+            amount = (ethAmount * 3900).toFixed(2); // Rough USD estimate
+          } catch {
+            // Ignore parsing errors
+          }
+        }
+
+        return {
+          merchantWallet: ethers.utils.getAddress(targetAddress),
+          amount,
+        };
+      }
     }
 
     // Check if it's a URI format (voiceswap:0x... or unichain:0x...)
@@ -519,3 +586,89 @@ export const NETWORK_CONFIG = {
   rpcUrl: UNICHAIN_RPC,
   name: 'Unichain Mainnet',
 };
+
+// ============================================
+// QR Code Generation for Merchant Web Page
+// ============================================
+
+/**
+ * QR Code data for merchant payment page
+ * Contains multiple formats for maximum compatibility
+ */
+export interface MerchantQRData {
+  // VoiceSwap native format (for VoiceSwap app)
+  voiceswap: string;
+  // EIP-681 format (for Zerion, MetaMask, Rainbow, etc.)
+  eip681: string;
+  // Simple address (fallback)
+  address: string;
+  // Display info
+  displayAmount: string;
+  displayMerchant: string;
+}
+
+/**
+ * Generate QR code data for a merchant payment request
+ *
+ * Creates multiple formats:
+ * 1. VoiceSwap deep link (voiceswap://pay?...) - for VoiceSwap app
+ * 2. EIP-681 URI (ethereum:...) - for standard wallets like Zerion, MetaMask
+ * 3. Plain address - as fallback
+ *
+ * @param merchantWallet - Merchant's wallet address
+ * @param amount - Amount in USDC (human readable, e.g., "10.00")
+ * @param merchantName - Optional merchant display name
+ * @returns QR code data in multiple formats
+ */
+export function generateMerchantQRData(
+  merchantWallet: string,
+  amount?: string,
+  merchantName?: string
+): MerchantQRData {
+  const checksumWallet = ethers.utils.getAddress(merchantWallet);
+
+  // VoiceSwap native format
+  const voiceswapParams = new URLSearchParams();
+  voiceswapParams.set('wallet', checksumWallet);
+  if (amount) voiceswapParams.set('amount', amount);
+  if (merchantName) voiceswapParams.set('name', merchantName);
+  const voiceswapUri = `voiceswap://pay?${voiceswapParams.toString()}`;
+
+  // EIP-681 format for USDC transfer on Unichain (chain ID 130)
+  // Format: ethereum:USDC_CONTRACT@130/transfer?address=RECIPIENT&uint256=AMOUNT_IN_WEI
+  let eip681Uri: string;
+  if (amount) {
+    // Convert USDC amount to wei (6 decimals)
+    const amountWei = ethers.utils.parseUnits(amount, 6).toString();
+    eip681Uri = `ethereum:${TOKENS.USDC}@${CHAIN_ID}/transfer?address=${checksumWallet}&uint256=${amountWei}`;
+  } else {
+    // Simple address format without amount
+    eip681Uri = `ethereum:${checksumWallet}@${CHAIN_ID}`;
+  }
+
+  return {
+    voiceswap: voiceswapUri,
+    eip681: eip681Uri,
+    address: checksumWallet,
+    displayAmount: amount ? `$${amount} USDC` : 'Any amount',
+    displayMerchant: merchantName || `${checksumWallet.slice(0, 6)}...${checksumWallet.slice(-4)}`,
+  };
+}
+
+/**
+ * Generate a web URL for payment (redirects to app or shows fallback)
+ * This URL can be shared directly or embedded in a QR code
+ */
+export function generatePaymentWebURL(
+  merchantWallet: string,
+  amount?: string,
+  merchantName?: string
+): string {
+  const checksumWallet = ethers.utils.getAddress(merchantWallet);
+  const params = new URLSearchParams();
+  if (amount) params.set('amount', amount);
+  if (merchantName) params.set('name', merchantName);
+
+  const queryString = params.toString();
+  return `https://voiceswap.cc/pay/${checksumWallet}${queryString ? `?${queryString}` : ''}`;
+}

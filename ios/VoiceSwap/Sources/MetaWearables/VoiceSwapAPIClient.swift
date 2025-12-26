@@ -177,6 +177,20 @@ public struct HealthResponse: Decodable {
     public let openai: String?
 }
 
+// MARK: - Transaction Status
+
+public struct TransactionStatusResponse: Decodable {
+    public let txHash: String
+    public let status: String  // "pending", "confirmed", "failed", "not_found"
+    public let confirmations: Int?
+    public let blockNumber: Int?
+    public let gasUsed: String?
+    public let from: String?
+    public let to: String?
+    public let explorerUrl: String?
+    public let message: String
+}
+
 // MARK: - API Client
 
 public actor VoiceSwapAPIClient {
@@ -335,6 +349,14 @@ public actor VoiceSwapAPIClient {
         ]
 
         return try await put("/voiceswap/session/\(sessionId)", body: body)
+    }
+
+    // MARK: - Transaction Status
+
+    /// Get transaction status from blockchain
+    /// Returns status: "pending", "confirmed", "failed", or "not_found"
+    public func getTransactionStatus(txHash: String) async throws -> APIResponse<TransactionStatusResponse> {
+        return try await get("/voiceswap/tx/\(txHash)")
     }
 
     // MARK: - Health Check
