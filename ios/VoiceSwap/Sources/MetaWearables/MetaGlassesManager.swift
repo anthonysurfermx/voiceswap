@@ -13,6 +13,7 @@ import Speech
 import UIKit
 import CoreImage
 import SwiftUI
+import Vision
 
 // Import Meta Wearables DAT SDK
 import MWDATCore
@@ -62,40 +63,189 @@ public struct QRScanResult {
     public let merchantWallet: String?
     public let amount: String?
     public let merchantName: String?
+    public let chainId: Int?
+    public let token: String?
 
-    /// Parse a VoiceSwap deep link URL
+    public init(rawData: String, merchantWallet: String?, amount: String?, merchantName: String?, chainId: Int? = nil, token: String? = nil) {
+        self.rawData = rawData
+        self.merchantWallet = merchantWallet
+        self.amount = amount
+        self.merchantName = merchantName
+        self.chainId = chainId
+        self.token = token
+    }
+
+    /// Parse various payment QR code formats
     public static func parse(from urlString: String) -> QRScanResult? {
-        // Handle voiceswap:// deep links
-        if urlString.hasPrefix("voiceswap://pay?") {
-            guard let url = URL(string: urlString),
-                  let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
-                return nil
-            }
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
 
-            let queryItems = components.queryItems ?? []
-            let wallet = queryItems.first(where: { $0.name == "wallet" })?.value
-            let amount = queryItems.first(where: { $0.name == "amount" })?.value
-            let name = queryItems.first(where: { $0.name == "name" })?.value
-
-            return QRScanResult(
-                rawData: urlString,
-                merchantWallet: wallet,
-                amount: amount,
-                merchantName: name
-            )
+        // 1. Handle voiceswap:// deep links
+        //    Format: voiceswap://pay?wallet=0x...&amount=10&name=CoffeeShop
+        if trimmed.lowercased().hasPrefix("voiceswap://") {
+            return parseVoiceSwapURL(trimmed)
         }
 
-        // Handle plain Ethereum addresses
-        if urlString.hasPrefix("0x") && urlString.count == 42 {
+        // 2. Handle HTTPS voiceswap.cc links
+        //    Format: https://voiceswap.cc/pay?wallet=0x...&amount=10
+        if trimmed.lowercased().contains("voiceswap.cc") {
+            return parseVoiceSwapURL(trimmed)
+        }
+
+        // 3. Handle EIP-681 ethereum: URLs (standard for crypto payments)
+        //    Format: ethereum:0x1234...?value=1000000&chainId=130
+        if trimmed.lowercased().hasPrefix("ethereum:") {
+            return parseEIP681URL(trimmed)
+        }
+
+        // 4. Handle plain Ethereum addresses (0x...)
+        if isValidEthereumAddress(trimmed) {
             return QRScanResult(
-                rawData: urlString,
-                merchantWallet: urlString,
+                rawData: trimmed,
+                merchantWallet: trimmed,
                 amount: nil,
                 merchantName: nil
             )
         }
 
+        // 5. Handle ENS names (name.eth)
+        if trimmed.lowercased().hasSuffix(".eth") && trimmed.count > 4 {
+            return QRScanResult(
+                rawData: trimmed,
+                merchantWallet: trimmed,  // Will be resolved by backend
+                amount: nil,
+                merchantName: trimmed
+            )
+        }
+
+        // 6. Handle JSON payment requests
+        if trimmed.hasPrefix("{") {
+            return parseJSONPaymentRequest(trimmed)
+        }
+
         return nil
+    }
+
+    /// Parse VoiceSwap URL format
+    private static func parseVoiceSwapURL(_ urlString: String) -> QRScanResult? {
+        guard let url = URL(string: urlString),
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+
+        let queryItems = components.queryItems ?? []
+        let wallet = queryItems.first(where: { $0.name == "wallet" || $0.name == "to" || $0.name == "address" })?.value
+        let amount = queryItems.first(where: { $0.name == "amount" || $0.name == "value" })?.value
+        let name = queryItems.first(where: { $0.name == "name" || $0.name == "merchant" || $0.name == "label" })?.value
+        let chainIdStr = queryItems.first(where: { $0.name == "chainId" || $0.name == "chain" })?.value
+        let token = queryItems.first(where: { $0.name == "token" || $0.name == "currency" })?.value
+
+        guard wallet != nil || name != nil else { return nil }
+
+        return QRScanResult(
+            rawData: urlString,
+            merchantWallet: wallet,
+            amount: amount,
+            merchantName: name,
+            chainId: chainIdStr.flatMap { Int($0) },
+            token: token
+        )
+    }
+
+    /// Parse EIP-681 ethereum: URL format
+    /// Example: ethereum:0x1234567890123456789012345678901234567890@130?value=1000000
+    private static func parseEIP681URL(_ urlString: String) -> QRScanResult? {
+        // Remove ethereum: prefix
+        var remaining = urlString.dropFirst("ethereum:".count)
+
+        // Check for pay- prefix (ethereum:pay-0x...)
+        if remaining.hasPrefix("pay-") {
+            remaining = remaining.dropFirst(4)
+        }
+
+        // Extract address (and optional chainId after @)
+        var address: String
+        var chainId: Int? = 130  // Default to Unichain
+
+        if let atIndex = remaining.firstIndex(of: "@") {
+            address = String(remaining[..<atIndex])
+            let afterAt = remaining[remaining.index(after: atIndex)...]
+            if let queryIndex = afterAt.firstIndex(of: "?") {
+                chainId = Int(String(afterAt[..<queryIndex]))
+            } else {
+                chainId = Int(String(afterAt))
+            }
+        } else if let queryIndex = remaining.firstIndex(of: "?") {
+            address = String(remaining[..<queryIndex])
+        } else {
+            address = String(remaining)
+        }
+
+        guard isValidEthereumAddress(address) else { return nil }
+
+        // Parse query parameters
+        var amount: String?
+        if let queryIndex = remaining.firstIndex(of: "?") {
+            let query = String(remaining[remaining.index(after: queryIndex)...])
+            let params = query.split(separator: "&")
+            for param in params {
+                let parts = param.split(separator: "=", maxSplits: 1)
+                if parts.count == 2 {
+                    let key = String(parts[0]).lowercased()
+                    let value = String(parts[1])
+                    if key == "value" || key == "amount" {
+                        // Convert wei to human readable if needed
+                        amount = value
+                    } else if key == "chainid" {
+                        chainId = Int(value)
+                    }
+                }
+            }
+        }
+
+        return QRScanResult(
+            rawData: urlString,
+            merchantWallet: address,
+            amount: amount,
+            merchantName: nil,
+            chainId: chainId,
+            token: "USDC"  // Default to USDC for EIP-681
+        )
+    }
+
+    /// Parse JSON payment request
+    private static func parseJSONPaymentRequest(_ jsonString: String) -> QRScanResult? {
+        guard let data = jsonString.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+
+        let wallet = json["wallet"] as? String ?? json["to"] as? String ?? json["address"] as? String
+        let amount = json["amount"] as? String ?? (json["value"] as? Double).map { String($0) }
+        let name = json["name"] as? String ?? json["merchant"] as? String ?? json["label"] as? String
+        let chainId = json["chainId"] as? Int ?? json["chain"] as? Int
+        let token = json["token"] as? String ?? json["currency"] as? String
+
+        guard wallet != nil else { return nil }
+
+        return QRScanResult(
+            rawData: jsonString,
+            merchantWallet: wallet,
+            amount: amount,
+            merchantName: name,
+            chainId: chainId,
+            token: token
+        )
+    }
+
+    /// Validate Ethereum address format
+    private static func isValidEthereumAddress(_ address: String) -> Bool {
+        let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("0x") && trimmed.count == 42 else { return false }
+
+        // Check that remaining characters are valid hex
+        let hexPart = trimmed.dropFirst(2)
+        let validHex = CharacterSet(charactersIn: "0123456789abcdefABCDEF")
+        return hexPart.unicodeScalars.allSatisfy { validHex.contains($0) }
     }
 }
 
@@ -142,6 +292,7 @@ public class MetaGlassesManager: NSObject, ObservableObject {
     @Published public private(set) var currentVideoFrame: UIImage?
     @Published public private(set) var devices: [DeviceIdentifier] = []
     @Published public private(set) var lastDetectedQR: QRScanResult?
+    @Published public private(set) var isGlassesHFPConnected: Bool = false
 
     // MARK: - Computed Properties
     public var isConnected: Bool {
@@ -151,6 +302,12 @@ public class MetaGlassesManager: NSObject, ObservableObject {
         default:
             return false
         }
+    }
+
+    /// Check if glasses are connected via Bluetooth HFP (audio route)
+    /// This is a fallback detection when devicesStream() returns empty
+    public var hasGlassesViaHFP: Bool {
+        return isGlassesHFPConnected
     }
 
     public var isStreaming: Bool {
@@ -169,6 +326,7 @@ public class MetaGlassesManager: NSObject, ObservableObject {
     private var stateListenerToken: AnyListenerToken?
     private var videoFrameListenerToken: AnyListenerToken?
     private var errorListenerToken: AnyListenerToken?
+    private var compatibilityListenerToken: AnyListenerToken?
 
     // MARK: - Speech Recognition Properties
     private var speechRecognizer: SFSpeechRecognizer?
@@ -177,10 +335,15 @@ public class MetaGlassesManager: NSObject, ObservableObject {
     private var audioEngine: AVAudioEngine!
     private let synthesizer = AVSpeechSynthesizer()
 
-    // MARK: - QR Detection
-    private var qrDetector: CIDetector?
+    // MARK: - QR Detection (Vision Framework)
+    private var qrDetector: CIDetector?  // Fallback
     private var lastQRDetectionTime: Date = .distantPast
     private let qrDetectionCooldown: TimeInterval = 2.0
+    private var isProcessingFrame: Bool = false
+    private let visionQueue = DispatchQueue(label: "com.voiceswap.vision", qos: .userInitiated)
+
+    // MARK: - Audio Route Observation
+    private var audioRouteObserver: NSObjectProtocol?
 
     // MARK: - VoiceSwap Configuration
     private let apiBaseURL: String
@@ -213,6 +376,9 @@ public class MetaGlassesManager: NSObject, ObservableObject {
                 context: nil,
                 options: [CIDetectorAccuracy: CIDetectorAccuracyHigh]
             )
+
+            // Setup audio route change observer for Bluetooth HFP detection
+            self.setupAudioRouteObserver()
 
             // Initialize Meta Wearables SDK
             self.initializeWearablesSDK()
@@ -248,20 +414,51 @@ public class MetaGlassesManager: NSObject, ObservableObject {
     private func setupRegistrationListener() {
         guard let wearables = wearables else { return }
 
+        print("[MetaGlasses] Setting up registration listener...")
+
         registrationTask = Task {
-            for await registrationState in wearables.registrationStateStream() {
-                await MainActor.run {
-                    switch registrationState {
-                    case .registering:
-                        self.connectionState = .connecting
-                    case .registered:
-                        self.connectionState = .registered
-                        self.setupDeviceStream()
-                    @unknown default:
-                        self.connectionState = .disconnected
+            print("[MetaGlasses] Registration stream Task started. Entering for-await loop...")
+            do {
+                for await registrationState in wearables.registrationStateStream() {
+                    print("[MetaGlasses] Registration state changed: \(registrationState)")
+                    await MainActor.run {
+                        switch registrationState {
+                            case .registering:
+                                print("[MetaGlasses] → State: registering")
+                                self.connectionState = .connecting
+                            case .registered:
+                                print("[MetaGlasses] → State: registered ✅")
+                                UserDefaults.standard.set(true, forKey: "metaGlassesRegistered")
+                                self.connectionState = .registered
+
+                                // Only setup stream if not already running to avoid churn
+                                if self.deviceStreamTask == nil {
+                                    self.setupDeviceStream()
+                                }
+                            @unknown default:
+                                // Unknown states - log but don't change connection state aggressively
+                                // This prevents losing registered state on transient/unknown states
+                                print("[MetaGlasses] → State: unknown (rawValue: \(registrationState)) - ignoring")
+                                // Only disconnect if we're not already registered or connected
+                                if case .disconnected = self.connectionState {
+                                    // Already disconnected, nothing to do
+                                } else if case .connecting = self.connectionState {
+                                    // Still connecting, reset to disconnected
+                                    self.connectionState = .disconnected
+                                }
+                                // If registered/connected, keep that state - don't downgrade on unknown
+                        }
                     }
                 }
+                print("[MetaGlasses] Registration stream ended gracefully.")
+            } catch {
+                print("[MetaGlasses] ERROR: Registration stream encountered an error: \(error.localizedDescription)")
+                await MainActor.run {
+                    self.delegate?.glassesDidEncounterError(error)
+                    self.connectionState = .error("Registration stream error: \(error.localizedDescription)")
+                }
             }
+            print("[MetaGlasses] Registration stream Task finished.")
         }
     }
 
@@ -281,7 +478,6 @@ public class MetaGlassesManager: NSObject, ObservableObject {
             for await devices in wearables.devicesStream() {
                 hasReceivedUpdate = true
                 await MainActor.run {
-                    let previousCount = self.devices.count
                     self.devices = devices
 
                     print("[MetaGlasses] Device stream update: \(devices.count) device(s) found")
@@ -304,6 +500,8 @@ public class MetaGlassesManager: NSObject, ObservableObject {
                         print("[MetaGlasses] Device connected via Bluetooth: \(devices.count) device(s)")
                         for (index, device) in devices.enumerated() {
                             print("[MetaGlasses]   Device \(index + 1): \(device)")
+                            // Check device compatibility (v0.2.0+ API)
+                            self.checkDeviceCompatibility(device)
                         }
                     }
                 }
@@ -313,6 +511,17 @@ public class MetaGlassesManager: NSObject, ObservableObject {
                 print("[MetaGlasses] Device stream ended without any updates")
             }
         }
+    }
+
+    /// Check device compatibility for camera streaming (v0.2.0+ API)
+    private func checkDeviceCompatibility(_ device: DeviceIdentifier) {
+        guard let wearables = wearables else { return }
+
+        // The SDK in v0.2.0+ provides compatibility() method on Device objects
+        // DeviceIdentifier is just an identifier - we need to get the actual Device
+        // For now, log what we have
+        print("[MetaGlasses] Device identifier: \(device)")
+        print("[MetaGlasses] Note: Use Meta View > Settings > Device Access to grant camera permissions")
     }
 
     // MARK: - Public Methods
@@ -356,8 +565,20 @@ public class MetaGlassesManager: NSObject, ObservableObject {
             for _ in 1...4 {
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 if !devices.isEmpty || connectionState == .connected {
-                    print("[MetaGlasses] Device connected")
+                    print("[MetaGlasses] Device connected via SDK")
                     return
+                }
+            }
+
+            // If SDK devicesStream didn't find devices, try to force Bluetooth audio and check HFP
+            if devices.isEmpty {
+                print("[MetaGlasses] SDK devicesStream empty, attempting to force Bluetooth audio route...")
+                await tryForceBluetoothAudioRoute()
+                checkAndUpdateHFPConnection()
+
+                // If still not connected after HFP check, list available Bluetooth devices
+                if !isGlassesHFPConnected {
+                    listAvailableBluetoothDevices()
                 }
             }
         } else {
@@ -409,6 +630,235 @@ public class MetaGlassesManager: NSObject, ObservableObject {
         delegate?.glassesDidDisconnect()
     }
 
+    // MARK: - QR Scanning
+
+    /// Start scanning for QR codes using the glasses camera
+    /// This starts the camera stream and processes frames for QR detection
+    public func startQRScanning() async {
+        print("[MetaGlasses] Starting QR scanning mode...")
+        speak("Scanning for payment QR code. Look at the merchant's QR.", language: "en-US")
+        triggerHaptic(.short)
+
+        // Reset detection state
+        lastDetectedQR = nil
+        lastQRDetectionTime = .distantPast
+        isProcessingFrame = false
+
+        // Start camera stream - QR detection happens automatically via scanForQRCode()
+        await startCameraStream()
+    }
+
+    /// Stop QR scanning
+    public func stopQRScanning() {
+        print("[MetaGlasses] Stopping QR scanning mode...")
+        stopCameraStream()
+    }
+
+    // MARK: - Audio Route Observation
+
+    /// Setup observer for audio route changes (Bluetooth connect/disconnect)
+    private func setupAudioRouteObserver() {
+        audioRouteObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self = self else { return }
+
+            if let reasonValue = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+               let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) {
+
+                switch reason {
+                case .newDeviceAvailable:
+                    print("[MetaGlasses] 🔊 New audio device available")
+                    self.checkAndUpdateHFPConnection()
+                case .oldDeviceUnavailable:
+                    print("[MetaGlasses] 🔇 Audio device disconnected")
+                    self.checkAndUpdateHFPConnection()
+                case .categoryChange:
+                    print("[MetaGlasses] Audio category changed")
+                case .override:
+                    print("[MetaGlasses] Audio route override")
+                case .routeConfigurationChange:
+                    print("[MetaGlasses] Route configuration changed")
+                    self.checkAndUpdateHFPConnection()
+                default:
+                    break
+                }
+            }
+        }
+    }
+
+    /// Try to force audio route to Bluetooth HFP
+    /// This helps establish the HFP connection needed for glasses detection
+    private func tryForceBluetoothAudioRoute() async {
+        print("[MetaGlasses] Attempting to force Bluetooth audio route...")
+
+        let audioSession = AVAudioSession.sharedInstance()
+
+        do {
+            // Configure audio session for Bluetooth HFP
+            try audioSession.setCategory(
+                .playAndRecord,
+                mode: .voiceChat,  // voiceChat mode prefers Bluetooth HFP
+                options: [.allowBluetooth, .allowBluetoothA2DP]
+            )
+
+            try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+
+            // Give the system time to switch routes
+            try? await Task.sleep(nanoseconds: 500_000_000)
+
+            // Check available inputs and try to select Bluetooth
+            let availableInputs = audioSession.availableInputs ?? []
+            print("[MetaGlasses] Available audio inputs:")
+            for input in availableInputs {
+                print("[MetaGlasses]   - \(input.portName) (\(input.portType.rawValue))")
+            }
+
+            // Try to find and select a Bluetooth input
+            if let bluetoothInput = availableInputs.first(where: {
+                $0.portType == .bluetoothHFP || $0.portType == .bluetoothA2DP
+            }) {
+                print("[MetaGlasses] Found Bluetooth input: \(bluetoothInput.portName)")
+                try audioSession.setPreferredInput(bluetoothInput)
+                print("[MetaGlasses] ✓ Set preferred input to Bluetooth")
+
+                // Wait a bit for the route to switch
+                try? await Task.sleep(nanoseconds: 300_000_000)
+            } else {
+                print("[MetaGlasses] No Bluetooth audio input available")
+                print("[MetaGlasses] Make sure glasses are:")
+                print("[MetaGlasses]   1. Connected in iOS Settings > Bluetooth")
+                print("[MetaGlasses]   2. Set as audio output (play music to verify)")
+            }
+        } catch {
+            print("[MetaGlasses] Failed to configure Bluetooth audio: \(error)")
+        }
+    }
+
+    /// List all available Bluetooth devices for debugging
+    private func listAvailableBluetoothDevices() {
+        let audioSession = AVAudioSession.sharedInstance()
+
+        print("[MetaGlasses] ═══════════════════════════════════════")
+        print("[MetaGlasses] BLUETOOTH DIAGNOSTICS")
+        print("[MetaGlasses] ═══════════════════════════════════════")
+
+        // Available inputs
+        if let inputs = audioSession.availableInputs {
+            print("[MetaGlasses] Available Inputs (\(inputs.count)):")
+            for input in inputs {
+                let isBluetooth = input.portType == .bluetoothHFP || input.portType == .bluetoothA2DP
+                let marker = isBluetooth ? "🔵" : "⚪"
+                print("[MetaGlasses]   \(marker) \(input.portName) [\(input.portType.rawValue)]")
+            }
+        }
+
+        // Current route
+        let currentRoute = audioSession.currentRoute
+        print("[MetaGlasses] Current Route:")
+        print("[MetaGlasses]   Inputs: \(currentRoute.inputs.map { "\($0.portName) (\($0.portType.rawValue))" }.joined(separator: ", "))")
+        print("[MetaGlasses]   Outputs: \(currentRoute.outputs.map { "\($0.portName) (\($0.portType.rawValue))" }.joined(separator: ", "))")
+
+        print("[MetaGlasses] ═══════════════════════════════════════")
+        print("[MetaGlasses] If glasses not listed above:")
+        print("[MetaGlasses]   1. Open iOS Settings > Bluetooth")
+        print("[MetaGlasses]   2. Find 'Ray-Ban | Meta' and tap (i)")
+        print("[MetaGlasses]   3. Ensure 'Connect' is enabled")
+        print("[MetaGlasses]   4. Try playing music to establish audio route")
+        print("[MetaGlasses] ═══════════════════════════════════════")
+    }
+
+    /// Check if Meta glasses are connected via HFP and update state accordingly
+    private func checkAndUpdateHFPConnection() {
+        let audioSession = AVAudioSession.sharedInstance()
+        let currentRoute = audioSession.currentRoute
+
+        let inputs = currentRoute.inputs.map { "\($0.portName) (\($0.portType.rawValue))" }
+        let outputs = currentRoute.outputs.map { "\($0.portName) (\($0.portType.rawValue))" }
+
+        print("[MetaGlasses] Current audio route:")
+        print("  Inputs: \(inputs.joined(separator: ", "))")
+        print("  Outputs: \(outputs.joined(separator: ", "))")
+
+        // Check for glasses Bluetooth HFP
+        let hasBluetoothHFP = currentRoute.inputs.contains { $0.portType == .bluetoothHFP } ||
+                              currentRoute.outputs.contains { $0.portType == .bluetoothHFP }
+
+        // Check if device name contains "Meta" or "Ray-Ban" or "Glasses"
+        let glassesKeywords = ["meta", "ray-ban", "rayban", "glasses", "oakley"]
+        let hasGlassesDevice = currentRoute.inputs.contains { port in
+            glassesKeywords.contains { port.portName.lowercased().contains($0) }
+        } || currentRoute.outputs.contains { port in
+            glassesKeywords.contains { port.portName.lowercased().contains($0) }
+        }
+
+        let wasConnected = isGlassesHFPConnected
+        isGlassesHFPConnected = hasBluetoothHFP && hasGlassesDevice
+
+        if isGlassesHFPConnected {
+            print("[MetaGlasses] ✓ Glasses detected via Bluetooth HFP")
+
+            // If SDK devicesStream is empty but we detect glasses via HFP,
+            // update connection state as a fallback
+            if devices.isEmpty && connectionState == .registered {
+                print("[MetaGlasses] 📱 Using HFP as fallback - glasses detected via audio route")
+                connectionState = .connected
+                delegate?.glassesDidConnect()
+            }
+        } else if wasConnected && !isGlassesHFPConnected {
+            print("[MetaGlasses] ✗ Glasses disconnected from HFP")
+            // Only downgrade if we were relying on HFP detection
+            if devices.isEmpty && connectionState == .connected {
+                connectionState = .registered
+                delegate?.glassesDidDisconnect()
+            }
+        }
+    }
+
+
+    // MARK: - Audio Configuration for HFP
+
+    /// Configure HFP (Hands-Free Profile) audio BEFORE starting streaming
+    /// Per Meta docs: "It is essential to ensure that HFP is fully configured before initiating any streaming session"
+    private func configureHFPAudio() throws {
+        print("[MetaGlasses] Configuring HFP audio session...")
+
+        let audioSession = AVAudioSession.sharedInstance()
+
+        // Configure for play and record with Bluetooth HFP support
+        // Using .allowBluetooth enables HFP for both input and output
+        // Note: .allowBluetooth is being deprecated - use .allowBluetoothHFP in future iOS versions
+        try audioSession.setCategory(
+            .playAndRecord,
+            mode: .default,
+            options: [.allowBluetooth, .defaultToSpeaker, .mixWithOthers]
+        )
+
+        // Activate the session - this establishes HFP connection
+        try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+
+        // Log current audio route for debugging
+        let currentRoute = audioSession.currentRoute
+        print("[MetaGlasses] Audio inputs: \(currentRoute.inputs.map { $0.portName })")
+        print("[MetaGlasses] Audio outputs: \(currentRoute.outputs.map { $0.portName })")
+
+        // Check if Bluetooth is in the route
+        let hasBluetoothInput = currentRoute.inputs.contains {
+            $0.portType == .bluetoothHFP || $0.portType == .bluetoothA2DP
+        }
+        let hasBluetoothOutput = currentRoute.outputs.contains {
+            $0.portType == .bluetoothHFP || $0.portType == .bluetoothA2DP
+        }
+
+        if hasBluetoothInput || hasBluetoothOutput {
+            print("[MetaGlasses] ✓ Bluetooth HFP audio configured successfully")
+        } else {
+            print("[MetaGlasses] ⚠ No Bluetooth device in audio route - glasses mic may not work")
+        }
+    }
+
     // MARK: - Camera Streaming
 
     /// Start streaming camera from glasses
@@ -426,11 +876,27 @@ public class MetaGlassesManager: NSObject, ObservableObject {
             return
         }
 
-        // Check if we have any devices connected via Bluetooth
+        // Check if we have devices connected via SDK (required for camera)
+        // HFP audio works for voice but SDK device detection is required for camera streaming
         if devices.isEmpty {
-            print("[MetaGlasses] No glasses connected via Bluetooth")
-            connectionState = .error("Put on glasses and connect via Bluetooth first")
-            return
+            if isGlassesHFPConnected {
+                // HFP audio works but SDK doesn't see the device - common issue
+                print("[MetaGlasses] ⚠️ Glasses connected via HFP audio but not detected by Meta SDK")
+                print("[MetaGlasses] Camera requires SDK device detection, not just HFP")
+                print("[MetaGlasses] Troubleshooting steps:")
+                print("[MetaGlasses]   1. Open Meta View app and ensure glasses show as 'Connected'")
+                print("[MetaGlasses]   2. In Meta View: Settings > Device Access > Enable for VoiceSwap")
+                print("[MetaGlasses]   3. Try: Turn glasses off/on, then re-open VoiceSwap")
+                print("[MetaGlasses]   4. Check if glasses firmware is up to date")
+
+                speak("Camera access requires Meta View setup. Open Meta View, go to Settings, Device Access, and enable VoiceSwap.", language: "en-US")
+                connectionState = .error("Enable VoiceSwap in Meta View > Settings > Device Access")
+                return
+            } else {
+                print("[MetaGlasses] No glasses connected via Bluetooth or HFP")
+                connectionState = .error("Put on glasses and connect via Bluetooth first")
+                return
+            }
         }
 
         print("[MetaGlasses] Starting camera stream...")
@@ -445,15 +911,35 @@ public class MetaGlassesManager: NSObject, ObservableObject {
                 let requestStatus = try await wearables.requestPermission(.camera)
                 if requestStatus != .granted {
                     print("[MetaGlasses] Camera permission denied by user")
+                    speak("Camera access denied. Please approve in Meta View app.", language: "en-US")
                     connectionState = .error("Camera denied - approve in Meta View")
                     return
                 }
             }
         } catch {
             print("[MetaGlasses] Permission error: \(error)")
-            // Permission error 0 means no device connected via Bluetooth
-            connectionState = .error("Connect glasses via Bluetooth in iOS Settings")
+            // Parse the error to provide better guidance
+            let errorDesc = "\(error)"
+            if errorDesc.contains("PermissionError(rawValue: 0)") {
+                print("[MetaGlasses] PermissionError 0 = SDK cannot communicate with glasses")
+                print("[MetaGlasses] This usually means:")
+                print("[MetaGlasses]   - Glasses are connected via Bluetooth but not via Meta SDK")
+                print("[MetaGlasses]   - Camera permission not yet granted in Meta View app")
+                speak("Unable to access glasses camera. Please check Meta View app settings.", language: "en-US")
+                connectionState = .error("Grant camera access in Meta View app")
+            } else {
+                connectionState = .error("Camera error: \(error.localizedDescription)")
+            }
             return
+        }
+
+        // IMPORTANT: Configure HFP audio BEFORE starting streaming
+        // Per Meta docs: HFP must be fully configured before initiating streaming
+        do {
+            try configureHFPAudio()
+        } catch {
+            print("[MetaGlasses] Warning: Could not configure HFP audio: \(error)")
+            // Continue anyway - streaming may work but glasses mic might not
         }
 
         // Create device selector and stream session
@@ -539,9 +1025,111 @@ public class MetaGlassesManager: NSObject, ObservableObject {
         print("[MetaGlasses] Camera streaming stopped")
     }
 
-    // MARK: - QR Code Detection
+    // MARK: - QR Code Detection (Vision Framework)
 
+    /// Scan for QR codes in camera frame using Apple Vision framework
+    /// Vision is significantly faster and more accurate than CIDetector for real-time detection
     private func scanForQRCode(in image: UIImage) {
+        // Check cooldown to avoid duplicate detections
+        guard Date().timeIntervalSince(lastQRDetectionTime) > qrDetectionCooldown else { return }
+
+        // Avoid processing multiple frames simultaneously
+        guard !isProcessingFrame else { return }
+        isProcessingFrame = true
+
+        guard let cgImage = image.cgImage else {
+            isProcessingFrame = false
+            return
+        }
+
+        // Process on dedicated Vision queue to keep main thread responsive
+        visionQueue.async { [weak self] in
+            guard let self = self else { return }
+
+            // Create Vision barcode detection request
+            let request = VNDetectBarcodesRequest { [weak self] request, error in
+                guard let self = self else { return }
+
+                defer {
+                    Task { @MainActor in
+                        self.isProcessingFrame = false
+                    }
+                }
+
+                if let error = error {
+                    print("[MetaGlasses] Vision QR detection error: \(error.localizedDescription)")
+                    return
+                }
+
+                guard let results = request.results as? [VNBarcodeObservation] else { return }
+
+                // Process detected barcodes
+                for barcode in results {
+                    // We're specifically looking for QR codes
+                    guard barcode.symbology == .qr else { continue }
+                    guard let payloadString = barcode.payloadStringValue else { continue }
+
+                    // Try to parse as VoiceSwap payment QR
+                    if let result = QRScanResult.parse(from: payloadString) {
+                        Task { @MainActor in
+                            self.handleDetectedQR(result, rawData: payloadString, confidence: barcode.confidence)
+                        }
+                        return
+                    }
+                }
+            }
+
+            // Configure for QR code detection specifically
+            request.symbologies = [.qr]
+
+            // Perform the request
+            let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+            do {
+                try handler.perform([request])
+            } catch {
+                print("[MetaGlasses] Vision request failed: \(error.localizedDescription)")
+                Task { @MainActor in
+                    self.isProcessingFrame = false
+                }
+            }
+        }
+    }
+
+    /// Handle a successfully detected QR code
+    private func handleDetectedQR(_ result: QRScanResult, rawData: String, confidence: Float) {
+        // Update detection time to trigger cooldown
+        lastQRDetectionTime = Date()
+        lastDetectedQR = result
+
+        print("[MetaGlasses] ✅ QR detected via Vision (confidence: \(String(format: "%.1f%%", confidence * 100)))")
+        print("[MetaGlasses]    Raw data: \(rawData)")
+        if let wallet = result.merchantWallet {
+            print("[MetaGlasses]    Wallet: \(wallet.prefix(10))...")
+        }
+        if let amount = result.amount {
+            print("[MetaGlasses]    Amount: \(amount)")
+        }
+        if let name = result.merchantName {
+            print("[MetaGlasses]    Merchant: \(name)")
+        }
+
+        // Notify delegate
+        delegate?.glassesDidScanQR(result)
+
+        // Provide haptic and voice feedback
+        triggerHaptic(.success)
+
+        if let name = result.merchantName, let amount = result.amount {
+            speak("Found payment: \(amount) dollars to \(name)")
+        } else if let name = result.merchantName {
+            speak("Payment request from \(name)")
+        } else if result.merchantWallet != nil {
+            speak("Payment QR detected")
+        }
+    }
+
+    /// Fallback QR detection using CIDetector (slower but works on older iOS)
+    private func scanForQRCodeFallback(in image: UIImage) {
         guard Date().timeIntervalSince(lastQRDetectionTime) > qrDetectionCooldown else { return }
 
         guard let ciImage = CIImage(image: image),
@@ -554,20 +1142,7 @@ public class MetaGlassesManager: NSObject, ObservableObject {
                let messageString = qrFeature.messageString {
 
                 if let result = QRScanResult.parse(from: messageString) {
-                    lastQRDetectionTime = Date()
-                    lastDetectedQR = result
-
-                    print("[MetaGlasses] QR detected: \(messageString)")
-
-                    delegate?.glassesDidScanQR(result)
-                    triggerHaptic(.success)
-
-                    if let name = result.merchantName {
-                        speak("Payment request from \(name)")
-                    } else if result.merchantWallet != nil {
-                        speak("Payment request detected")
-                    }
-
+                    handleDetectedQR(result, rawData: messageString, confidence: 0.8)
                     return
                 }
             }

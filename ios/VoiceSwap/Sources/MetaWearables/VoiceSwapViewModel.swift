@@ -19,6 +19,7 @@ public enum PaymentFlowState: Equatable {
     case scanningQR
     case awaitingConfirmation(amount: String, merchant: String)
     case executing
+    case confirming(txHash: String)  // Transaction sent, waiting for blockchain confirmation
     case success(txHash: String)
     case failed(error: String)
     case cancelled
@@ -297,21 +298,34 @@ public class VoiceSwapViewModel: ObservableObject {
                 data: txData.transaction.data
             )
 
-            print("[ViewModel] ✅ Transaction confirmed: \(txHash)")
+            print("[ViewModel] Transaction sent: \(txHash)")
 
-            // Step 3: Success!
-            flowState = .success(txHash: txHash)
-            let explorerUrl = "\(txData.explorerBaseUrl)\(txHash)"
-            glassesManager.speak("Payment successful! \(txData.amount) USDC sent to \(txData.recipientShort)", language: "en-US")
-            glassesManager.triggerHaptic(.success)
+            // Step 3: Wait for blockchain confirmation
+            flowState = .confirming(txHash: txHash)
+            glassesManager.speak("Transaction sent. Waiting for confirmation.", language: "en-US")
 
-            print("[ViewModel] Explorer: \(explorerUrl)")
+            // Poll for transaction confirmation
+            let confirmed = try await waitForTransactionConfirmation(txHash: txHash)
+
+            if confirmed {
+                print("[ViewModel] ✅ Transaction confirmed: \(txHash)")
+                flowState = .success(txHash: txHash)
+                let explorerUrl = "\(txData.explorerBaseUrl)\(txHash)"
+                glassesManager.speak("Payment successful! \(txData.amount) USDC sent to \(txData.recipientShort)", language: "en-US")
+                glassesManager.triggerHaptic(.success)
+                print("[ViewModel] Explorer: \(explorerUrl)")
+            } else {
+                print("[ViewModel] ❌ Transaction failed: \(txHash)")
+                flowState = .failed(error: "Transaction failed on-chain")
+                glassesManager.speak("Transaction failed. Please try again.", language: "en-US")
+                glassesManager.triggerHaptic(.error)
+            }
 
             // Clear payment context
             clearPaymentContext()
 
             // Refresh balances after a short delay
-            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
             await refreshBalances()
 
         } catch WalletError.userRejected {
@@ -420,12 +434,79 @@ public class VoiceSwapViewModel: ObservableObject {
         }
     }
 
+    /// Poll backend for transaction confirmation
+    /// Returns true if confirmed, false if failed
+    /// Throws on timeout or network error
+    private func waitForTransactionConfirmation(txHash: String) async throws -> Bool {
+        let maxAttempts = 30  // 30 attempts * 2 seconds = 60 seconds max
+        let pollInterval: UInt64 = 2_000_000_000  // 2 seconds in nanoseconds
+
+        for attempt in 1...maxAttempts {
+            print("[ViewModel] Checking tx status (attempt \(attempt)/\(maxAttempts)): \(txHash)")
+
+            do {
+                let response = try await apiClient.getTransactionStatus(txHash: txHash)
+
+                guard let data = response.data else {
+                    print("[ViewModel] No data in tx status response")
+                    try await Task.sleep(nanoseconds: pollInterval)
+                    continue
+                }
+
+                switch data.status {
+                case "confirmed":
+                    print("[ViewModel] Transaction confirmed with \(data.confirmations ?? 0) confirmations")
+                    return true
+
+                case "failed":
+                    print("[ViewModel] Transaction failed on-chain")
+                    return false
+
+                case "pending":
+                    print("[ViewModel] Transaction still pending...")
+                    // Continue polling
+
+                case "not_found":
+                    // Transaction may have been dropped, but give it more time
+                    print("[ViewModel] Transaction not found yet, waiting...")
+
+                default:
+                    print("[ViewModel] Unknown status: \(data.status)")
+                }
+
+            } catch {
+                print("[ViewModel] Error checking tx status: \(error)")
+                // Continue polling on transient errors
+            }
+
+            try await Task.sleep(nanoseconds: pollInterval)
+        }
+
+        // Timeout - we didn't get confirmation in time
+        // The transaction might still be pending in the mempool
+        print("[ViewModel] Transaction verification timed out")
+        throw TransactionError.confirmationTimeout
+    }
+
     private func clearPaymentContext() {
         currentMerchantWallet = nil
         currentMerchantName = nil
         currentAmount = nil
         needsSwap = false
         swapFromToken = nil
+    }
+}
+
+// MARK: - Transaction Errors
+
+public enum TransactionError: Error, LocalizedError {
+    case confirmationTimeout
+
+    public var errorDescription: String? {
+        switch self {
+        case .confirmationTimeout:
+            return "Transaction confirmation timed out. Please check the explorer for status."
+        }
     }
 }
 

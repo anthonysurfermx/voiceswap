@@ -1,93 +1,29 @@
 /**
  * VoiceSwapMainView.swift
- * VoiceSwap - Main SwiftUI View
+ * VoiceSwap - Voice-activated crypto payments
  *
- * Brutalist design inspired by modern habit tracking apps.
- * Features bold typography, hard shadows, and vibrant colors.
+ * Minimal brutalist design inspired by Interfacer.co
+ * Clean, futuristic, high contrast
  */
 
 import SwiftUI
 import ReownAppKit
+import AudioToolbox
 
-// MARK: - Brutalist Design System
+// MARK: - Design System (Interfacer.co inspired)
 
-struct BrutalistColors {
-    static let background = Color(hex: "F5F5DC") // Cream/Beige
-    static let primary = Color(hex: "FFE135") // Bright Yellow
-    static let accent = Color(hex: "FF6B6B") // Coral Red
-    static let success = Color(hex: "4ECDC4") // Teal
-    static let dark = Color.black
-    static let cardBg = Color.white
-}
-
-struct BrutalistCard<Content: View>: View {
-    let content: Content
-    var backgroundColor: Color = BrutalistColors.cardBg
-
-    init(backgroundColor: Color = BrutalistColors.cardBg, @ViewBuilder content: () -> Content) {
-        self.backgroundColor = backgroundColor
-        self.content = content()
-    }
-
-    var body: some View {
-        content
-            .background(backgroundColor)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-            .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .stroke(BrutalistColors.dark, lineWidth: 3)
-            )
-            .shadow(color: BrutalistColors.dark, radius: 0, x: 4, y: 4)
-    }
-}
-
-struct BrutalistButton: View {
-    let title: String
-    let icon: String?
-    var backgroundColor: Color = BrutalistColors.primary
-    var foregroundColor: Color = BrutalistColors.dark
-    let action: () -> Void
-
-    init(_ title: String, icon: String? = nil, backgroundColor: Color = BrutalistColors.primary, foregroundColor: Color = BrutalistColors.dark, action: @escaping () -> Void) {
-        self.title = title
-        self.icon = icon
-        self.backgroundColor = backgroundColor
-        self.foregroundColor = foregroundColor
-        self.action = action
-    }
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                if let icon = icon {
-                    Image(systemName: icon)
-                        .font(.system(size: 18, weight: .black))
-                }
-                Text(title.uppercased())
-                    .font(.system(size: 16, weight: .black))
-            }
-            .foregroundColor(foregroundColor)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 16)
-            .background(backgroundColor)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-            .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .stroke(BrutalistColors.dark, lineWidth: 3)
-            )
-            .shadow(color: BrutalistColors.dark, radius: 0, x: 3, y: 3)
-        }
-        .buttonStyle(BrutalistButtonStyle())
-    }
-}
-
-struct BrutalistButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .offset(x: configuration.isPressed ? 3 : 0, y: configuration.isPressed ? 3 : 0)
-            .shadow(color: BrutalistColors.dark, radius: 0, x: configuration.isPressed ? 0 : 3, y: configuration.isPressed ? 0 : 3)
-            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
-    }
+struct Theme {
+    // Core colors - Interfacer brutalist palette
+    static let bg = Color.white                    // Pure white background
+    static let card = Color.white
+    static let dark = Color.black                  // Pure black for text/icons
+    static let accent = Color(hex: "1BFFE3")       // Interfacer cyan
+    static let accentHover = Color(hex: "66DEE0")  // Hover state
+    static let success = Color(hex: "1BFFE3")
+    static let error = Color(hex: "FF3B30")
+    static let muted = Color(hex: "777777")        // Secondary text
+    static let border = Color(hex: "DADADA")       // Subtle borders
+    static let divider = Color(hex: "E5E5E5")      // 1px lines
 }
 
 // MARK: - Main View
@@ -97,764 +33,545 @@ public struct VoiceSwapMainView: View {
     @StateObject private var viewModel = VoiceSwapViewModel()
     @ObservedObject private var walletManager = WalletConnectManager.shared
     @StateObject private var glassesManager = MetaGlassesManager.shared
-    @State private var showingSettings = false
-    @State private var testCommand = ""
-    @State private var showWalletSheet = false
+    @State private var isBalanceHidden = false
+    @State private var showPhoneCameraScanner = false
 
     public init() {}
 
     public var body: some View {
-        ZStack {
-            // Background
-            BrutalistColors.background
-                .ignoresSafeArea()
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 16) {  // Interfacer: generous spacing
+                headerView
+                    .padding(.bottom, 12)
 
-            ScrollView {
-                VStack(spacing: 20) {
-                    // Header
-                    headerSection
+                walletCard
+                glassesCard
 
-                    // Wallet Connection Card
-                    walletConnectionCard
-
-                    // Meta AI Glasses Connection Card
-                    metaGlassesCard
-
-                    // Balance Card (only show if wallet connected)
-                    if walletManager.isConnected {
-                        balanceCard
-                    }
-
-                    // Payment Flow State
-                    paymentFlowCard
-
-                    // Voice Command Testing (Development)
-                    #if DEBUG
-                    testingSection
-                    #endif
+                // Manual QR scan button (phone camera fallback)
+                if walletManager.isConnected {
+                    phoneScanCard
                 }
-                .padding(20)
+
+                if walletManager.isConnected {
+                    balanceCard
+                }
+
+                // Show scanning card when glasses are streaming/scanning
+                if glassesManager.isStreaming {
+                    scanningCard
+                }
+
+                if viewModel.flowState != .idle {
+                    paymentCard
+                }
+
+                Spacer(minLength: 56)
             }
+            .padding(.horizontal, 24)  // Interfacer: 24px padding
+            .padding(.top, 24)
         }
+        .background(Theme.bg.ignoresSafeArea())
         .preferredColorScheme(.light)
         .task {
             if let address = walletManager.currentAddress {
                 viewModel.setWalletAddress(address)
             }
         }
-        .onChange(of: appState.pendingAction) { newAction in
-            handlePendingAction(newAction)
-        }
         .onChange(of: walletManager.connectionState) { state in
             if case .connected(let address) = state {
                 viewModel.setWalletAddress(address)
             }
         }
-        .sheet(isPresented: $showWalletSheet) {
-            BrutalistWalletConnectView(walletManager: walletManager, isPresented: $showWalletSheet)
-        }
-    }
-
-    // MARK: - Deep Link Action Handler
-
-    private func handlePendingAction(_ action: PendingAction) {
-        switch action {
-        case .none:
-            break
-        case .initiatePayment:
-            if let payment = appState.pendingPayment {
-                viewModel.initiatePaymentFromDeepLink(
-                    recipient: payment.recipientAddress,
-                    amount: payment.amount,
-                    merchantName: payment.merchantName
-                )
+        // Show phone camera scanner when glasses camera fails
+        .onChange(of: glassesManager.connectionState) { state in
+            if case .error(let msg) = state {
+                // If camera/SDK error, offer phone camera as fallback
+                if msg.contains("Meta View") || msg.contains("camera") || msg.contains("Device Access") {
+                    showPhoneCameraScanner = true
+                }
             }
-            appState.clearPendingAction()
-        case .checkBalance:
-            Task { await viewModel.refreshBalances() }
-            appState.clearPendingAction()
-        case .connectGlasses:
-            Task { await viewModel.connectToGlasses() }
-            appState.clearPendingAction()
+        }
+        .sheet(isPresented: $showPhoneCameraScanner) {
+            PhoneCameraScannerView(viewModel: viewModel) {
+                showPhoneCameraScanner = false
+            }
         }
     }
 
     // MARK: - Header
 
-    private var headerSection: some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 4) {
+    private var headerView: some View {
+        HStack(alignment: .center) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text("VOICESWAP")
-                    .font(.system(size: 36, weight: .black))
-                    .foregroundColor(BrutalistColors.dark)
+                    .font(.system(size: 24, weight: .black, design: .monospaced))
+                    .foregroundColor(Theme.dark)
+                    .tracking(2)
 
-                Text("Voice-activated crypto payments")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(BrutalistColors.dark.opacity(0.6))
+                Text("Voice payments")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(Theme.muted)
             }
 
             Spacer()
 
-            // Logo/Icon
+            // Minimal logo
             ZStack {
                 Circle()
-                    .fill(BrutalistColors.primary)
-                    .frame(width: 50, height: 50)
-                    .overlay(
-                        Circle()
-                            .stroke(BrutalistColors.dark, lineWidth: 3)
-                    )
-                    .shadow(color: BrutalistColors.dark, radius: 0, x: 2, y: 2)
+                    .fill(Theme.dark)
+                    .frame(width: 40, height: 40)
 
-                Image(systemName: "waveform.circle.fill")
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundColor(BrutalistColors.dark)
+                Image(systemName: "waveform")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(Theme.accent)
             }
         }
-        .padding(.bottom, 10)
     }
 
-    // MARK: - Wallet Connection Card
+    // MARK: - Wallet Card
 
-    private var walletIconColor: Color {
-        if walletManager.isConnected {
-            return BrutalistColors.success
-        } else if case .connecting = walletManager.connectionState {
-            return BrutalistColors.accent
-        } else {
-            return BrutalistColors.primary
-        }
-    }
+    private var walletCard: some View {
+        MinimalCard {
+            HStack(spacing: 12) {
+                // Status dot
+                Circle()
+                    .fill(walletManager.isConnected ? Theme.accent : Theme.border)
+                    .frame(width: 8, height: 8)
 
-    private var walletIconName: String {
-        if walletManager.isConnected {
-            return "checkmark.circle.fill"
-        } else if case .connecting = walletManager.connectionState {
-            return "arrow.triangle.2.circlepath"
-        } else {
-            return "wallet.pass"
-        }
-    }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(walletManager.isConnected ? "WALLET" : "CONNECT")
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundColor(Theme.dark)
 
-    private var walletConnectionCard: some View {
-        BrutalistCard(backgroundColor: walletManager.isConnected ? BrutalistColors.success.opacity(0.2) : BrutalistColors.cardBg) {
-            VStack(spacing: 12) {
-                HStack(spacing: 16) {
-                    // Wallet icon
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(walletIconColor)
-                            .frame(width: 50, height: 50)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .stroke(BrutalistColors.dark, lineWidth: 2)
-                            )
-
-                        Image(systemName: walletIconName)
-                            .font(.system(size: 24, weight: .bold))
-                            .foregroundColor(BrutalistColors.dark)
-                    }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        if walletManager.isConnected, let address = walletManager.currentAddress {
-                            Text("CONNECTED")
-                                .font(.system(size: 14, weight: .black))
-                                .foregroundColor(BrutalistColors.dark)
-                                .lineLimit(1)
-
-                            Text("\(address.prefix(6))...\(address.suffix(4))")
-                                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                                .foregroundColor(BrutalistColors.dark.opacity(0.6))
-                                .lineLimit(1)
-                        } else if case .connecting = walletManager.connectionState {
-                            Text("CONNECTING...")
-                                .font(.system(size: 14, weight: .black))
-                                .foregroundColor(BrutalistColors.dark)
-                                .lineLimit(1)
-
-                            Text("Return here after signing")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(BrutalistColors.accent)
-                                .lineLimit(1)
-                        } else {
-                            Text("NO WALLET")
-                                .font(.system(size: 14, weight: .black))
-                                .foregroundColor(BrutalistColors.dark)
-                                .lineLimit(1)
-
-                            Text("Connect to start")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(BrutalistColors.dark.opacity(0.6))
-                                .lineLimit(1)
-                        }
-                    }
-                    .fixedSize(horizontal: false, vertical: true)
-
-                    Spacer(minLength: 8)
-
-                    // Single action button - either disconnect or connect
-                    Button {
-                        print("[VoiceSwap] Wallet button tapped, isConnected: \(walletManager.isConnected)")
-                        if walletManager.isConnected {
-                            walletManager.disconnect()
-                        } else {
-                            print("[VoiceSwap] Calling walletManager.connect()")
-                            walletManager.connect()
-                        }
-                    } label: {
-                        Text(walletManager.isConnected ? "X" : "+")
-                            .font(.system(size: 24, weight: .black))
-                            .foregroundColor(BrutalistColors.dark)
-                            .frame(width: 44, height: 44)
-                            .background(walletManager.isConnected ? BrutalistColors.accent : BrutalistColors.primary)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .stroke(BrutalistColors.dark, lineWidth: 2)
-                            )
-                    }
-                }
-
-                // Network switch button (only show if connected but not on Unichain)
-                if walletManager.isConnected {
-                    if let wallet = walletManager.connectedWallet, wallet.chainId != 130 {
-                        Button {
-                            Task {
-                                await walletManager.switchToUnichain()
-                            }
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .font(.system(size: 12, weight: .bold))
-                                Text("SWITCH TO UNICHAIN")
-                                    .font(.system(size: 11, weight: .black))
-                                Image(systemName: "arrow.right.circle.fill")
-                                    .font(.system(size: 12, weight: .bold))
-                            }
-                            .foregroundColor(BrutalistColors.dark)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
-                            .background(BrutalistColors.primary)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .stroke(BrutalistColors.dark, lineWidth: 2)
-                            )
-                        }
+                    if let address = walletManager.currentAddress, walletManager.isConnected {
+                        Text("\(address.prefix(6))...\(address.suffix(4))")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundColor(Theme.muted)
                     } else {
-                        // On Unichain - show confirmation
-                        HStack(spacing: 6) {
-                            Circle()
-                                .fill(BrutalistColors.success)
-                                .frame(width: 8, height: 8)
-                            Text("UNICHAIN")
-                                .font(.system(size: 10, weight: .black))
-                                .foregroundColor(BrutalistColors.dark.opacity(0.6))
-                        }
+                        Text("Tap to link wallet")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(Theme.muted)
                     }
                 }
+
+                Spacer()
+
+                Button {
+                    if walletManager.isConnected {
+                        walletManager.disconnect()
+                    } else {
+                        walletManager.connect()
+                    }
+                } label: {
+                    Circle()
+                        .fill(walletManager.isConnected ? Theme.dark : Theme.accent)
+                        .frame(width: 32, height: 32)
+                        .overlay(
+                            Image(systemName: walletManager.isConnected ? "xmark" : "plus")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(walletManager.isConnected ? Theme.accent : Theme.dark)
+                        )
+                }
             }
-            .padding(16)
         }
-        // Force UI refresh when connection state changes
-        .id("wallet-card-\(walletManager.isConnected)-\(walletManager.currentAddress ?? "none")")
     }
 
-    // MARK: - Meta Glasses Connection Card
+    // MARK: - Glasses Card
 
-    private var metaGlassesCard: some View {
-        BrutalistCard(backgroundColor: glassesManager.isConnected ? BrutalistColors.success.opacity(0.2) : BrutalistColors.cardBg) {
-            VStack(spacing: 12) {
-                HStack(spacing: 16) {
-                    // Glasses icon
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(glassesManager.isConnected ? BrutalistColors.success : BrutalistColors.primary)
-                            .frame(width: 50, height: 50)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .stroke(BrutalistColors.dark, lineWidth: 2)
-                            )
+    private var glassesCard: some View {
+        let canConnect = walletManager.isConnected
 
-                        Image(systemName: glassesManager.isConnected ? "eyeglasses" : "eye.trianglebadge.exclamationmark")
-                            .font(.system(size: 24, weight: .bold))
-                            .foregroundColor(BrutalistColors.dark)
-                    }
+        return MinimalCard {
+            HStack(spacing: 12) {
+                // Status dot
+                Circle()
+                    .fill(glassesManager.isConnected ? Theme.accent : Theme.border)
+                    .frame(width: 8, height: 8)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("GLASSES")
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundColor(Theme.dark)
+
+                    Text(glassesStatus(canConnect: canConnect))
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(Theme.muted)
+                }
+
+                Spacer()
+
+                Button {
+                    guard canConnect else { return }
+                    Task { await handleGlassesButtonTap() }
+                } label: {
+                    Circle()
+                        .fill(glassesButtonBackground(canConnect: canConnect))
+                        .frame(width: 32, height: 32)
+                        .overlay(
+                            Image(systemName: glassesButtonIcon)
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(glassesButtonForeground(canConnect: canConnect))
+                        )
+                }
+                .disabled(!canConnect)
+                .opacity(canConnect ? 1 : 0.4)
+            }
+        }
+    }
+
+    private func glassesStatus(canConnect: Bool) -> String {
+        guard canConnect else { return "Connect wallet first" }
+        switch glassesManager.connectionState {
+        case .disconnected: return "Tap to pair"
+        case .searching, .connecting: return "Connecting..."
+        case .registered: return "Tap to scan QR"
+        case .connected, .streaming: return "Ready"
+        case .error: return "Error - tap to retry"
+        }
+    }
+
+    // MARK: - Glasses Button Action
+
+    private func handleGlassesButtonTap() async {
+        switch glassesManager.connectionState {
+        case .connected, .streaming:
+            // Fully connected - disconnect
+            glassesManager.disconnect()
+
+        case .registered:
+            // Registered but not streaming - start QR scan
+            await glassesManager.startQRScanning()
+
+        case .disconnected, .error:
+            // Not registered - start registration flow
+            await glassesManager.connect()
+
+        case .searching, .connecting:
+            // In progress - do nothing
+            break
+        }
+    }
+
+    // MARK: - Glasses Button Helpers
+
+    private var glassesButtonIcon: String {
+        switch glassesManager.connectionState {
+        case .connected, .streaming:
+            return "xmark"  // Show X when connected (to disconnect)
+        case .registered:
+            return "qrcode.viewfinder"  // Show QR scan icon when registered
+        default:
+            return "eyeglasses"  // Show glasses icon for disconnected/connecting
+        }
+    }
+
+    private func glassesButtonBackground(canConnect: Bool) -> Color {
+        switch glassesManager.connectionState {
+        case .connected, .streaming:
+            return Theme.dark  // Dark background when connected
+        default:
+            return canConnect ? Theme.accent : Theme.border
+        }
+    }
+
+    private func glassesButtonForeground(canConnect: Bool) -> Color {
+        switch glassesManager.connectionState {
+        case .connected, .streaming:
+            return Theme.accent  // Teal X on dark background
+        default:
+            return Theme.dark  // Dark glasses icon
+        }
+    }
+
+    // MARK: - Phone Scan Card
+
+    private var phoneScanCard: some View {
+        MinimalCard {
+            HStack(spacing: 12) {
+                // Camera icon
+                Circle()
+                    .fill(Theme.accent.opacity(0.15))
+                    .frame(width: 8, height: 8)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("SCAN QR")
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundColor(Theme.dark)
+
+                    Text("Use phone camera")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(Theme.muted)
+                }
+
+                Spacer()
+
+                Button {
+                    showPhoneCameraScanner = true
+                } label: {
+                    Circle()
+                        .fill(Theme.accent)
+                        .frame(width: 32, height: 32)
+                        .overlay(
+                            Image(systemName: "qrcode.viewfinder")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundColor(Theme.dark)
+                        )
+                }
+            }
+        }
+    }
+
+    // MARK: - Scanning Card
+
+    private var scanningCard: some View {
+        MinimalCard(highlight: Theme.accent.opacity(0.1)) {
+            VStack(spacing: 16) {
+                HStack(spacing: 8) {
+                    // Animated scanning dot
+                    Circle()
+                        .fill(Theme.accent)
+                        .frame(width: 8, height: 8)
+                        .opacity(0.8)
+
+                    Text("SCANNING")
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundColor(Theme.dark)
+
+                    Spacer()
+
+                    Text("Look at QR code")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(Theme.muted)
+                }
+
+                // Scanning animation
+                HStack(spacing: 20) {
+                    Image(systemName: "qrcode.viewfinder")
+                        .font(.system(size: 40, weight: .light))
+                        .foregroundColor(Theme.accent)
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(glassesConnectionTitle)
-                            .font(.system(size: 14, weight: .black))
-                            .foregroundColor(BrutalistColors.dark)
-                            .lineLimit(1)
-
-                        Text(glassesConnectionSubtitle)
+                        Text("Point glasses at")
                             .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(BrutalistColors.dark.opacity(0.6))
-                            .lineLimit(1)
+                            .foregroundColor(Theme.muted)
+                        Text("merchant QR code")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundColor(Theme.dark)
                     }
-                    .fixedSize(horizontal: false, vertical: true)
 
-                    Spacer(minLength: 8)
-
-                    // Connect/Disconnect button
-                    Button {
-                        if glassesManager.isConnected {
-                            glassesManager.disconnect()
-                        } else {
-                            Task { await glassesManager.connect() }
-                        }
-                    } label: {
-                        Text(glassesManager.isConnected ? "X" : "+")
-                            .font(.system(size: 24, weight: .black))
-                            .foregroundColor(BrutalistColors.dark)
-                            .frame(width: 44, height: 44)
-                            .background(glassesManager.isConnected ? BrutalistColors.accent : BrutalistColors.primary)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .stroke(BrutalistColors.dark, lineWidth: 2)
-                            )
-                    }
+                    Spacer()
                 }
 
-                // Show status row when connected or error
-                if glassesManager.isConnected {
-                    VStack(spacing: 8) {
-                        HStack(spacing: 6) {
-                            Circle()
-                                .fill(glassesManager.isStreaming ? BrutalistColors.success : (glassesManager.devices.isEmpty ? BrutalistColors.accent : BrutalistColors.primary))
-                                .frame(width: 8, height: 8)
-
-                            if glassesManager.isStreaming {
-                                Text("STREAMING")
-                                    .font(.system(size: 10, weight: .black))
-                                    .foregroundColor(BrutalistColors.dark.opacity(0.6))
-                            } else if glassesManager.devices.isEmpty {
-                                Text("WAITING FOR BLUETOOTH")
-                                    .font(.system(size: 10, weight: .black))
-                                    .foregroundColor(BrutalistColors.accent)
-                            } else {
-                                Text("GLASSES CONNECTED")
-                                    .font(.system(size: 10, weight: .black))
-                                    .foregroundColor(BrutalistColors.dark.opacity(0.6))
-                            }
-
-                            Spacer()
-
-                            // Show camera button only if BT connected
-                            if !glassesManager.isStreaming && !glassesManager.devices.isEmpty {
-                                Button {
-                                    Task { await glassesManager.startCameraStream() }
-                                } label: {
-                                    Text("START CAMERA")
-                                        .font(.system(size: 10, weight: .black))
-                                        .foregroundColor(BrutalistColors.dark)
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 6)
-                                        .background(BrutalistColors.success)
-                                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 4)
-                                                .stroke(BrutalistColors.dark, lineWidth: 2)
-                                        )
-                                }
-                            }
-                        }
-
-                        // Show Bluetooth instructions when registered but no BT device
-                        if glassesManager.devices.isEmpty && !glassesManager.isStreaming {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("To connect via Bluetooth:")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundColor(BrutalistColors.dark.opacity(0.8))
-
-                                HStack(alignment: .top, spacing: 8) {
-                                    Text("1.")
-                                        .font(.system(size: 10, weight: .bold))
-                                    Text("Make sure glasses are powered on (tap temple)")
-                                        .font(.system(size: 10, weight: .medium))
-                                }
-                                .foregroundColor(BrutalistColors.dark.opacity(0.6))
-
-                                HStack(alignment: .top, spacing: 8) {
-                                    Text("2.")
-                                        .font(.system(size: 10, weight: .bold))
-                                    Text("Open iOS Settings > Bluetooth")
-                                        .font(.system(size: 10, weight: .medium))
-                                }
-                                .foregroundColor(BrutalistColors.dark.opacity(0.6))
-
-                                HStack(alignment: .top, spacing: 8) {
-                                    Text("3.")
-                                        .font(.system(size: 10, weight: .bold))
-                                    Text("Connect to \"Ray-Ban | Meta\"")
-                                        .font(.system(size: 10, weight: .medium))
-                                }
-                                .foregroundColor(BrutalistColors.dark.opacity(0.6))
-
-                                Button {
-                                    if let url = URL(string: "App-prefs:Bluetooth") {
-                                        UIApplication.shared.open(url)
-                                    }
-                                } label: {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "gear")
-                                            .font(.system(size: 11, weight: .bold))
-                                        Text("OPEN BLUETOOTH SETTINGS")
-                                            .font(.system(size: 10, weight: .black))
-                                    }
-                                    .foregroundColor(BrutalistColors.dark)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 8)
-                                    .background(BrutalistColors.primary)
-                                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 4)
-                                            .stroke(BrutalistColors.dark, lineWidth: 2)
-                                    )
-                                }
-                                .padding(.top, 4)
-                            }
-                            .padding(10)
-                            .background(BrutalistColors.background.opacity(0.5))
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-                        }
-                    }
-                } else if case .error = glassesManager.connectionState {
-                    // Show retry button for errors
-                    Button {
-                        Task { await glassesManager.connect() }
-                    } label: {
-                        Text("TAP TO RETRY")
-                            .font(.system(size: 10, weight: .black))
-                            .foregroundColor(BrutalistColors.dark)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                            .background(BrutalistColors.accent.opacity(0.3))
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-                    }
+                // Cancel button
+                MinimalButton("Cancel", style: .secondary) {
+                    glassesManager.stopQRScanning()
                 }
             }
-            .padding(16)
-        }
-        // Force UI refresh when state changes
-        .id("glasses-card-\(glassesManager.isConnected)-\(glassesManager.isStreaming)-\(glassesManager.devices.count)")
-    }
-
-    private var glassesConnectionTitle: String {
-        switch glassesManager.connectionState {
-        case .disconnected:
-            return "META AI GLASSES"
-        case .searching, .connecting:
-            return "CONNECTING..."
-        case .registered, .connected, .streaming:
-            return "CONNECTED"
-        case .error:
-            return "ERROR"
-        }
-    }
-
-    private var glassesConnectionSubtitle: String {
-        switch glassesManager.connectionState {
-        case .disconnected:
-            return "Tap to pair Ray-Ban Meta"
-        case .searching:
-            return "Searching for glasses..."
-        case .connecting:
-            return "Opening Meta View app..."
-        case .registered:
-            // Registered but no Bluetooth device yet
-            if glassesManager.devices.isEmpty {
-                return "Put on glasses to connect"
-            }
-            return "Ready for voice commands"
-        case .connected:
-            return "Ready for voice commands"
-        case .streaming:
-            return "Camera streaming active"
-        case .error(let message):
-            return message
         }
     }
 
     // MARK: - Balance Card
 
     private var balanceCard: some View {
-        BrutalistCard(backgroundColor: BrutalistColors.primary) {
+        MinimalCard(accent: true) {
             VStack(spacing: 16) {
                 HStack {
                     Text("BALANCE")
-                        .font(.system(size: 12, weight: .black))
-                        .foregroundColor(BrutalistColors.dark.opacity(0.6))
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(Theme.dark.opacity(0.5))
 
                     Spacer()
 
-                    Button(action: {
-                        Task { await viewModel.refreshBalances() }
-                    }) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 16, weight: .bold))
-                            .foregroundColor(BrutalistColors.dark)
+                    HStack(spacing: 12) {
+                        Button { isBalanceHidden.toggle() } label: {
+                            Image(systemName: isBalanceHidden ? "eye.slash" : "eye")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(Theme.dark.opacity(0.5))
+                        }
+
+                        Button { Task { await viewModel.refreshBalances() } } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(Theme.dark.opacity(0.5))
+                        }
                     }
                 }
 
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("$\(viewModel.walletBalance)")
-                        .font(.system(size: 56, weight: .black))
-                        .foregroundColor(BrutalistColors.dark)
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(isBalanceHidden ? "••••" : "$\(viewModel.walletBalance)")
+                        .font(.system(size: 42, weight: .black, design: .monospaced))
+                        .foregroundColor(Theme.dark)
 
-                    Text("USD")
-                        .font(.system(size: 18, weight: .black))
-                        .foregroundColor(BrutalistColors.dark.opacity(0.6))
+                    if !isBalanceHidden {
+                        Text("USD")
+                            .font(.system(size: 12, weight: .bold, design: .monospaced))
+                            .foregroundColor(Theme.dark.opacity(0.4))
+                    }
+
+                    Spacer()
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
 
                 HStack {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 4) {
                         Circle()
-                            .fill(BrutalistColors.dark)
-                            .frame(width: 8, height: 8)
-
-                        Text("\(viewModel.ethBalance) ETH")
-                            .font(.system(size: 14, weight: .bold, design: .monospaced))
-                            .foregroundColor(BrutalistColors.dark)
+                            .fill(Theme.dark)
+                            .frame(width: 4, height: 4)
+                        Text(isBalanceHidden ? "HIDDEN" : "\(viewModel.ethBalance) ETH")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundColor(Theme.dark.opacity(0.6))
                     }
 
                     Spacer()
 
                     Text("UNICHAIN")
-                        .font(.system(size: 10, weight: .black))
-                        .foregroundColor(BrutalistColors.dark)
-                        .padding(.horizontal, 10)
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundColor(Theme.dark.opacity(0.4))
+                        .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(BrutalistColors.cardBg)
-                        .clipShape(RoundedRectangle(cornerRadius: 2))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 2)
-                                .stroke(BrutalistColors.dark, lineWidth: 2)
-                        )
+                        .background(Theme.dark.opacity(0.05))
+                        .clipShape(Capsule())
                 }
             }
-            .padding(20)
         }
     }
 
-    // MARK: - Payment Flow Card
+    // MARK: - Payment Card
 
-    private var paymentFlowCard: some View {
-        BrutalistCard {
-            VStack(spacing: 20) {
-                // State indicator
-                HStack(spacing: 12) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(stateColor)
-                            .frame(width: 40, height: 40)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .stroke(BrutalistColors.dark, lineWidth: 2)
-                            )
+    private var paymentCard: some View {
+        MinimalCard(highlight: paymentHighlight) {
+            VStack(spacing: 16) {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(paymentDotColor)
+                        .frame(width: 8, height: 8)
 
-                        Image(systemName: stateIcon)
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundColor(BrutalistColors.dark)
-                    }
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(stateText.uppercased())
-                            .font(.system(size: 16, weight: .black))
-                            .foregroundColor(BrutalistColors.dark)
-
-                        Text(stateSubtext)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(BrutalistColors.dark.opacity(0.6))
-                    }
+                    Text(paymentTitle)
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundColor(Theme.dark)
 
                     Spacer()
+
+                    Text(paymentSubtitle)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(Theme.muted)
                 }
 
-                // State-specific content
-                stateContent
-
-                // Action buttons based on state
-                actionButtons
+                paymentContent
+                paymentButtons
             }
-            .padding(20)
         }
     }
 
-    private var stateColor: Color {
+    private var paymentHighlight: Color? {
         switch viewModel.flowState {
-        case .idle: return BrutalistColors.cardBg
-        case .listening: return BrutalistColors.success
-        case .processing: return BrutalistColors.primary
-        case .scanningQR: return BrutalistColors.primary
-        case .awaitingConfirmation: return BrutalistColors.accent
-        case .executing: return BrutalistColors.primary
-        case .success: return BrutalistColors.success
-        case .failed: return BrutalistColors.accent
-        case .cancelled: return BrutalistColors.cardBg
+        case .success: return Theme.accent.opacity(0.15)
+        case .failed: return Theme.error.opacity(0.1)
+        case .awaitingConfirmation: return Theme.accent.opacity(0.1)
+        default: return nil
         }
     }
 
-    private var stateIcon: String {
+    private var paymentDotColor: Color {
         switch viewModel.flowState {
-        case .idle: return "mic"
-        case .listening: return "waveform"
-        case .processing: return "brain"
-        case .scanningQR: return "qrcode"
-        case .awaitingConfirmation: return "exclamationmark"
-        case .executing: return "arrow.right"
-        case .success: return "checkmark"
-        case .failed: return "xmark"
-        case .cancelled: return "arrow.uturn.backward"
+        case .success: return Theme.accent
+        case .failed: return Theme.error
+        case .awaitingConfirmation: return Theme.accent
+        default: return Theme.muted
         }
     }
 
-    private var stateText: String {
+    private var paymentTitle: String {
         switch viewModel.flowState {
-        case .idle: return "Ready"
-        case .listening: return "Listening"
+        case .listening: return "LISTENING"
+        case .processing: return "PROCESSING"
+        case .scanningQR: return "SCANNING"
+        case .awaitingConfirmation: return "CONFIRM"
+        case .executing: return "SENDING"
+        case .confirming: return "CONFIRMING"
+        case .success: return "COMPLETE"
+        case .failed: return "FAILED"
+        case .cancelled: return "CANCELLED"
+        default: return ""
+        }
+    }
+
+    private var paymentSubtitle: String {
+        switch viewModel.flowState {
+        case .listening: return "Say command..."
         case .processing: return "Processing"
-        case .scanningQR: return "Scan QR"
-        case .awaitingConfirmation: return "Confirm"
-        case .executing: return "Sending"
-        case .success: return "Done!"
-        case .failed: return "Failed"
+        case .scanningQR: return "Point at QR"
+        case .awaitingConfirmation: return "Review payment"
+        case .executing: return "Sending..."
+        case .confirming: return "On chain"
+        case .success: return "Done"
+        case .failed: return "Try again"
         case .cancelled: return "Cancelled"
-        }
-    }
-
-    private var stateSubtext: String {
-        switch viewModel.flowState {
-        case .idle: return "Tap to start voice command"
-        case .listening: return "Say your command..."
-        case .processing: return "Understanding your request"
-        case .scanningQR: return "Point at merchant QR"
-        case .awaitingConfirmation: return "Review and confirm"
-        case .executing: return "Processing payment"
-        case .success: return "Payment complete"
-        case .failed: return "Something went wrong"
-        case .cancelled: return "Transaction cancelled"
+        default: return ""
         }
     }
 
     @ViewBuilder
-    private var stateContent: some View {
+    private var paymentContent: some View {
         switch viewModel.flowState {
-        case .listening:
-            VStack(spacing: 12) {
-                // Animated bars
-                HStack(spacing: 6) {
-                    ForEach(0..<7, id: \.self) { _ in
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(BrutalistColors.success)
-                            .frame(width: 8, height: CGFloat.random(in: 20...50))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 2)
-                                    .stroke(BrutalistColors.dark, lineWidth: 1)
-                            )
-                    }
-                }
-                .frame(height: 50)
-
-                if !viewModel.lastVoiceCommand.isEmpty {
-                    Text("\"\(viewModel.lastVoiceCommand)\"")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(BrutalistColors.dark.opacity(0.6))
-                        .italic()
-                }
-            }
-
         case .awaitingConfirmation(let amount, let merchant):
-            VStack(spacing: 16) {
-                // Amount display
-                HStack {
-                    Text(amount)
-                        .font(.system(size: 48, weight: .black))
-                        .foregroundColor(BrutalistColors.dark)
+            VStack(spacing: 12) {
+                Text(amount)
+                    .font(.system(size: 48, weight: .black, design: .monospaced))
+                    .foregroundColor(Theme.dark)
 
+                HStack(spacing: 4) {
                     Text("USDC")
-                        .font(.system(size: 20, weight: .black))
-                        .foregroundColor(BrutalistColors.dark.opacity(0.6))
-                }
-
-                // Arrow
-                Image(systemName: "arrow.down")
-                    .font(.system(size: 24, weight: .black))
-                    .foregroundColor(BrutalistColors.dark)
-
-                // Recipient
-                Text(merchant.uppercased())
-                    .font(.system(size: 16, weight: .black))
-                    .foregroundColor(BrutalistColors.dark)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(BrutalistColors.primary)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .stroke(BrutalistColors.dark, lineWidth: 2)
-                    )
-
-                if viewModel.needsSwap, let token = viewModel.swapFromToken {
-                    Text("SWAPPING FROM \(token)")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(BrutalistColors.accent)
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(Theme.muted)
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(Theme.muted)
+                    Text(merchant.uppercased())
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(Theme.dark)
                 }
             }
-            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 16)
 
         case .success(let txHash):
-            VStack(spacing: 16) {
-                ZStack {
-                    Circle()
-                        .fill(BrutalistColors.success)
-                        .frame(width: 80, height: 80)
-                        .overlay(
-                            Circle()
-                                .stroke(BrutalistColors.dark, lineWidth: 3)
-                        )
-
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 40, weight: .black))
-                        .foregroundColor(BrutalistColors.dark)
-                }
-
-                Text("PAYMENT SENT!")
-                    .font(.system(size: 20, weight: .black))
-                    .foregroundColor(BrutalistColors.dark)
+            VStack(spacing: 12) {
+                Circle()
+                    .fill(Theme.accent)
+                    .frame(width: 56, height: 56)
+                    .overlay(
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 24, weight: .bold))
+                            .foregroundColor(Theme.dark)
+                    )
 
                 if txHash != "pending" {
-                    Text("TX: \(txHash.prefix(12))...")
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                        .foregroundColor(BrutalistColors.dark.opacity(0.6))
+                    Text("TX: \(txHash.prefix(8))...")
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundColor(Theme.muted)
                 }
             }
-            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
 
         case .failed(let error):
-            VStack(spacing: 16) {
-                ZStack {
-                    Circle()
-                        .fill(BrutalistColors.accent)
-                        .frame(width: 80, height: 80)
-                        .overlay(
-                            Circle()
-                                .stroke(BrutalistColors.dark, lineWidth: 3)
-                        )
+            VStack(spacing: 12) {
+                Circle()
+                    .fill(Theme.error.opacity(0.15))
+                    .frame(width: 56, height: 56)
+                    .overlay(
+                        Image(systemName: "xmark")
+                            .font(.system(size: 24, weight: .bold))
+                            .foregroundColor(Theme.error)
+                    )
 
-                    Image(systemName: "xmark")
-                        .font(.system(size: 40, weight: .black))
-                        .foregroundColor(BrutalistColors.dark)
-                }
-
-                Text(error.uppercased())
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(BrutalistColors.dark.opacity(0.6))
+                Text(error)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(Theme.muted)
                     .multilineTextAlignment(.center)
             }
-            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
 
         default:
             EmptyView()
@@ -862,31 +579,25 @@ public struct VoiceSwapMainView: View {
     }
 
     @ViewBuilder
-    private var actionButtons: some View {
+    private var paymentButtons: some View {
         switch viewModel.flowState {
-        case .idle:
-            BrutalistButton("Start Listening", icon: "mic.fill", backgroundColor: BrutalistColors.success) {
-                viewModel.startListening()
-            }
-
         case .listening:
-            BrutalistButton("Stop", icon: "stop.fill", backgroundColor: BrutalistColors.accent) {
+            MinimalButton("Cancel", style: .secondary) {
                 viewModel.stopListening()
             }
 
         case .awaitingConfirmation:
-            HStack(spacing: 12) {
-                BrutalistButton("Cancel", icon: "xmark", backgroundColor: BrutalistColors.cardBg) {
+            HStack(spacing: 8) {
+                MinimalButton("Cancel", style: .secondary) {
                     viewModel.cancelPayment()
                 }
-
-                BrutalistButton("Confirm", icon: "checkmark", backgroundColor: BrutalistColors.success) {
+                MinimalButton("Confirm", style: .primary) {
                     Task { await viewModel.confirmPayment() }
                 }
             }
 
         case .success, .failed, .cancelled:
-            BrutalistButton("Done", icon: "arrow.right") {
+            MinimalButton("Done", style: .primary) {
                 viewModel.reset()
             }
 
@@ -894,378 +605,64 @@ public struct VoiceSwapMainView: View {
             EmptyView()
         }
     }
-
-    // MARK: - Testing Section (Debug only)
-
-    #if DEBUG
-    @State private var testMerchantWallet = "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb7"
-    @State private var testPaymentAmount = "5"
-
-    private var testingSection: some View {
-        BrutalistCard {
-            VStack(spacing: 16) {
-                Text("DEV TOOLS")
-                    .font(.system(size: 12, weight: .black))
-                    .foregroundColor(BrutalistColors.dark.opacity(0.6))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                // Voice command input
-                HStack(spacing: 8) {
-                    TextField("Voice command...", text: $testCommand)
-                        .font(.system(size: 14, weight: .medium))
-                        .padding(12)
-                        .background(BrutalistColors.background)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(BrutalistColors.dark, lineWidth: 2)
-                        )
-
-                    Button(action: {
-                        Task {
-                            await viewModel.processVoiceCommand(testCommand)
-                            testCommand = ""
-                        }
-                    }) {
-                        Image(systemName: "arrow.right")
-                            .font(.system(size: 16, weight: .bold))
-                            .foregroundColor(BrutalistColors.dark)
-                            .frame(width: 44, height: 44)
-                            .background(BrutalistColors.primary)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .stroke(BrutalistColors.dark, lineWidth: 2)
-                            )
-                    }
-                }
-
-                // Quick commands
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(["Balance", "Pay $10", "Confirm", "Cancel"], id: \.self) { cmd in
-                            Button(action: {
-                                Task { await viewModel.processVoiceCommand(cmd) }
-                            }) {
-                                Text(cmd.uppercased())
-                                    .font(.system(size: 11, weight: .black))
-                                    .foregroundColor(BrutalistColors.dark)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 8)
-                                    .background(BrutalistColors.background)
-                                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 4)
-                                            .stroke(BrutalistColors.dark, lineWidth: 2)
-                                    )
-                            }
-                        }
-                    }
-                }
-
-                // Direct payment test
-                HStack(spacing: 8) {
-                    TextField("$", text: $testPaymentAmount)
-                        .font(.system(size: 14, weight: .bold))
-                        .keyboardType(.decimalPad)
-                        .frame(width: 60)
-                        .padding(10)
-                        .background(BrutalistColors.background)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(BrutalistColors.dark, lineWidth: 2)
-                        )
-
-                    Text("USDC")
-                        .font(.system(size: 12, weight: .black))
-                        .foregroundColor(BrutalistColors.dark.opacity(0.6))
-
-                    Spacer()
-
-                    Button(action: {
-                        viewModel.initiatePaymentFromDeepLink(
-                            recipient: testMerchantWallet,
-                            amount: testPaymentAmount,
-                            merchantName: "Test Merchant"
-                        )
-                    }) {
-                        Text("PAY NOW")
-                            .font(.system(size: 12, weight: .black))
-                            .foregroundColor(BrutalistColors.dark)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                            .background(BrutalistColors.success)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .stroke(BrutalistColors.dark, lineWidth: 2)
-                            )
-                    }
-                }
-
-                if !viewModel.lastResponse.isEmpty {
-                    Text(viewModel.lastResponse)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(BrutalistColors.success)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-            .padding(16)
-        }
-    }
-    #endif
 }
 
-// MARK: - Brutalist Wallet Connect View
+// MARK: - Components (Interfacer brutalist style)
 
-struct BrutalistWalletConnectView: View {
-    @ObservedObject var walletManager: WalletConnectManager
-    @Binding var isPresented: Bool
-    @State private var manualAddress: String = ""
-    @Environment(\.dismiss) private var dismiss
+struct MinimalCard<Content: View>: View {
+    let content: Content
+    var accent: Bool = false
+    var highlight: Color? = nil
+
+    init(accent: Bool = false, highlight: Color? = nil, @ViewBuilder content: () -> Content) {
+        self.accent = accent
+        self.highlight = highlight
+        self.content = content()
+    }
 
     var body: some View {
-        ZStack {
-            BrutalistColors.background.ignoresSafeArea()
-
-            ScrollView {
-                VStack(spacing: 20) {
-                    // Header
-                    HStack {
-                        Text("CONNECT")
-                            .font(.system(size: 28, weight: .black))
-                            .foregroundColor(BrutalistColors.dark)
-
-                        Spacer()
-
-                        Button(action: { isPresented = false }) {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 20, weight: .black))
-                                .foregroundColor(BrutalistColors.dark)
-                                .frame(width: 44, height: 44)
-                                .background(BrutalistColors.accent)
-                                .clipShape(RoundedRectangle(cornerRadius: 4))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 4)
-                                        .stroke(BrutalistColors.dark, lineWidth: 2)
-                                )
-                        }
-                    }
-                    .padding(.top, 20)
-
-                    // Icon
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(BrutalistColors.primary)
-                            .frame(width: 80, height: 80)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(BrutalistColors.dark, lineWidth: 4)
-                            )
-                            .shadow(color: BrutalistColors.dark, radius: 0, x: 4, y: 4)
-
-                        Image(systemName: "wallet.pass.fill")
-                            .font(.system(size: 40, weight: .bold))
-                            .foregroundColor(BrutalistColors.dark)
-                    }
-                    .padding(.vertical, 10)
-
-                    // Unichain compatibility notice
-                    VStack(spacing: 8) {
-                        Text("UNICHAIN COMPATIBLE WALLETS")
-                            .font(.system(size: 10, weight: .black))
-                            .foregroundColor(BrutalistColors.dark.opacity(0.6))
-
-                        Text("Use MetaMask or Rainbow for best experience")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(BrutalistColors.dark.opacity(0.8))
-                            .multilineTextAlignment(.center)
-                    }
-
-                    // Wallet buttons
-                    VStack(spacing: 12) {
-                        // WalletConnect (opens AppKit modal with all wallets)
-                        brutalistWalletButton(
-                            name: "WalletConnect",
-                            subtitle: "MetaMask, Rainbow, etc.",
-                            icon: "link.circle.fill",
-                            color: Color(hex: "3396FF")
-                        ) {
-                            isPresented = false
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                walletManager.connect()
-                            }
-                        }
-                    }
-
-                    // Divider
-                    HStack(spacing: 16) {
-                        Rectangle()
-                            .fill(BrutalistColors.dark.opacity(0.2))
-                            .frame(height: 2)
-                        Text("OR")
-                            .font(.system(size: 12, weight: .black))
-                            .foregroundColor(BrutalistColors.dark.opacity(0.4))
-                        Rectangle()
-                            .fill(BrutalistColors.dark.opacity(0.2))
-                            .frame(height: 2)
-                    }
-                    .padding(.vertical, 8)
-
-                    // Manual Input Section (always visible for reliability)
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "keyboard")
-                                .font(.system(size: 14, weight: .bold))
-                            Text("PASTE YOUR ADDRESS")
-                                .font(.system(size: 12, weight: .black))
-                        }
-                        .foregroundColor(BrutalistColors.dark)
-
-                        Text("Copy your wallet address and paste it below")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(BrutalistColors.dark.opacity(0.6))
-
-                        TextField("0x...", text: $manualAddress)
-                            .font(.system(size: 14, weight: .medium, design: .monospaced))
-                            .autocapitalization(.none)
-                            .disableAutocorrection(true)
-                            .padding(14)
-                            .background(BrutalistColors.cardBg)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .stroke(BrutalistColors.dark, lineWidth: 2)
-                            )
-
-                        // Validation feedback
-                        if !manualAddress.isEmpty {
-                            HStack(spacing: 6) {
-                                Image(systemName: isValidAddress ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                                    .foregroundColor(isValidAddress ? BrutalistColors.success : BrutalistColors.accent)
-                                Text(isValidAddress ? "Valid address" : "Invalid address (needs 42 characters starting with 0x)")
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundColor(isValidAddress ? BrutalistColors.success : BrutalistColors.accent)
-                            }
-                        }
-
-                        BrutalistButton("Link Wallet", icon: "link", backgroundColor: isValidAddress ? BrutalistColors.success : BrutalistColors.cardBg) {
-                            walletManager.connectWithAddress(manualAddress)
-                            isPresented = false
-                        }
-                        .disabled(!isValidAddress)
-                        .opacity(isValidAddress ? 1 : 0.6)
-                    }
-                    .padding(16)
-                    .background(BrutalistColors.cardBg)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .stroke(BrutalistColors.dark, lineWidth: 2)
-                    )
-
-                    Spacer(minLength: 20)
-
-                    // Network info
-                    VStack(spacing: 12) {
-                        HStack(spacing: 8) {
-                            Circle()
-                                .fill(BrutalistColors.accent)
-                                .frame(width: 10, height: 10)
-                                .overlay(
-                                    Circle()
-                                        .stroke(BrutalistColors.dark, lineWidth: 1)
-                                )
-
-                            Text("UNICHAIN MAINNET (CHAIN ID: 130)")
-                                .font(.system(size: 11, weight: .black))
-                                .foregroundColor(BrutalistColors.dark)
-                        }
-
-                        VStack(spacing: 4) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "server.rack")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundColor(BrutalistColors.success)
-                                Text("Payments executed via secure backend")
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundColor(BrutalistColors.dark.opacity(0.5))
-                            }
-
-                            HStack(spacing: 6) {
-                                Image(systemName: "lock.shield.fill")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundColor(BrutalistColors.success)
-                                Text("Your keys stay in your wallet")
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundColor(BrutalistColors.dark.opacity(0.5))
-                            }
-                        }
-                    }
-                    .padding(.bottom, 30)
-                }
-                .padding(.horizontal, 20)
-            }
-        }
-    }
-
-    // MARK: - Validation
-
-    private var isValidAddress: Bool {
-        manualAddress.count == 42 && manualAddress.hasPrefix("0x")
-    }
-
-    // MARK: - Wallet Button Component
-
-    private func brutalistWalletButton(name: String, subtitle: String? = nil, icon: String, color: Color, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 14) {
-                // Icon box
-                ZStack {
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(color.opacity(0.2))
-                        .frame(width: 44, height: 44)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(BrutalistColors.dark, lineWidth: 2)
-                        )
-
-                    Image(systemName: icon)
-                        .font(.system(size: 22, weight: .bold))
-                        .foregroundColor(color)
-                }
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(name.uppercased())
-                        .font(.system(size: 14, weight: .black))
-                        .foregroundColor(BrutalistColors.dark)
-
-                    if let subtitle = subtitle {
-                        Text(subtitle)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(BrutalistColors.dark.opacity(0.6))
-                    }
-                }
-
-                Spacer()
-
-                Image(systemName: "arrow.right")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundColor(BrutalistColors.dark)
-            }
-            .padding(12)
-            .background(BrutalistColors.cardBg)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
+        content
+            .padding(20)
+            .background(highlight ?? (accent ? Theme.accent : Theme.card))
+            .clipShape(RoundedRectangle(cornerRadius: 2))  // Brutalist: minimal radius
             .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .stroke(BrutalistColors.dark, lineWidth: 3)
+                RoundedRectangle(cornerRadius: 2)
+                    .stroke(Theme.dark.opacity(0.1), lineWidth: 1)
             )
-            .shadow(color: BrutalistColors.dark, radius: 0, x: 3, y: 3)
-        }
-        .buttonStyle(BrutalistButtonStyle())
+    }
+}
+
+enum ButtonStyleType {
+    case primary, secondary
+}
+
+struct MinimalButton: View {
+    let title: String
+    let style: ButtonStyleType
+    let action: () -> Void
+
+    init(_ title: String, style: ButtonStyleType = .primary, action: @escaping () -> Void) {
+        self.title = title
+        self.style = style
+        self.action = action
     }
 
+    var body: some View {
+        Button(action: action) {
+            Text(title.uppercased())
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .tracking(1)
+                .foregroundColor(style == .primary ? Theme.dark : Theme.dark)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+                .background(style == .primary ? Theme.accent : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 2))  // Brutalist: sharp edges
+                .overlay(
+                    RoundedRectangle(cornerRadius: 2)
+                        .stroke(Theme.dark, lineWidth: style == .primary ? 0 : 1)
+                )
+        }
+    }
 }
 
 // MARK: - Color Extension
@@ -1277,22 +674,298 @@ extension Color {
         Scanner(string: hex).scanHexInt64(&int)
         let a, r, g, b: UInt64
         switch hex.count {
-        case 3:
-            (a, r, g, b) = (255, (int >> 8) * 17, (int >> 4 & 0xF) * 17, (int & 0xF) * 17)
-        case 6:
-            (a, r, g, b) = (255, int >> 16, int >> 8 & 0xFF, int & 0xFF)
-        case 8:
-            (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
-        default:
-            (a, r, g, b) = (1, 1, 1, 0)
+        case 3: (a, r, g, b) = (255, (int >> 8) * 17, (int >> 4 & 0xF) * 17, (int & 0xF) * 17)
+        case 6: (a, r, g, b) = (255, int >> 16, int >> 8 & 0xFF, int & 0xFF)
+        case 8: (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
+        default: (a, r, g, b) = (255, 0, 0, 0)
         }
-        self.init(
-            .sRGB,
-            red: Double(r) / 255,
-            green: Double(g) / 255,
-            blue: Double(b) / 255,
-            opacity: Double(a) / 255
+        self.init(.sRGB, red: Double(r) / 255, green: Double(g) / 255, blue: Double(b) / 255, opacity: Double(a) / 255)
+    }
+}
+
+// MARK: - Phone Camera Scanner View (Fallback)
+
+struct PhoneCameraScannerView: View {
+    @ObservedObject var viewModel: VoiceSwapViewModel
+    let onDismiss: () -> Void
+    @State private var scannedCode: String?
+    @State private var isScanning = true
+
+    var body: some View {
+        NavigationView {
+            ZStack {
+                // Camera view
+                if isScanning {
+                    QRCodeScannerView { code in
+                        scannedCode = code
+                        isScanning = false
+                        handleScannedCode(code)
+                    }
+                    .ignoresSafeArea()
+                }
+
+                // Overlay
+                VStack {
+                    Spacer()
+
+                    VStack(spacing: 16) {
+                        if let code = scannedCode {
+                            // Success state
+                            VStack(spacing: 12) {
+                                Circle()
+                                    .fill(Theme.accent)
+                                    .frame(width: 56, height: 56)
+                                    .overlay(
+                                        Image(systemName: "checkmark")
+                                            .font(.system(size: 24, weight: .bold))
+                                            .foregroundColor(Theme.dark)
+                                    )
+
+                                Text("QR Code Scanned!")
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundColor(.white)
+
+                                Text(code.prefix(40) + (code.count > 40 ? "..." : ""))
+                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                    .foregroundColor(.white.opacity(0.7))
+                                    .multilineTextAlignment(.center)
+                            }
+                            .padding(24)
+                            .background(Color.black.opacity(0.8))
+                            .clipShape(RoundedRectangle(cornerRadius: 16))
+                        } else {
+                            // Scanning instructions
+                            VStack(spacing: 8) {
+                                Text("SCAN QR CODE")
+                                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                    .foregroundColor(.white)
+
+                                Text("Point camera at merchant's payment QR")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.7))
+                            }
+                            .padding(16)
+                            .background(Color.black.opacity(0.6))
+                            .clipShape(Capsule())
+                        }
+                    }
+                    .padding(.bottom, 40)
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") {
+                        onDismiss()
+                    }
+                    .foregroundColor(.white)
+                }
+
+                ToolbarItem(placement: .principal) {
+                    Text("Phone Camera")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.white)
+                }
+            }
+        }
+    }
+
+    private func handleScannedCode(_ code: String) {
+        // Parse and handle the QR code
+        Task {
+            await viewModel.handleQRScan(code)
+            // Small delay to show success state
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            onDismiss()
+        }
+    }
+}
+
+// MARK: - QR Code Scanner View (AVFoundation)
+
+import AVFoundation
+
+struct QRCodeScannerView: UIViewControllerRepresentable {
+    let onCodeScanned: (String) -> Void
+
+    func makeUIViewController(context: Context) -> QRScannerViewController {
+        let vc = QRScannerViewController()
+        vc.onCodeScanned = onCodeScanned
+        return vc
+    }
+
+    func updateUIViewController(_ uiViewController: QRScannerViewController, context: Context) {}
+}
+
+class QRScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
+    var captureSession: AVCaptureSession?
+    var previewLayer: AVCaptureVideoPreviewLayer?
+    var onCodeScanned: ((String) -> Void)?
+    private var hasScanned = false
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+
+        guard let videoCaptureDevice = AVCaptureDevice.default(for: .video) else {
+            showCameraError()
+            return
+        }
+
+        let videoInput: AVCaptureDeviceInput
+        do {
+            videoInput = try AVCaptureDeviceInput(device: videoCaptureDevice)
+        } catch {
+            showCameraError()
+            return
+        }
+
+        captureSession = AVCaptureSession()
+
+        guard let captureSession = captureSession else { return }
+
+        if captureSession.canAddInput(videoInput) {
+            captureSession.addInput(videoInput)
+        } else {
+            showCameraError()
+            return
+        }
+
+        let metadataOutput = AVCaptureMetadataOutput()
+
+        if captureSession.canAddOutput(metadataOutput) {
+            captureSession.addOutput(metadataOutput)
+            metadataOutput.setMetadataObjectsDelegate(self, queue: DispatchQueue.main)
+            metadataOutput.metadataObjectTypes = [.qr]
+        } else {
+            showCameraError()
+            return
+        }
+
+        previewLayer = AVCaptureVideoPreviewLayer(session: captureSession)
+        previewLayer!.frame = view.layer.bounds
+        previewLayer!.videoGravity = .resizeAspectFill
+        view.layer.addSublayer(previewLayer!)
+
+        // Add scanning frame overlay
+        addScanningOverlay()
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            captureSession.startRunning()
+        }
+    }
+
+    override func viewWillLayoutSubviews() {
+        super.viewWillLayoutSubviews()
+        previewLayer?.frame = view.layer.bounds
+    }
+
+    private func addScanningOverlay() {
+        let overlayView = UIView(frame: view.bounds)
+        overlayView.backgroundColor = .clear
+
+        // Create scanning frame
+        let frameSize: CGFloat = min(view.bounds.width, view.bounds.height) * 0.7
+        let frameRect = CGRect(
+            x: (view.bounds.width - frameSize) / 2,
+            y: (view.bounds.height - frameSize) / 2,
+            width: frameSize,
+            height: frameSize
         )
+
+        // Create mask with hole
+        let path = UIBezierPath(rect: view.bounds)
+        let scanPath = UIBezierPath(roundedRect: frameRect, cornerRadius: 16)
+        path.append(scanPath)
+        path.usesEvenOddFillRule = true
+
+        let maskLayer = CAShapeLayer()
+        maskLayer.path = path.cgPath
+        maskLayer.fillRule = .evenOdd
+        maskLayer.fillColor = UIColor.black.withAlphaComponent(0.5).cgColor
+
+        overlayView.layer.addSublayer(maskLayer)
+
+        // Add corner brackets - Interfacer cyan (#1BFFE3)
+        let bracketColor = UIColor(red: 27/255, green: 255/255, blue: 227/255, alpha: 1)
+        let bracketLength: CGFloat = 30
+        let bracketWidth: CGFloat = 4
+
+        // Top-left
+        let topLeft = UIView()
+        topLeft.backgroundColor = bracketColor
+        topLeft.frame = CGRect(x: frameRect.minX, y: frameRect.minY, width: bracketLength, height: bracketWidth)
+        overlayView.addSubview(topLeft)
+
+        let topLeftV = UIView()
+        topLeftV.backgroundColor = bracketColor
+        topLeftV.frame = CGRect(x: frameRect.minX, y: frameRect.minY, width: bracketWidth, height: bracketLength)
+        overlayView.addSubview(topLeftV)
+
+        // Top-right
+        let topRight = UIView()
+        topRight.backgroundColor = bracketColor
+        topRight.frame = CGRect(x: frameRect.maxX - bracketLength, y: frameRect.minY, width: bracketLength, height: bracketWidth)
+        overlayView.addSubview(topRight)
+
+        let topRightV = UIView()
+        topRightV.backgroundColor = bracketColor
+        topRightV.frame = CGRect(x: frameRect.maxX - bracketWidth, y: frameRect.minY, width: bracketWidth, height: bracketLength)
+        overlayView.addSubview(topRightV)
+
+        // Bottom-left
+        let bottomLeft = UIView()
+        bottomLeft.backgroundColor = bracketColor
+        bottomLeft.frame = CGRect(x: frameRect.minX, y: frameRect.maxY - bracketWidth, width: bracketLength, height: bracketWidth)
+        overlayView.addSubview(bottomLeft)
+
+        let bottomLeftV = UIView()
+        bottomLeftV.backgroundColor = bracketColor
+        bottomLeftV.frame = CGRect(x: frameRect.minX, y: frameRect.maxY - bracketLength, width: bracketWidth, height: bracketLength)
+        overlayView.addSubview(bottomLeftV)
+
+        // Bottom-right
+        let bottomRight = UIView()
+        bottomRight.backgroundColor = bracketColor
+        bottomRight.frame = CGRect(x: frameRect.maxX - bracketLength, y: frameRect.maxY - bracketWidth, width: bracketLength, height: bracketWidth)
+        overlayView.addSubview(bottomRight)
+
+        let bottomRightV = UIView()
+        bottomRightV.backgroundColor = bracketColor
+        bottomRightV.frame = CGRect(x: frameRect.maxX - bracketWidth, y: frameRect.maxY - bracketLength, width: bracketWidth, height: bracketLength)
+        overlayView.addSubview(bottomRightV)
+
+        view.addSubview(overlayView)
+    }
+
+    private func showCameraError() {
+        let label = UILabel()
+        label.text = "Camera not available"
+        label.textColor = .white
+        label.textAlignment = .center
+        label.frame = view.bounds
+        view.addSubview(label)
+    }
+
+    func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
+        guard !hasScanned else { return }
+
+        if let metadataObject = metadataObjects.first,
+           let readableObject = metadataObject as? AVMetadataMachineReadableCodeObject,
+           let stringValue = readableObject.stringValue {
+
+            hasScanned = true
+            // Vibrate on successful scan
+            let vibrate: SystemSoundID = kSystemSoundID_Vibrate
+            AudioServicesPlaySystemSound(vibrate)
+            captureSession?.stopRunning()
+            onCodeScanned?(stringValue)
+        }
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        captureSession?.stopRunning()
     }
 }
 

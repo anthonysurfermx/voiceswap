@@ -5,11 +5,11 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "light",
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#1a1a2e"
+      "backgroundColor": "#FAFAFA"
     },
     "assetBundlePatterns": ["**/*"],
     "ios": {
@@ -21,14 +21,15 @@
         "NSBluetoothAlwaysUsageDescription": "VoiceSwap connects to Meta Ray-Ban glasses via Bluetooth.",
         "NSBluetoothPeripheralUsageDescription": "VoiceSwap connects to Meta Ray-Ban glasses via Bluetooth.",
         "MWDAT": {
-          "MetaAppID": "865317392634736"
+          "MetaAppID": "865317392634736",
+          "AppLinkURLScheme": "voiceswap"
         }
       }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#1a1a2e"
+        "backgroundColor": "#0A0A0A"
       },
       "package": "com.voiceswap.app",
       "permissions": [

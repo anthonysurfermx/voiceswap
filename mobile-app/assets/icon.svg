@@ -1,0 +1,28 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="1024" height="1024" rx="224" fill="#0A0A0A"/>
+
+  <!-- Glasses frame - minimalist Ray-Ban style -->
+  <g fill="none" stroke="#5AC8C8" stroke-width="28" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Left lens -->
+    <rect x="180" y="420" width="280" height="200" rx="40"/>
+
+    <!-- Right lens -->
+    <rect x="564" y="420" width="280" height="200" rx="40"/>
+
+    <!-- Bridge -->
+    <path d="M460 520 L564 520"/>
+
+    <!-- Left temple arm -->
+    <path d="M180 480 L100 440"/>
+
+    <!-- Right temple arm -->
+    <path d="M844 480 L924 440"/>
+  </g>
+
+  <!-- Subtle reflection on lenses -->
+  <g fill="#5AC8C8" opacity="0.15">
+    <rect x="200" y="440" width="80" height="40" rx="10"/>
+    <rect x="584" y="440" width="80" height="40" rx="10"/>
+  </g>
+</svg>
