@@ -35,6 +35,7 @@ public struct VoiceSwapMainView: View {
     @StateObject private var glassesManager = MetaGlassesManager.shared
     @State private var isBalanceHidden = false
     @State private var showPhoneCameraScanner = false
+    @State private var amountInput: String = ""
 
     public init() {}
 
@@ -180,12 +181,14 @@ public struct VoiceSwapMainView: View {
 
     private var glassesCard: some View {
         let canConnect = walletManager.isConnected
+        // Show green when SDK has devices OR glasses detected via audio route (A2DP)
+        let isGlassesReady = !glassesManager.devices.isEmpty || glassesManager.isGlassesHFPConnected || glassesManager.isStreaming
 
         return MinimalCard {
             HStack(spacing: 12) {
-                // Status dot
+                // Status dot - show accent only when SDK has real device connection
                 Circle()
-                    .fill(glassesManager.isConnected ? Theme.accent : Theme.border)
+                    .fill(isGlassesReady ? Theme.accent : Theme.border)
                     .frame(width: 8, height: 8)
 
                 VStack(alignment: .leading, spacing: 2) {
@@ -200,21 +203,24 @@ public struct VoiceSwapMainView: View {
 
                 Spacer()
 
-                Button {
-                    guard canConnect else { return }
-                    Task { await handleGlassesButtonTap() }
-                } label: {
-                    Circle()
-                        .fill(glassesButtonBackground(canConnect: canConnect))
-                        .frame(width: 32, height: 32)
-                        .overlay(
-                            Image(systemName: glassesButtonIcon)
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundColor(glassesButtonForeground(canConnect: canConnect))
-                        )
-                }
-                .disabled(!canConnect)
-                .opacity(canConnect ? 1 : 0.4)
+                Circle()
+                    .fill(glassesButtonBackground(canConnect: canConnect))
+                    .frame(width: 32, height: 32)
+                    .overlay(
+                        Image(systemName: glassesButtonIcon)
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(glassesButtonForeground(canConnect: canConnect))
+                    )
+                    .opacity(canConnect ? 1 : 0.4)
+                    .onTapGesture {
+                        guard canConnect else { return }
+                        Task { await handleGlassesButtonTap() }
+                    }
+                    .onLongPressGesture(minimumDuration: 1.0) {
+                        // Long press forces re-registration
+                        guard canConnect else { return }
+                        Task { await forceReconnectGlasses() }
+                    }
             }
         }
     }
@@ -222,11 +228,22 @@ public struct VoiceSwapMainView: View {
     private func glassesStatus(canConnect: Bool) -> String {
         guard canConnect else { return "Connect wallet first" }
         switch glassesManager.connectionState {
-        case .disconnected: return "Tap to pair"
-        case .searching, .connecting: return "Connecting..."
-        case .registered: return "Tap to scan QR"
-        case .connected, .streaming: return "Ready"
-        case .error: return "Error - tap to retry"
+        case .disconnected: return "Tap to pair with Meta glasses"
+        case .searching: return "Searching for glasses..."
+        case .connecting: return "Opening Meta View app..."
+        case .registered, .connected:
+            // Check if SDK has devices OR glasses detected via audio route
+            if !glassesManager.devices.isEmpty || glassesManager.isGlassesHFPConnected {
+                return "Ready - tap to scan QR"
+            }
+            // No glasses detected - need to open Meta View
+            return "Tap to open Meta View"
+        case .streaming: return "Scanning for QR code..."
+        case .error(let msg):
+            if msg.contains("Meta View") || msg.contains("Device Access") {
+                return "Enable in Meta View > Device Access"
+            }
+            return "Error - tap to retry"
         }
     }
 
@@ -234,16 +251,26 @@ public struct VoiceSwapMainView: View {
 
     private func handleGlassesButtonTap() async {
         switch glassesManager.connectionState {
-        case .connected, .streaming:
-            // Fully connected - disconnect
-            glassesManager.disconnect()
+        case .streaming:
+            // Currently streaming - stop QR scan
+            glassesManager.stopQRScanning()
 
-        case .registered:
-            // Registered but not streaming - start QR scan
-            await glassesManager.startQRScanning()
+        case .connected, .registered:
+            // Start QR scan if SDK has devices OR glasses detected via audio route
+            if !glassesManager.devices.isEmpty || glassesManager.isGlassesHFPConnected {
+                glassesManager.delegate = viewModel
+                await glassesManager.startQRScanning()
+            } else {
+                // No glasses detected - open Meta View to establish connection
+                await glassesManager.connect()
+            }
 
-        case .disconnected, .error:
+        case .disconnected:
             // Not registered - start registration flow
+            await glassesManager.connect()
+
+        case .error:
+            // Error state - clear and retry registration
             await glassesManager.connect()
 
         case .searching, .connecting:
@@ -252,14 +279,24 @@ public struct VoiceSwapMainView: View {
         }
     }
 
+    /// Force disconnect and re-register glasses (long press action)
+    private func forceReconnectGlasses() async {
+        print("[VoiceSwap] Force re-registration requested")
+        // Disconnect first to clear state
+        glassesManager.disconnect()
+        // Small delay then reconnect
+        try? await Task.sleep(nanoseconds: 500_000_000)
+        await glassesManager.connect()
+    }
+
     // MARK: - Glasses Button Helpers
 
     private var glassesButtonIcon: String {
         switch glassesManager.connectionState {
-        case .connected, .streaming:
-            return "xmark"  // Show X when connected (to disconnect)
-        case .registered:
-            return "qrcode.viewfinder"  // Show QR scan icon when registered
+        case .streaming:
+            return "xmark"  // Show X when streaming (to stop)
+        case .connected, .registered:
+            return "qrcode.viewfinder"  // Show QR scan icon when ready
         default:
             return "eyeglasses"  // Show glasses icon for disconnected/connecting
         }
@@ -267,8 +304,10 @@ public struct VoiceSwapMainView: View {
 
     private func glassesButtonBackground(canConnect: Bool) -> Color {
         switch glassesManager.connectionState {
-        case .connected, .streaming:
-            return Theme.dark  // Dark background when connected
+        case .streaming:
+            return Theme.dark  // Dark background when streaming (X to cancel)
+        case .connected, .registered:
+            return Theme.accent  // Teal background when ready to scan
         default:
             return canConnect ? Theme.accent : Theme.border
         }
@@ -276,10 +315,10 @@ public struct VoiceSwapMainView: View {
 
     private func glassesButtonForeground(canConnect: Bool) -> Color {
         switch glassesManager.connectionState {
-        case .connected, .streaming:
+        case .streaming:
             return Theme.accent  // Teal X on dark background
         default:
-            return Theme.dark  // Dark glasses icon
+            return Theme.dark  // Dark icon on teal background
         }
     }
 
@@ -411,16 +450,16 @@ public struct VoiceSwapMainView: View {
                     Spacer()
                 }
 
-                HStack {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(Theme.dark)
-                            .frame(width: 4, height: 4)
-                        Text(isBalanceHidden ? "HIDDEN" : "\(viewModel.ethBalance) ETH")
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                            .foregroundColor(Theme.dark.opacity(0.6))
+                // Token list with icons
+                if !isBalanceHidden && !viewModel.tokenBalances.isEmpty {
+                    VStack(spacing: 8) {
+                        ForEach(viewModel.tokenBalances) { token in
+                            TokenRow(token: token)
+                        }
                     }
+                }
 
+                HStack {
                     Spacer()
 
                     Text("UNICHAIN")
@@ -466,6 +505,7 @@ public struct VoiceSwapMainView: View {
         switch viewModel.flowState {
         case .success: return Theme.accent.opacity(0.15)
         case .failed: return Theme.error.opacity(0.1)
+        case .enteringAmount: return Theme.accent.opacity(0.08)
         case .awaitingConfirmation: return Theme.accent.opacity(0.1)
         default: return nil
         }
@@ -475,6 +515,7 @@ public struct VoiceSwapMainView: View {
         switch viewModel.flowState {
         case .success: return Theme.accent
         case .failed: return Theme.error
+        case .enteringAmount: return Theme.accent
         case .awaitingConfirmation: return Theme.accent
         default: return Theme.muted
         }
@@ -485,6 +526,7 @@ public struct VoiceSwapMainView: View {
         case .listening: return "LISTENING"
         case .processing: return "PROCESSING"
         case .scanningQR: return "SCANNING"
+        case .enteringAmount: return "AMOUNT"
         case .awaitingConfirmation: return "CONFIRM"
         case .executing: return "SENDING"
         case .confirming: return "CONFIRMING"
@@ -500,6 +542,7 @@ public struct VoiceSwapMainView: View {
         case .listening: return "Say command..."
         case .processing: return "Processing"
         case .scanningQR: return "Point at QR"
+        case .enteringAmount: return "Enter amount"
         case .awaitingConfirmation: return "Review payment"
         case .executing: return "Sending..."
         case .confirming: return "On chain"
@@ -513,6 +556,12 @@ public struct VoiceSwapMainView: View {
     @ViewBuilder
     private var paymentContent: some View {
         switch viewModel.flowState {
+        case .enteringAmount(let merchant):
+            AmountInputView(
+                amountInput: $amountInput,
+                merchant: merchant
+            )
+
         case .awaitingConfirmation(let amount, let merchant):
             VStack(spacing: 12) {
                 Text(amount)
@@ -586,6 +635,22 @@ public struct VoiceSwapMainView: View {
                 viewModel.stopListening()
             }
 
+        case .enteringAmount:
+            HStack(spacing: 8) {
+                MinimalButton("Cancel", style: .secondary) {
+                    amountInput = ""
+                    viewModel.cancelPayment()
+                }
+                MinimalButton("Continue", style: .primary) {
+                    guard !amountInput.isEmpty else { return }
+                    Task {
+                        await viewModel.setPaymentAmount(amountInput)
+                        amountInput = ""  // Reset for next time
+                    }
+                }
+                .opacity(amountInput.isEmpty ? 0.5 : 1.0)
+            }
+
         case .awaitingConfirmation:
             HStack(spacing: 8) {
                 MinimalButton("Cancel", style: .secondary) {
@@ -634,6 +699,108 @@ struct MinimalCard<Content: View>: View {
 
 enum ButtonStyleType {
     case primary, secondary
+}
+
+// MARK: - Amount Input View (Optimized for keyboard performance)
+
+struct AmountInputView: View {
+    @Binding var amountInput: String
+    let merchant: String
+    @FocusState private var isInputFocused: Bool
+
+    var body: some View {
+        VStack(spacing: 16) {
+            // Amount input field
+            HStack(alignment: .center, spacing: 4) {
+                Text("$")
+                    .font(.system(size: 32, weight: .bold, design: .monospaced))
+                    .foregroundColor(Theme.muted)
+
+                TextField("0.00", text: $amountInput)
+                    .font(.system(size: 48, weight: .black, design: .monospaced))
+                    .foregroundColor(Theme.dark)
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.leading)
+                    .focused($isInputFocused)
+                    .frame(maxWidth: .infinity)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+            }
+            .padding(.horizontal, 8)
+
+            HStack(spacing: 4) {
+                Text("USDC")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundColor(Theme.muted)
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(Theme.muted)
+                Text(merchant.uppercased())
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundColor(Theme.dark)
+            }
+
+            // Quick amount buttons
+            HStack(spacing: 8) {
+                ForEach(["5", "10", "25", "50"], id: \.self) { amount in
+                    Button {
+                        amountInput = amount
+                        isInputFocused = false
+                    } label: {
+                        Text("$\(amount)")
+                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            .foregroundColor(amountInput == amount ? Theme.dark : Theme.muted)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(amountInput == amount ? Theme.accent : Theme.border.opacity(0.5))
+                            .clipShape(RoundedRectangle(cornerRadius: 2))
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
+        .onAppear {
+            // Auto-focus the input field
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                isInputFocused = true
+            }
+        }
+    }
+}
+
+// MARK: - Token Row Component
+
+struct TokenRow: View {
+    let token: TokenDisplayInfo
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // Token icon with colored background
+            ZStack {
+                Circle()
+                    .fill(Color(hex: token.color).opacity(0.15))
+                    .frame(width: 32, height: 32)
+
+                Image(systemName: token.icon)
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(Color(hex: token.color))
+            }
+
+            // Token symbol
+            Text(token.symbol)
+                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                .foregroundColor(Theme.dark)
+
+            Spacer()
+
+            // Balance
+            Text(token.balance)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundColor(Theme.dark.opacity(0.7))
+        }
+        .padding(.vertical, 4)
+    }
 }
 
 struct MinimalButton: View {
@@ -812,6 +979,22 @@ class QRScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsD
             return
         }
 
+        // Optimize camera for QR scanning
+        do {
+            try videoCaptureDevice.lockForConfiguration()
+            // Enable auto-focus for faster QR detection
+            if videoCaptureDevice.isFocusModeSupported(.continuousAutoFocus) {
+                videoCaptureDevice.focusMode = .continuousAutoFocus
+            }
+            // Enable auto-exposure
+            if videoCaptureDevice.isExposureModeSupported(.continuousAutoExposure) {
+                videoCaptureDevice.exposureMode = .continuousAutoExposure
+            }
+            videoCaptureDevice.unlockForConfiguration()
+        } catch {
+            print("[QRScanner] Failed to configure camera: \(error)")
+        }
+
         let videoInput: AVCaptureDeviceInput
         do {
             videoInput = try AVCaptureDeviceInput(device: videoCaptureDevice)
@@ -821,6 +1004,7 @@ class QRScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsD
         }
 
         captureSession = AVCaptureSession()
+        captureSession?.sessionPreset = .high  // Better quality for QR detection
 
         guard let captureSession = captureSession else { return }
 
@@ -850,7 +1034,22 @@ class QRScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsD
         // Add scanning frame overlay
         addScanningOverlay()
 
-        DispatchQueue.global(qos: .userInitiated).async {
+        // Set scanning region to center of screen for faster detection
+        DispatchQueue.main.async {
+            let frameSize = min(self.view.bounds.width, self.view.bounds.height) * 0.7
+            let scanRect = CGRect(
+                x: (self.view.bounds.width - frameSize) / 2,
+                y: (self.view.bounds.height - frameSize) / 2,
+                width: frameSize,
+                height: frameSize
+            )
+            // Convert to metadata output coordinates (normalized, rotated)
+            if let previewLayer = self.previewLayer {
+                metadataOutput.rectOfInterest = previewLayer.metadataOutputRectConverted(fromLayerRect: scanRect)
+            }
+        }
+
+        DispatchQueue.global(qos: .userInteractive).async {
             captureSession.startRunning()
         }
     }

@@ -10,6 +10,24 @@ import Foundation
 import Combine
 import SwiftUI
 
+// MARK: - Token Display Info
+
+public struct TokenDisplayInfo: Identifiable {
+    public let id: String
+    public let symbol: String
+    public let balance: String
+    public let icon: String  // SF Symbol name
+    public let color: String // Hex color
+
+    public init(symbol: String, balance: String, icon: String, color: String) {
+        self.id = symbol
+        self.symbol = symbol
+        self.balance = balance
+        self.icon = icon
+        self.color = color
+    }
+}
+
 // MARK: - Payment Flow State
 
 public enum PaymentFlowState: Equatable {
@@ -17,6 +35,7 @@ public enum PaymentFlowState: Equatable {
     case listening
     case processing
     case scanningQR
+    case enteringAmount(merchant: String)  // QR scanned but no amount - prompt user
     case awaitingConfirmation(amount: String, merchant: String)
     case executing
     case confirming(txHash: String)  // Transaction sent, waiting for blockchain confirmation
@@ -38,6 +57,7 @@ public class VoiceSwapViewModel: ObservableObject {
     @Published public var walletAddress: String = ""
     @Published public var walletBalance: String = "0.00"
     @Published public var ethBalance: String = "0.0000"
+    @Published public var tokenBalances: [TokenDisplayInfo] = []
     @Published public var lastVoiceCommand: String = ""
     @Published public var lastResponse: String = ""
     @Published public var errorMessage: String?
@@ -114,10 +134,70 @@ public class VoiceSwapViewModel: ObservableObject {
             if let balances = response.data {
                 walletBalance = balances.totalUSD  // Total in USD (USDC + ETH)
                 ethBalance = balances.nativeETH.balance
+
+                // Build token display list (Unichain only)
+                var tokens: [TokenDisplayInfo] = []
+
+                // Always show ETH first
+                let ethBal = Double(balances.nativeETH.balance) ?? 0
+                if ethBal > 0.0001 {
+                    tokens.append(TokenDisplayInfo(
+                        symbol: "ETH",
+                        balance: formatBalance(ethBal, decimals: 4),
+                        icon: "diamond.fill",
+                        color: "627EEA"  // Ethereum blue
+                    ))
+                }
+
+                // USDC
+                if let usdc = balances.tokens.first(where: { $0.symbol == "USDC" }) {
+                    let bal = Double(usdc.balance) ?? 0
+                    if bal > 0.01 {
+                        tokens.append(TokenDisplayInfo(
+                            symbol: "USDC",
+                            balance: formatBalance(bal, decimals: 2),
+                            icon: "dollarsign.circle.fill",
+                            color: "2775CA"  // USDC blue
+                        ))
+                    }
+                }
+
+                // UNI
+                if let uni = balances.tokens.first(where: { $0.symbol == "UNI" }) {
+                    let bal = Double(uni.balance) ?? 0
+                    if bal > 0.001 {
+                        tokens.append(TokenDisplayInfo(
+                            symbol: "UNI",
+                            balance: formatBalance(bal, decimals: 3),
+                            icon: "u.circle.fill",
+                            color: "FF007A"  // Uniswap pink
+                        ))
+                    }
+                }
+
+                // WBTC
+                if let wbtc = balances.tokens.first(where: { $0.symbol == "WBTC" }) {
+                    let bal = Double(wbtc.balance) ?? 0
+                    if bal > 0.00001 {
+                        tokens.append(TokenDisplayInfo(
+                            symbol: "WBTC",
+                            balance: formatBalance(bal, decimals: 6),
+                            icon: "bitcoinsign.circle.fill",
+                            color: "F7931A"  // Bitcoin orange
+                        ))
+                    }
+                }
+
+                tokenBalances = tokens
             }
         } catch {
             print("[ViewModel] Failed to refresh balances: \(error)")
         }
+    }
+
+    /// Format balance with appropriate decimals
+    private func formatBalance(_ value: Double, decimals: Int) -> String {
+        return String(format: "%.\(decimals)f", value)
     }
 
     // MARK: - Glasses Connection
@@ -160,6 +240,20 @@ public class VoiceSwapViewModel: ObservableObject {
     public func processVoiceCommand(_ transcript: String) async {
         print("[ViewModel] Processing voice command: '\(transcript)' with wallet: \(walletAddress)")
         lastVoiceCommand = transcript
+
+        // If we're waiting for an amount, try to extract it from the voice command directly
+        if case .enteringAmount = flowState {
+            // Try to extract just the number from the transcript (e.g., "10 dollars" -> "10")
+            let numberPattern = try? NSRegularExpression(pattern: "\\d+\\.?\\d*", options: [])
+            if let match = numberPattern?.firstMatch(in: transcript, options: [], range: NSRange(transcript.startIndex..., in: transcript)),
+               let range = Range(match.range, in: transcript) {
+                let amount = String(transcript[range])
+                print("[ViewModel] Extracted amount from voice: \(amount)")
+                await setPaymentAmount(amount)
+                return
+            }
+        }
+
         flowState = .processing
 
         do {
@@ -199,24 +293,83 @@ public class VoiceSwapViewModel: ObservableObject {
     // MARK: - Payment Flow
 
     /// Handle QR code scan result
+    /// Accepts either a full payment URL or a plain Ethereum wallet address (0x...)
     public func handleQRScan(_ qrData: String) async {
+        print("[ViewModel] 📱 QR Scanned: \(qrData)")
         flowState = .processing
 
+        let trimmedData = qrData.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Check if it's a plain Ethereum address (most common case for merchants)
+        if trimmedData.hasPrefix("0x") && trimmedData.count == 42 {
+            // It's just a wallet address - no amount, no merchant name
+            print("[ViewModel] Detected plain wallet address: \(trimmedData)")
+
+            currentMerchantWallet = trimmedData
+            currentMerchantName = nil
+            currentAmount = nil
+
+            let merchantDisplay = "\(trimmedData.prefix(6))...\(trimmedData.suffix(4))"
+
+            // Stop camera streaming since we got what we need
+            glassesManager.stopQRScanning()
+
+            // Prompt user to enter amount
+            flowState = .enteringAmount(merchant: merchantDisplay)
+            glassesManager.speak("Wallet detected. Enter the amount to pay.", language: "en-US")
+            glassesManager.triggerHaptic(.success)
+
+            print("[ViewModel] Ready for amount input, merchant: \(merchantDisplay)")
+            return
+        }
+
+        // Otherwise try to parse as a payment URL (voiceswap://, ethereum:, etc.)
         do {
-            let response = try await apiClient.parseQRCode(qrData: qrData)
+            let response = try await apiClient.parseQRCode(qrData: trimmedData)
 
             if let paymentRequest = response.data {
                 currentMerchantWallet = paymentRequest.merchantWallet
                 currentMerchantName = paymentRequest.merchantName
                 currentAmount = paymentRequest.amount
 
-                // Prepare the payment
-                await preparePayment()
+                let merchantDisplay = paymentRequest.merchantName ?? "\(paymentRequest.merchantWallet.prefix(6))...\(paymentRequest.merchantWallet.suffix(4))"
+
+                // Stop camera streaming
+                glassesManager.stopQRScanning()
+
+                // Check if amount is provided
+                if let amount = paymentRequest.amount, !amount.isEmpty {
+                    // We have an amount - proceed to payment preparation
+                    await preparePayment()
+                } else {
+                    // No amount in QR - prompt user to enter amount
+                    print("[ViewModel] QR code has no amount - prompting user to enter")
+                    flowState = .enteringAmount(merchant: merchantDisplay)
+                    glassesManager.speak("Merchant scanned. How much would you like to pay?", language: "en-US")
+                    glassesManager.triggerHaptic(.double)
+                }
             }
         } catch {
+            print("[ViewModel] Failed to parse QR: \(error)")
             errorMessage = "Failed to parse QR code: \(error.localizedDescription)"
             flowState = .failed(error: error.localizedDescription)
+            glassesManager.speak("Could not read QR code. Please try again.", language: "en-US")
+            glassesManager.triggerHaptic(.error)
         }
+    }
+
+    /// Set the amount for a pending payment (after QR scan with no amount)
+    public func setPaymentAmount(_ amount: String) async {
+        guard currentMerchantWallet != nil else {
+            errorMessage = "No merchant wallet set"
+            return
+        }
+
+        currentAmount = amount
+        print("[ViewModel] Amount set to: \(amount)")
+
+        // Now proceed to prepare the payment
+        await preparePayment()
     }
 
     /// Prepare payment (check balances, determine swap)
@@ -238,7 +391,7 @@ public class VoiceSwapViewModel: ObservableObject {
                 swapFromToken = data.swapInfo.swapFromSymbol
 
                 let merchantDisplay = currentMerchantName ?? "\(merchantWallet.prefix(6))...\(merchantWallet.suffix(4))"
-                let amountDisplay = currentAmount ?? data.maxPayable.estimatedUSDC
+                let amountDisplay = currentAmount ?? data.maxPayable.estimatedUSDC ?? "0"
 
                 if data.ready {
                     flowState = .awaitingConfirmation(amount: amountDisplay, merchant: merchantDisplay)
@@ -341,6 +494,25 @@ public class VoiceSwapViewModel: ObservableObject {
             glassesManager.speak("Please connect your wallet first", language: "en-US")
             glassesManager.triggerHaptic(.error)
 
+        } catch let error as APIError {
+            print("[ViewModel] API error: \(error)")
+            let userMessage: String
+            switch error {
+            case .serverError(let msg):
+                userMessage = msg
+            case .decodingError:
+                userMessage = "Server response error. Please try again."
+            case .httpError(let code):
+                userMessage = "Server error (\(code)). Please try again."
+            case .networkError:
+                userMessage = "Network error. Check your connection."
+            default:
+                userMessage = error.localizedDescription
+            }
+            flowState = .failed(error: userMessage)
+            glassesManager.speak("Payment failed. \(userMessage)", language: "en-US")
+            glassesManager.triggerHaptic(.error)
+
         } catch {
             print("[ViewModel] Payment error: \(error)")
             flowState = .failed(error: error.localizedDescription)
@@ -429,8 +601,19 @@ public class VoiceSwapViewModel: ObservableObject {
         case "show_help":
             flowState = .idle
 
+        case "set_amount":
+            // Voice command provided an amount while we're waiting for one
+            if let amount = intent.amount {
+                await setPaymentAmount(amount)
+            }
+
         default:
-            flowState = .listening
+            // If we're in enteringAmount state and got a voice command with an amount, use it
+            if case .enteringAmount = flowState, let amount = intent.amount {
+                await setPaymentAmount(amount)
+            } else {
+                flowState = .listening
+            }
         }
     }
 

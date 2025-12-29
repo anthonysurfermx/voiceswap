@@ -318,10 +318,11 @@ export async function getMerchantPayments(
  */
 export async function getMerchantPaymentByTxHash(txHash: string): Promise<MerchantPayment | null> {
   const db = getDb();
-  return await db.get(
+  const result = await db.get(
     'SELECT * FROM merchant_payments WHERE tx_hash = ?',
     [txHash.toLowerCase()]
   );
+  return result ?? null;
 }
 
 /**

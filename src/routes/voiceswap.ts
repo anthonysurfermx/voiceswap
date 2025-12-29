@@ -6,6 +6,16 @@
 
 import { Router } from 'express';
 import { ethers } from 'ethers';
+
+// Helper function to validate Ethereum addresses
+// Uses regex as primary method (more reliable in serverless environments)
+function isValidAddress(address: string): boolean {
+  if (!address || typeof address !== 'string') {
+    return false;
+  }
+  // Regex validation: 0x followed by 40 hex characters
+  return /^0x[a-fA-F0-9]{40}$/.test(address);
+}
 import {
   parseQRCode,
   getWalletBalances,
@@ -39,6 +49,7 @@ import {
   updatePaymentConcept,
   getMerchantStats,
 } from '../services/database.js';
+import { getPriceInfo, getEthPrice } from '../services/priceOracle.js';
 
 const router = Router();
 
@@ -76,6 +87,26 @@ router.get('/info', (_req, res) => {
       },
     },
   });
+});
+
+/**
+ * GET /voiceswap/price
+ * Get current ETH price in USD
+ */
+router.get('/price', async (_req, res) => {
+  try {
+    const priceInfo = await getPriceInfo();
+    res.json({
+      success: true,
+      data: priceInfo,
+    });
+  } catch (error) {
+    console.error('[VoiceSwap] Price fetch error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch ETH price',
+    });
+  }
 });
 
 /**
@@ -253,7 +284,7 @@ router.post('/prepare-tx', async (req, res) => {
     }
 
     // Validate addresses
-    if (!ethers.utils.isAddress(userAddress) || !ethers.utils.isAddress(merchantWallet)) {
+    if (!isValidAddress(userAddress) || !isValidAddress(merchantWallet)) {
       return res.status(400).json({
         success: false,
         error: 'Invalid wallet address format',
@@ -269,14 +300,12 @@ router.post('/prepare-tx', async (req, res) => {
     // Convert amount to USDC units (6 decimals)
     const amountInUnits = ethers.utils.parseUnits(amount.toString(), 6);
 
-    // For now, we only support direct USDC transfers (no swap)
-    // Swaps require more complex routing that should stay server-side
+    // For MVP: Only support direct USDC transfers
+    // Users deposit USDC directly, no swap needed
     if (!swapInfo.hasEnoughUSDC) {
       return res.status(400).json({
         success: false,
-        error: 'Insufficient USDC balance. Swap functionality coming soon.',
-        needsSwap: true,
-        swapFromToken: swapInfo.swapFromSymbol,
+        error: 'Insufficient USDC balance. Please deposit USDC to your wallet.',
         currentBalance: balances.totalUSDC,
         requiredAmount: amount,
       });
@@ -349,7 +378,7 @@ router.post('/execute', async (req, res) => {
     }
 
     // Validate addresses
-    if (!ethers.utils.isAddress(userAddress) || !ethers.utils.isAddress(merchantWallet)) {
+    if (!isValidAddress(userAddress) || !isValidAddress(merchantWallet)) {
       return res.status(400).json({
         success: false,
         error: 'Invalid wallet address format',
@@ -985,7 +1014,7 @@ router.post('/generate-qr', (req, res) => {
     }
 
     // Validate wallet address
-    if (!ethers.utils.isAddress(merchantWallet)) {
+    if (!isValidAddress(merchantWallet)) {
       return res.status(400).json({
         success: false,
         error: 'Invalid wallet address format',
@@ -1060,7 +1089,7 @@ router.get('/qr/:wallet', (req, res) => {
     const amount = req.query.amount as string | undefined;
     const merchantName = req.query.name as string | undefined;
 
-    if (!ethers.utils.isAddress(wallet)) {
+    if (!isValidAddress(wallet)) {
       return res.status(400).json({
         success: false,
         error: 'Invalid wallet address',
@@ -1119,7 +1148,7 @@ router.post('/merchant/payment', async (req, res) => {
       });
     }
 
-    if (!ethers.utils.isAddress(merchantWallet) || !ethers.utils.isAddress(fromAddress)) {
+    if (!isValidAddress(merchantWallet) || !isValidAddress(fromAddress)) {
       return res.status(400).json({
         success: false,
         error: 'Invalid wallet address format',
@@ -1170,7 +1199,7 @@ router.get('/merchant/payments/:wallet', async (req, res) => {
     const offset = parseInt(req.query.offset as string) || 0;
     const concept = req.query.concept as string | undefined;
 
-    if (!ethers.utils.isAddress(wallet)) {
+    if (!isValidAddress(wallet)) {
       return res.status(400).json({
         success: false,
         error: 'Invalid wallet address',
@@ -1254,7 +1283,7 @@ router.get('/merchant/stats/:wallet', async (req, res) => {
   try {
     const { wallet } = req.params;
 
-    if (!ethers.utils.isAddress(wallet)) {
+    if (!isValidAddress(wallet)) {
       return res.status(400).json({
         success: false,
         error: 'Invalid wallet address',
@@ -1272,6 +1301,81 @@ router.get('/merchant/stats/:wallet', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to get stats',
+    });
+  }
+});
+
+/**
+ * GET /voiceswap/merchant/transactions/:wallet
+ * Get real blockchain transactions for a merchant wallet from Blockscout
+ */
+router.get('/merchant/transactions/:wallet', async (req, res) => {
+  try {
+    const { wallet } = req.params;
+    const { limit = '50', offset = '0' } = req.query;
+
+    if (!isValidAddress(wallet)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid wallet address',
+      });
+    }
+
+    // Fetch token transfers from Blockscout API
+    const blockscoutUrl = `https://unichain.blockscout.com/api/v2/addresses/${wallet}/token-transfers`;
+    const response = await fetch(blockscoutUrl);
+
+    if (!response.ok) {
+      throw new Error(`Blockscout API error: ${response.status}`);
+    }
+
+    const data = await response.json() as { items?: any[] };
+
+    // Filter and format incoming USDC transfers
+    const usdcAddress = '0x078D782b760474a361dDA0AF3839290b0EF57AD6'.toLowerCase();
+    const transactions = (data.items || [])
+      .filter((tx: any) => {
+        // Only incoming transfers to this wallet
+        const isIncoming = tx.to?.hash?.toLowerCase() === wallet.toLowerCase();
+        // Only USDC transfers
+        const isUsdc = tx.token?.address_hash?.toLowerCase() === usdcAddress;
+        return isIncoming && isUsdc;
+      })
+      .slice(Number(offset), Number(offset) + Number(limit))
+      .map((tx: any) => ({
+        txHash: tx.transaction_hash,
+        fromAddress: tx.from?.hash || 'Unknown',
+        amount: (Number(tx.total?.value || 0) / 1e6).toFixed(2), // USDC has 6 decimals
+        timestamp: tx.timestamp,
+        token: tx.token?.symbol || 'USDC',
+        blockNumber: tx.block_number,
+      }));
+
+    // Calculate stats
+    const totalAmount = transactions.reduce((sum: number, tx: any) => sum + parseFloat(tx.amount), 0);
+    const uniquePayers = new Set(transactions.map((tx: any) => tx.fromAddress.toLowerCase())).size;
+
+    res.json({
+      success: true,
+      data: {
+        transactions,
+        stats: {
+          totalPayments: transactions.length,
+          totalAmount: totalAmount.toFixed(2),
+          uniquePayers,
+        },
+        pagination: {
+          limit: Number(limit),
+          offset: Number(offset),
+          count: transactions.length,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('[VoiceSwap] Get blockchain transactions error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get transactions from blockchain',
     });
   }
 });
