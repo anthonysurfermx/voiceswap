@@ -319,10 +319,16 @@ public class MetaGlassesManager: NSObject, ObservableObject {
 
     // MARK: - Meta Wearables SDK Properties
     private var wearables: WearablesInterface?
+
+    /// StreamSession is created once and reused with start()/stop()
+    /// Per Meta SDK docs: "SDK requires ONE session instance, reused with start()/stop()"
     private var streamSession: StreamSession?
     private var deviceSelector: AutoDeviceSelector?
+    private var isStreamSessionInitialized: Bool = false
+
     private var registrationTask: Task<Void, Never>?
     private var deviceStreamTask: Task<Void, Never>?
+    private var deviceMonitorTask: Task<Void, Never>?
     private var stateListenerToken: AnyListenerToken?
     private var videoFrameListenerToken: AnyListenerToken?
     private var errorListenerToken: AnyListenerToken?
@@ -377,14 +383,16 @@ public class MetaGlassesManager: NSObject, ObservableObject {
                 options: [CIDetectorAccuracy: CIDetectorAccuracyHigh]
             )
 
-            // Setup audio route change observer for Bluetooth HFP detection
+            // Setup audio route change observer for Bluetooth detection
+            // (Re-enabled - confirmed audio was NOT blocking the Meta callback)
             self.setupAudioRouteObserver()
 
             // Initialize Meta Wearables SDK
             self.initializeWearablesSDK()
 
+            // DISABLED FOR DEBUGGING - Testing if audio interferes with Meta callback
             // Setup speech recognition
-            self.setupSpeechRecognition()
+            // self.setupSpeechRecognition()
 
             // Restore registration state if previously registered
             if UserDefaults.standard.bool(forKey: "metaGlassesRegistered") {
@@ -392,7 +400,7 @@ public class MetaGlassesManager: NSObject, ObservableObject {
                 self.setupDeviceStream()
             }
 
-            print("[MetaGlasses] Initialized")
+            print("[MetaGlasses] Initialized (AUDIO DISABLED FOR DEBUGGING)")
         }
     }
 
@@ -570,14 +578,17 @@ public class MetaGlassesManager: NSObject, ObservableObject {
                 }
             }
 
-            // If SDK devicesStream didn't find devices, try to force Bluetooth audio and check HFP
+            // If SDK devicesStream didn't find devices, check audio route as fallback
             if devices.isEmpty {
-                print("[MetaGlasses] SDK devicesStream empty, attempting to force Bluetooth audio route...")
-                await tryForceBluetoothAudioRoute()
+                print("[MetaGlasses] SDK devicesStream empty, checking Bluetooth audio route...")
                 checkAndUpdateHFPConnection()
 
-                // If still not connected after HFP check, list available Bluetooth devices
-                if !isGlassesHFPConnected {
+                if isGlassesHFPConnected {
+                    print("[MetaGlasses] ✓ Glasses detected via audio route - ready for camera")
+                    connectionState = .connected
+                    delegate?.glassesDidConnect()
+                } else {
+                    // List available Bluetooth devices for debugging
                     listAvailableBluetoothDevices()
                 }
             }
@@ -592,9 +603,10 @@ public class MetaGlassesManager: NSObject, ObservableObject {
             throw NSError(domain: "MetaGlasses", code: 1, userInfo: [NSLocalizedDescriptionKey: "Wearables SDK not initialized"])
         }
 
-        // If already registered/connected, don't re-register
-        if isConnected {
-            print("[MetaGlasses] Already connected, skipping registration")
+        // Only skip registration if actually streaming or have real device connection
+        // Don't skip if just "registered" - we need to start registration flow to open Meta View
+        if connectionState == .streaming || (!devices.isEmpty && connectionState == .connected) {
+            print("[MetaGlasses] Already streaming/connected with devices, skipping registration")
             return
         }
 
@@ -603,6 +615,8 @@ public class MetaGlassesManager: NSObject, ObservableObject {
         do {
             try wearables.startRegistration()
             print("[MetaGlasses] Started registration - redirecting to Meta AI app")
+            print("[MetaGlasses] Expected callback: voiceswap://?metaWearablesAction=register&...")
+            print("[MetaGlasses] Verify Meta Developer Portal has URL scheme: voiceswap://")
         } catch {
             connectionState = .error("Failed to start registration: \(error.localizedDescription)")
             throw error
@@ -612,7 +626,7 @@ public class MetaGlassesManager: NSObject, ObservableObject {
     /// Disconnect from glasses
     public func disconnect() {
         stopListening()
-        stopCameraStream()
+        cleanupStreamSession()
 
         if let wearables = wearables {
             do {
@@ -636,16 +650,39 @@ public class MetaGlassesManager: NSObject, ObservableObject {
     /// This starts the camera stream and processes frames for QR detection
     public func startQRScanning() async {
         print("[MetaGlasses] Starting QR scanning mode...")
-        speak("Scanning for payment QR code. Look at the merchant's QR.", language: "en-US")
-        triggerHaptic(.short)
 
         // Reset detection state
         lastDetectedQR = nil
         lastQRDetectionTime = .distantPast
         isProcessingFrame = false
 
+        // Check audio route first to detect glasses via A2DP
+        checkAndUpdateHFPConnection()
+
+        // Check if we can start camera stream
+        if devices.isEmpty && !isGlassesHFPConnected {
+            print("[MetaGlasses] Cannot start QR scan - no glasses connected")
+            print("[MetaGlasses] Glasses audio connected: \(isGlassesHFPConnected)")
+            speak("Please connect your Meta glasses first", language: "en-US")
+            triggerHaptic(.error)
+            connectionState = .error("Connect glasses via Bluetooth first")
+            return
+        }
+
+        print("[MetaGlasses] ✓ Glasses detected (SDK: \(devices.count), Audio: \(isGlassesHFPConnected))")
+
+        speak("Scanning for payment QR code. Look at the merchant's QR.", language: "en-US")
+        triggerHaptic(.short)
+
         // Start camera stream - QR detection happens automatically via scanForQRCode()
         await startCameraStream()
+
+        // If camera didn't start (error state), inform user about Meta View setup
+        if connectionState == .error("Enable VoiceSwap in Meta View > Settings > Device Access") ||
+           connectionState == .error("Grant camera access in Meta View app") {
+            // Already handled in startCameraStream with voice feedback
+            print("[MetaGlasses] Camera stream failed - user needs to configure Meta View")
+        }
     }
 
     /// Stop QR scanning
@@ -692,6 +729,9 @@ public class MetaGlassesManager: NSObject, ObservableObject {
     /// Try to force audio route to Bluetooth HFP
     /// This helps establish the HFP connection needed for glasses detection
     private func tryForceBluetoothAudioRoute() async {
+        // DISABLED FOR DEBUGGING - Testing if audio interferes with Meta callback
+        print("[MetaGlasses] tryForceBluetoothAudioRoute() DISABLED FOR DEBUGGING")
+        /*
         print("[MetaGlasses] Attempting to force Bluetooth audio route...")
 
         let audioSession = AVAudioSession.sharedInstance()
@@ -735,6 +775,7 @@ public class MetaGlassesManager: NSObject, ObservableObject {
         } catch {
             print("[MetaGlasses] Failed to configure Bluetooth audio: \(error)")
         }
+        */
     }
 
     /// List all available Bluetooth devices for debugging
@@ -770,7 +811,7 @@ public class MetaGlassesManager: NSObject, ObservableObject {
         print("[MetaGlasses] ═══════════════════════════════════════")
     }
 
-    /// Check if Meta glasses are connected via HFP and update state accordingly
+    /// Check if Meta glasses are connected via HFP/A2DP and update state accordingly
     private func checkAndUpdateHFPConnection() {
         let audioSession = AVAudioSession.sharedInstance()
         let currentRoute = audioSession.currentRoute
@@ -782,12 +823,15 @@ public class MetaGlassesManager: NSObject, ObservableObject {
         print("  Inputs: \(inputs.joined(separator: ", "))")
         print("  Outputs: \(outputs.joined(separator: ", "))")
 
-        // Check for glasses Bluetooth HFP
-        let hasBluetoothHFP = currentRoute.inputs.contains { $0.portType == .bluetoothHFP } ||
-                              currentRoute.outputs.contains { $0.portType == .bluetoothHFP }
+        // Check for Bluetooth audio (HFP or A2DP)
+        let hasBluetoothAudio = currentRoute.inputs.contains {
+            $0.portType == .bluetoothHFP || $0.portType == .bluetoothA2DP
+        } || currentRoute.outputs.contains {
+            $0.portType == .bluetoothHFP || $0.portType == .bluetoothA2DP
+        }
 
         // Check if device name contains "Meta" or "Ray-Ban" or "Glasses"
-        let glassesKeywords = ["meta", "ray-ban", "rayban", "glasses", "oakley"]
+        let glassesKeywords = ["meta", "ray-ban", "rayban", "glasses", "oakley", "mr robot"]
         let hasGlassesDevice = currentRoute.inputs.contains { port in
             glassesKeywords.contains { port.portName.lowercased().contains($0) }
         } || currentRoute.outputs.contains { port in
@@ -795,21 +839,21 @@ public class MetaGlassesManager: NSObject, ObservableObject {
         }
 
         let wasConnected = isGlassesHFPConnected
-        isGlassesHFPConnected = hasBluetoothHFP && hasGlassesDevice
+        isGlassesHFPConnected = hasBluetoothAudio && hasGlassesDevice
 
         if isGlassesHFPConnected {
-            print("[MetaGlasses] ✓ Glasses detected via Bluetooth HFP")
+            print("[MetaGlasses] ✓ Glasses detected via Bluetooth audio (A2DP/HFP)")
 
-            // If SDK devicesStream is empty but we detect glasses via HFP,
+            // If SDK devicesStream is empty but we detect glasses via audio route,
             // update connection state as a fallback
             if devices.isEmpty && connectionState == .registered {
-                print("[MetaGlasses] 📱 Using HFP as fallback - glasses detected via audio route")
+                print("[MetaGlasses] 📱 Using audio route as fallback - glasses detected!")
                 connectionState = .connected
                 delegate?.glassesDidConnect()
             }
         } else if wasConnected && !isGlassesHFPConnected {
-            print("[MetaGlasses] ✗ Glasses disconnected from HFP")
-            // Only downgrade if we were relying on HFP detection
+            print("[MetaGlasses] ✗ Glasses disconnected from Bluetooth audio")
+            // Only downgrade if we were relying on audio detection
             if devices.isEmpty && connectionState == .connected {
                 connectionState = .registered
                 delegate?.glassesDidDisconnect()
@@ -823,6 +867,9 @@ public class MetaGlassesManager: NSObject, ObservableObject {
     /// Configure HFP (Hands-Free Profile) audio BEFORE starting streaming
     /// Per Meta docs: "It is essential to ensure that HFP is fully configured before initiating any streaming session"
     private func configureHFPAudio() throws {
+        // DISABLED FOR DEBUGGING - Testing if audio interferes with Meta callback
+        print("[MetaGlasses] configureHFPAudio() DISABLED FOR DEBUGGING")
+        /*
         print("[MetaGlasses] Configuring HFP audio session...")
 
         let audioSession = AVAudioSession.sharedInstance()
@@ -857,98 +904,46 @@ public class MetaGlassesManager: NSObject, ObservableObject {
         } else {
             print("[MetaGlasses] ⚠ No Bluetooth device in audio route - glasses mic may not work")
         }
+        */
     }
 
     // MARK: - Camera Streaming
 
-    /// Start streaming camera from glasses
-    public func startCameraStream() async {
+    /// Initialize StreamSession once - this follows Meta SDK best practice
+    /// "SDK requires ONE session instance, reused with start()/stop()"
+    private func initializeStreamSession() {
         guard let wearables = wearables else {
-            print("[MetaGlasses] Cannot start stream - SDK not initialized")
-            connectionState = .error("SDK not initialized")
+            print("[MetaGlasses] Cannot initialize stream session - SDK not initialized")
             return
         }
 
-        // Must be registered first
-        guard isConnected else {
-            print("[MetaGlasses] Cannot start stream - not connected")
-            connectionState = .error("Connect to glasses first")
+        guard !isStreamSessionInitialized else {
+            print("[MetaGlasses] StreamSession already initialized")
             return
         }
 
-        // Check if we have devices connected via SDK (required for camera)
-        // HFP audio works for voice but SDK device detection is required for camera streaming
-        if devices.isEmpty {
-            if isGlassesHFPConnected {
-                // HFP audio works but SDK doesn't see the device - common issue
-                print("[MetaGlasses] ⚠️ Glasses connected via HFP audio but not detected by Meta SDK")
-                print("[MetaGlasses] Camera requires SDK device detection, not just HFP")
-                print("[MetaGlasses] Troubleshooting steps:")
-                print("[MetaGlasses]   1. Open Meta View app and ensure glasses show as 'Connected'")
-                print("[MetaGlasses]   2. In Meta View: Settings > Device Access > Enable for VoiceSwap")
-                print("[MetaGlasses]   3. Try: Turn glasses off/on, then re-open VoiceSwap")
-                print("[MetaGlasses]   4. Check if glasses firmware is up to date")
+        print("[MetaGlasses] Initializing StreamSession (one-time setup)...")
 
-                speak("Camera access requires Meta View setup. Open Meta View, go to Settings, Device Access, and enable VoiceSwap.", language: "en-US")
-                connectionState = .error("Enable VoiceSwap in Meta View > Settings > Device Access")
-                return
-            } else {
-                print("[MetaGlasses] No glasses connected via Bluetooth or HFP")
-                connectionState = .error("Put on glasses and connect via Bluetooth first")
-                return
-            }
-        }
-
-        print("[MetaGlasses] Starting camera stream...")
-        print("[MetaGlasses] Connected devices: \(devices.count)")
-
-        // Check camera permission
-        do {
-            let status = try await wearables.checkPermissionStatus(.camera)
-            print("[MetaGlasses] Camera permission status: \(status)")
-            if status != .granted {
-                print("[MetaGlasses] Requesting camera permission - this will open Meta View...")
-                let requestStatus = try await wearables.requestPermission(.camera)
-                if requestStatus != .granted {
-                    print("[MetaGlasses] Camera permission denied by user")
-                    speak("Camera access denied. Please approve in Meta View app.", language: "en-US")
-                    connectionState = .error("Camera denied - approve in Meta View")
-                    return
-                }
-            }
-        } catch {
-            print("[MetaGlasses] Permission error: \(error)")
-            // Parse the error to provide better guidance
-            let errorDesc = "\(error)"
-            if errorDesc.contains("PermissionError(rawValue: 0)") {
-                print("[MetaGlasses] PermissionError 0 = SDK cannot communicate with glasses")
-                print("[MetaGlasses] This usually means:")
-                print("[MetaGlasses]   - Glasses are connected via Bluetooth but not via Meta SDK")
-                print("[MetaGlasses]   - Camera permission not yet granted in Meta View app")
-                speak("Unable to access glasses camera. Please check Meta View app settings.", language: "en-US")
-                connectionState = .error("Grant camera access in Meta View app")
-            } else {
-                connectionState = .error("Camera error: \(error.localizedDescription)")
-            }
-            return
-        }
-
-        // IMPORTANT: Configure HFP audio BEFORE starting streaming
-        // Per Meta docs: HFP must be fully configured before initiating streaming
-        do {
-            try configureHFPAudio()
-        } catch {
-            print("[MetaGlasses] Warning: Could not configure HFP audio: \(error)")
-            // Continue anyway - streaming may work but glasses mic might not
-        }
-
-        // Create device selector and stream session
+        // Create AutoDeviceSelector - this automatically selects connected devices
         deviceSelector = AutoDeviceSelector(wearables: wearables)
 
+        // Monitor active device changes
+        deviceMonitorTask = Task { @MainActor in
+            guard let deviceSelector = self.deviceSelector else { return }
+            for await device in deviceSelector.activeDeviceStream() {
+                print("[MetaGlasses] 📱 Active device changed: \(device != nil ? "connected" : "disconnected")")
+                if device != nil && self.connectionState == .registered {
+                    self.connectionState = .connected
+                    self.delegate?.glassesDidConnect()
+                }
+            }
+        }
+
+        // Configure StreamSession with optimal settings for QR detection
         let config = StreamSessionConfig(
             videoCodec: .raw,
-            resolution: .low,
-            frameRate: 15
+            resolution: .low,    // Low res is faster for QR detection
+            frameRate: 24        // 24 fps matches TurboMeta's approach
         )
 
         streamSession = StreamSession(streamSessionConfig: config, deviceSelector: deviceSelector!)
@@ -969,11 +964,36 @@ public class MetaGlassesManager: NSObject, ObservableObject {
         // Subscribe to errors
         errorListenerToken = streamSession?.errorPublisher.listen { [weak self] error in
             Task { @MainActor [weak self] in
-                print("[MetaGlasses] Stream error: \(error)")
-                self?.delegate?.glassesDidEncounterError(NSError(
+                guard let self = self else { return }
+
+                print("[MetaGlasses] ❌ Stream error: \(error)")
+
+                let errorDescription = "\(error)"
+                var userMessage = "Camera streaming error"
+                var speakMessage = "Camera error occurred"
+
+                if errorDescription.contains("deviceNotFound") || errorDescription.contains("DeviceNotFound") {
+                    userMessage = "Glasses not found. Ensure firmware is v20+ and developer mode is enabled."
+                    speakMessage = "Glasses not found. Check firmware version."
+                    print("[MetaGlasses] Error: Device not found - check firmware v20+ and Meta AI developer mode")
+                } else if errorDescription.contains("deviceNotConnected") || errorDescription.contains("DeviceNotConnected") {
+                    userMessage = "Glasses disconnected. Please reconnect via Bluetooth."
+                    speakMessage = "Glasses disconnected"
+                } else if errorDescription.contains("permissionDenied") || errorDescription.contains("PermissionDenied") {
+                    userMessage = "Camera permission denied. Enable in Meta View > Settings > Device Access."
+                    speakMessage = "Camera permission denied. Enable in Meta View app."
+                } else if errorDescription.contains("timeout") || errorDescription.contains("Timeout") {
+                    userMessage = "Connection timeout. Try restarting glasses and the app."
+                    speakMessage = "Connection timed out"
+                }
+
+                self.speak(speakMessage, language: "en-US")
+                self.connectionState = .error(userMessage)
+
+                self.delegate?.glassesDidEncounterError(NSError(
                     domain: "MetaGlasses",
                     code: 100,
-                    userInfo: [NSLocalizedDescriptionKey: "Streaming error occurred"]
+                    userInfo: [NSLocalizedDescriptionKey: userMessage]
                 ))
             }
         }
@@ -982,38 +1002,134 @@ public class MetaGlassesManager: NSObject, ObservableObject {
         stateListenerToken = streamSession?.statePublisher.listen { [weak self] state in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
+                print("[MetaGlasses] StreamSession state: \(state)")
+
                 switch state {
                 case .streaming:
+                    print("[MetaGlasses] ✅ Camera streaming active!")
                     self.connectionState = .streaming
                     self.isStreamingCamera = true
+                case .waitingForDevice:
+                    print("[MetaGlasses] ⏳ Waiting for device...")
+                    print("[MetaGlasses] Ensure: 1) Firmware v20+ 2) Developer mode enabled in Meta AI app")
+                    // Don't speak every time - only on first wait
+                    if !self.isStreamingCamera {
+                        self.speak("Waiting for glasses. Make sure developer mode is enabled.", language: "en-US")
+                    }
+                case .starting:
+                    print("[MetaGlasses] 🔄 StreamSession starting...")
+                case .paused:
+                    print("[MetaGlasses] ⏸️ StreamSession paused")
+                    self.isStreamingCamera = false
                 case .stopped:
+                    print("[MetaGlasses] ⏹️ StreamSession stopped")
                     self.isStreamingCamera = false
                     if self.connectionState == .streaming {
                         self.connectionState = .connected
                     }
-                default:
-                    break
+                @unknown default:
+                    print("[MetaGlasses] Unknown StreamSession state: \(state)")
                 }
             }
         }
 
+        isStreamSessionInitialized = true
+        print("[MetaGlasses] ✅ StreamSession initialized (will be reused)")
+    }
+
+    /// Start streaming camera from glasses
+    public func startCameraStream() async {
+        guard let wearables = wearables else {
+            print("[MetaGlasses] Cannot start stream - SDK not initialized")
+            connectionState = .error("SDK not initialized")
+            return
+        }
+
+        // Must be registered first
+        guard isConnected else {
+            print("[MetaGlasses] Cannot start stream - not connected")
+            connectionState = .error("Connect to glasses first")
+            return
+        }
+
+        print("[MetaGlasses] Starting camera stream...")
+        print("[MetaGlasses] Connected devices: \(devices.count), HFP: \(isGlassesHFPConnected)")
+
+        // KEY INSIGHT: If devices.isEmpty, the SDK cannot communicate with glasses yet.
+        // Instead of blocking with a permission check that will fail (PermissionError 0),
+        // we skip the permission check and let StreamSession enter "waitingForDevice" state.
+        // The AutoDeviceSelector will automatically connect when the SDK recognizes the glasses.
+
+        if devices.isEmpty {
+            print("[MetaGlasses] ⚠️ No devices detected yet - skipping permission check")
+            print("[MetaGlasses] StreamSession will wait for device connection...")
+            speak("Waiting for glasses connection.", language: "en-US")
+        } else {
+            // Only check permissions if we have devices - otherwise it will fail with error 0
+            do {
+                let status = try await wearables.checkPermissionStatus(.camera)
+                print("[MetaGlasses] Camera permission status: \(status)")
+
+                if status != .granted {
+                    print("[MetaGlasses] Requesting camera permission - this will open Meta View...")
+                    speak("Opening Meta View for camera permission.", language: "en-US")
+
+                    let requestStatus = try await wearables.requestPermission(.camera)
+                    print("[MetaGlasses] Permission request result: \(requestStatus)")
+
+                    if requestStatus != .granted {
+                        print("[MetaGlasses] Camera permission denied by user")
+                        speak("Camera access denied. Please approve in Meta View app settings.", language: "en-US")
+                        connectionState = .error("Camera denied - approve in Meta View > VoiceSwap")
+                        return
+                    }
+
+                    print("[MetaGlasses] ✅ Camera permission granted!")
+                    speak("Camera access granted.", language: "en-US")
+                } else {
+                    print("[MetaGlasses] ✅ Camera permission already granted")
+                }
+            } catch {
+                print("[MetaGlasses] Permission error: \(error)")
+                let errorDesc = "\(error)"
+
+                // PermissionError(rawValue: 0) - don't block, let StreamSession try anyway
+                if errorDesc.contains("PermissionError(rawValue: 0)") {
+                    print("[MetaGlasses] PermissionError 0 - SDK may not see device yet, continuing anyway...")
+                    print("[MetaGlasses] StreamSession will enter waitingForDevice state")
+                    // Don't return - let StreamSession handle the device discovery
+                } else {
+                    speak("Camera permission error. Check Meta View settings.", language: "en-US")
+                    connectionState = .error("Camera error: \(error.localizedDescription)")
+                    return
+                }
+            }
+        }
+
+        // Configure HFP audio BEFORE starting streaming
+        do {
+            try configureHFPAudio()
+        } catch {
+            print("[MetaGlasses] Warning: Could not configure HFP audio: \(error)")
+        }
+
+        // Initialize StreamSession once (reused across start/stop cycles)
+        if !isStreamSessionInitialized {
+            initializeStreamSession()
+        }
+
+        // Start the session (reusing existing instance)
+        print("[MetaGlasses] Calling streamSession.start()...")
         await streamSession?.start()
-        isStreamingCamera = true
-        connectionState = .streaming
-        print("[MetaGlasses] Camera streaming started")
+        print("[MetaGlasses] streamSession.start() returned")
     }
 
     /// Stop camera streaming
+    /// Note: We only stop the stream, not destroy the session (reused per Meta SDK pattern)
     public func stopCameraStream() {
         Task {
             await streamSession?.stop()
         }
-
-        stateListenerToken = nil
-        videoFrameListenerToken = nil
-        errorListenerToken = nil
-        streamSession = nil
-        deviceSelector = nil
 
         isStreamingCamera = false
         currentVideoFrame = nil
@@ -1022,7 +1138,22 @@ public class MetaGlassesManager: NSObject, ObservableObject {
             connectionState = .connected
         }
 
-        print("[MetaGlasses] Camera streaming stopped")
+        print("[MetaGlasses] Camera streaming stopped (session preserved for reuse)")
+    }
+
+    /// Cleanup StreamSession completely (call on disconnect or app termination)
+    private func cleanupStreamSession() {
+        stateListenerToken = nil
+        videoFrameListenerToken = nil
+        errorListenerToken = nil
+        deviceMonitorTask?.cancel()
+        deviceMonitorTask = nil
+        streamSession = nil
+        deviceSelector = nil
+        isStreamSessionInitialized = false
+        isStreamingCamera = false
+        currentVideoFrame = nil
+        print("[MetaGlasses] StreamSession cleaned up")
     }
 
     // MARK: - QR Code Detection (Vision Framework)
@@ -1191,13 +1322,14 @@ public class MetaGlassesManager: NSObject, ObservableObject {
     }
 
     public func speak(_ text: String, language: String = "en-US") {
-        let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = AVSpeechSynthesisVoice(language: language)
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
-        utterance.pitchMultiplier = 1.0
-        utterance.volume = 1.0
-
-        synthesizer.speak(utterance)
+        // DISABLED FOR DEBUGGING - Testing if audio interferes with Meta callback
+        print("[MetaGlasses] SPEAK (disabled): \(text)")
+        // let utterance = AVSpeechUtterance(string: text)
+        // utterance.voice = AVSpeechSynthesisVoice(language: language)
+        // utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        // utterance.pitchMultiplier = 1.0
+        // utterance.volume = 1.0
+        // synthesizer.speak(utterance)
     }
 
     public func triggerHaptic(_ pattern: HapticPattern) {
@@ -1225,6 +1357,10 @@ public class MetaGlassesManager: NSObject, ObservableObject {
     }
 
     private func startSpeechRecognition() throws {
+        // DISABLED FOR DEBUGGING - Testing if audio interferes with Meta callback
+        print("[MetaGlasses] startSpeechRecognition() DISABLED FOR DEBUGGING")
+        return
+        /*
         recognitionTask?.cancel()
         recognitionTask = nil
 
@@ -1283,6 +1419,7 @@ public class MetaGlassesManager: NSObject, ObservableObject {
 
         audioEngine.prepare()
         try audioEngine.start()
+        */
     }
 
     private func cleanupAudioEngine() {
@@ -1333,6 +1470,7 @@ public class MetaGlassesManager: NSObject, ObservableObject {
     deinit {
         registrationTask?.cancel()
         deviceStreamTask?.cancel()
+        deviceMonitorTask?.cancel()
     }
 }
 

@@ -64,8 +64,13 @@ struct VoiceSwapApp: App {
     // MARK: - Deep Link Handling
 
     private func handleDeepLink(_ url: URL) {
-        print("[VoiceSwap] Received deep link: \(url)")
-        print("[VoiceSwap] Deep link scheme: \(url.scheme ?? "nil"), host: \(url.host ?? "nil")")
+        print("[VoiceSwap] ═══════════════════════════════════════")
+        print("[VoiceSwap] Received deep link: \(url.absoluteString)")
+        print("[VoiceSwap] Scheme: \(url.scheme ?? "nil")")
+        print("[VoiceSwap] Host: \(url.host ?? "nil")")
+        print("[VoiceSwap] Path: \(url.path)")
+        print("[VoiceSwap] Query: \(url.query ?? "nil")")
+        print("[VoiceSwap] ═══════════════════════════════════════")
 
         // Handle WalletConnect deep links first
         if url.scheme == "wc" || url.absoluteString.contains("wc:") {
@@ -97,8 +102,8 @@ struct VoiceSwapApp: App {
             }
             handleVoiceSwapURL(components)
         }
-        // Handle Universal Links (https://voiceswap.cc/...)
-        else if url.host == "voiceswap.cc" {
+        // Handle Universal Links (https://voiceswap.cc/... or https://www.voiceswap.cc/...)
+        else if url.host == "voiceswap.cc" || url.host == "www.voiceswap.cc" {
             handleUniversalLink(components)
         }
 
@@ -180,6 +185,15 @@ struct VoiceSwapApp: App {
 
     private func handleUniversalLink(_ components: URLComponents) {
         let path = components.path
+        let queryItems = components.queryItems ?? []
+
+        // Check for Meta Wearables callback FIRST (highest priority)
+        // Callback URL: https://voiceswap.cc/?metaWearablesAction=register&authorityKey=...
+        if let metaAction = queryItems.first(where: { $0.name == "metaWearablesAction" })?.value {
+            print("[VoiceSwap] Meta Wearables callback via Universal Link: \(metaAction)")
+            handleMetaWearablesCallback(queryItems: queryItems, action: metaAction)
+            return
+        }
 
         if path.hasPrefix("/pay/") {
             // https://voiceswap.cc/pay/0x1234...?amount=25&name=CoffeeShop

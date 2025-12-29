@@ -86,10 +86,10 @@ public struct SwapInfo: Decodable {
 }
 
 public struct MaxPayable: Decodable {
-    public let tokenSymbol: String
-    public let tokenAddress: String
-    public let maxAmount: String
-    public let estimatedUSDC: String
+    public let tokenSymbol: String?
+    public let tokenAddress: String?
+    public let maxAmount: String?
+    public let estimatedUSDC: String?
 }
 
 public struct ExecutePaymentResponse: Decodable {
@@ -175,6 +175,14 @@ public struct HealthResponse: Decodable {
     public let status: String
     public let timestamp: Int?
     public let openai: String?
+}
+
+// Extended error response for prepare-tx (when insufficient balance)
+public struct InsufficientBalanceError: Decodable {
+    public let success: Bool
+    public let error: String
+    public let currentBalance: String?
+    public let requiredAmount: String?
 }
 
 // MARK: - Transaction Status
@@ -314,7 +322,46 @@ public actor VoiceSwapAPIClient {
             "merchantWallet": merchantWallet,
             "amount": amount
         ]
-        return try await post("/voiceswap/prepare-tx", body: body)
+
+        // Use custom handling for this endpoint to provide better error messages
+        guard let url = URL(string: "\(baseURL)/voiceswap/prepare-tx") else {
+            throw APIError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.invalidResponse
+        }
+
+        print("[VoiceSwapAPI] prepare-tx response: HTTP \(httpResponse.statusCode)")
+
+        // Handle 400 errors specially (insufficient balance, etc.)
+        if httpResponse.statusCode == 400 {
+            if let balanceError = try? JSONDecoder().decode(InsufficientBalanceError.self, from: data) {
+                var errorMsg = balanceError.error
+                if let current = balanceError.currentBalance, let required = balanceError.requiredAmount {
+                    errorMsg = "Insufficient USDC. Balance: \(current), Required: \(required)"
+                }
+                throw APIError.serverError(errorMsg)
+            }
+            throw APIError.httpError(400)
+        }
+
+        if httpResponse.statusCode >= 400 {
+            if let bodyString = String(data: data, encoding: .utf8) {
+                print("[VoiceSwapAPI] Error body: \(bodyString)")
+            }
+            throw APIError.httpError(httpResponse.statusCode)
+        }
+
+        return try JSONDecoder().decode(APIResponse<PrepareTransactionResponse>.self, from: data)
     }
 
     /// Process voice confirmation
@@ -421,7 +468,16 @@ public actor VoiceSwapAPIClient {
                 throw APIError.invalidResponse
             }
 
+            // Log response for debugging
+            let url = request.url?.absoluteString ?? "unknown"
+            print("[VoiceSwapAPI] Response from \(url): HTTP \(httpResponse.statusCode)")
+
             if httpResponse.statusCode >= 400 {
+                // Log error response body
+                if let bodyString = String(data: data, encoding: .utf8) {
+                    print("[VoiceSwapAPI] Error body: \(bodyString.prefix(500))")
+                }
+
                 // Try to decode error response
                 if let errorResponse = try? JSONDecoder().decode(APIResponse<T>.self, from: data) {
                     throw APIError.serverError(errorResponse.error ?? "Unknown error")
@@ -430,11 +486,21 @@ public actor VoiceSwapAPIClient {
             }
 
             let decoder = JSONDecoder()
-            return try decoder.decode(APIResponse<T>.self, from: data)
+            do {
+                return try decoder.decode(APIResponse<T>.self, from: data)
+            } catch let decodingError {
+                // Log decoding error with response body for debugging
+                if let bodyString = String(data: data, encoding: .utf8) {
+                    print("[VoiceSwapAPI] Decoding failed for: \(bodyString.prefix(1000))")
+                }
+                print("[VoiceSwapAPI] Decoding error: \(decodingError)")
+                throw APIError.decodingError(decodingError)
+            }
 
         } catch let error as APIError {
             throw error
         } catch {
+            print("[VoiceSwapAPI] Network error: \(error)")
             throw APIError.networkError(error)
         }
     }

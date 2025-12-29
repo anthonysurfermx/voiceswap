@@ -12,6 +12,7 @@
  */
 
 import { ethers } from 'ethers';
+import { getEthPrice } from './priceOracle.js';
 
 // Network Configuration - support both mainnet and sepolia
 const IS_SEPOLIA = process.env.NETWORK === 'unichain-sepolia';
@@ -176,10 +177,10 @@ export function parseQRCode(qrData: string): PaymentRequest | null {
         const valueWei = params.get('value');
         if (valueWei) {
           try {
-            // ETH has 18 decimals, convert to USD estimate (rough)
+            // ETH has 18 decimals - store as ETH, convert in API layer
             const ethAmount = parseFloat(ethers.utils.formatEther(valueWei));
-            // TODO: Get real ETH price
-            amount = (ethAmount * 3900).toFixed(2); // Rough USD estimate
+            // Mark as ETH amount with prefix for later conversion
+            amount = `ETH:${ethAmount}`;
           } catch {
             // Ignore parsing errors
           }
@@ -264,12 +265,12 @@ export async function getWalletBalances(userAddress: string): Promise<WalletBala
   const wethFormatted = ethers.utils.formatEther(wethBalance);
   const usdcFormatted = ethers.utils.formatUnits(usdcBalance, 6);
 
-  // Calculate total USD value (USDC + ETH)
-  const ETH_PRICE_USD = 3900; // TODO: Get from price oracle
+  // Calculate total USD value (USDC + ETH) using live price
+  const ethPriceUSD = await getEthPrice();
   const ethValue = parseFloat(ethFormatted);
   const wethValue = parseFloat(wethFormatted);
   const usdcValue = parseFloat(usdcFormatted);
-  const totalETHValue = (ethValue + wethValue) * ETH_PRICE_USD;
+  const totalETHValue = (ethValue + wethValue) * ethPriceUSD;
   const totalUSD = (usdcValue + totalETHValue).toFixed(2);
 
   return {
@@ -300,7 +301,7 @@ export async function getWalletBalances(userAddress: string): Promise<WalletBala
     ],
     totalUSDC: usdcFormatted,
     totalUSD: totalUSD,
-    ethPriceUSD: ETH_PRICE_USD,
+    ethPriceUSD: ethPriceUSD,
   };
 }
 
@@ -342,12 +343,12 @@ export function determineSwapToken(balances: WalletBalances, amountUSDC: string)
  * Get the best available balance for payment
  * Used when no specific amount is requested
  */
-export function getMaxPayableAmount(balances: WalletBalances): {
+export async function getMaxPayableAmount(balances: WalletBalances): Promise<{
   tokenSymbol: string;
   tokenAddress: string;
   maxAmount: string;
   estimatedUSDC: string;
-} {
+}> {
   const usdcBalance = parseFloat(balances.tokens.find(t => t.symbol === 'USDC')?.balance || '0');
 
   // If user has USDC, use it directly
@@ -363,8 +364,8 @@ export function getMaxPayableAmount(balances: WalletBalances): {
   const wethBalance = parseFloat(balances.tokens.find(t => t.symbol === 'WETH')?.balance || '0');
   const ethBalance = parseFloat(balances.nativeETH.balance);
 
-  // TODO: Get actual ETH/USDC price from Uniswap
-  const ethPrice = 3900; // Placeholder
+  // Get live ETH price
+  const ethPrice = await getEthPrice();
 
   if (wethBalance > 0) {
     return {
