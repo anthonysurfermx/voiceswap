@@ -106,26 +106,17 @@ public struct ConnectedWallet: Codable {
     }
 }
 
-// MARK: - Unichain Configuration
+// MARK: - Monad Configuration
 
-public struct UnichainConfig {
-    public static let mainnetChainId = 130
-    public static let sepoliaChainId = 1301
+public struct MonadConfig {
+    public static let mainnetChainId = 143
 
     public static let mainnet = ChainInfo(
-        chainId: 130,
-        name: "Unichain",
-        rpcUrl: "https://mainnet.unichain.org",
-        symbol: "ETH",
-        explorer: "https://uniscan.xyz"
-    )
-
-    public static let sepolia = ChainInfo(
-        chainId: 1301,
-        name: "Unichain Sepolia",
-        rpcUrl: "https://sepolia.unichain.org",
-        symbol: "ETH",
-        explorer: "https://sepolia.uniscan.xyz"
+        chainId: 143,
+        name: "Monad",
+        rpcUrl: "https://rpc.monad.xyz",
+        symbol: "MON",
+        explorer: "https://monadscan.com"
     )
 }
 
@@ -161,7 +152,7 @@ public class WalletConnectManager: ObservableObject {
 
     // Current chain config
     public var currentChain: ChainInfo {
-        return UnichainConfig.mainnet
+        return MonadConfig.mainnet
     }
 
     // MARK: - Initialization
@@ -221,7 +212,7 @@ public class WalletConnectManager: ObservableObject {
                 ]
             )
 
-            addUnichainPreset()
+            addMonadPreset()
             isAppKitConfigured = true
             print("[WalletConnect] Configured")
         } catch {
@@ -230,12 +221,12 @@ public class WalletConnectManager: ObservableObject {
         }
     }
 
-    /// Add Unichain as a custom chain preset to AppKit
-    private func addUnichainPreset() {
+    /// Add Monad as a custom chain preset to AppKit
+    private func addMonadPreset() {
         let chain = Chain(
-            chainName: "Unichain",
+            chainName: "Monad",
             chainNamespace: "eip155",
-            chainReference: String(UnichainConfig.mainnetChainId),
+            chainReference: String(MonadConfig.mainnetChainId),
             requiredMethods: [
                 "personal_sign",
                 "eth_signTypedData",
@@ -249,10 +240,10 @@ public class WalletConnectManager: ObservableObject {
                 "chainChanged",
                 "accountsChanged"
             ],
-            token: .init(name: "Ether", symbol: "ETH", decimal: 18),
-            rpcUrl: UnichainConfig.mainnet.rpcUrl,
-            blockExplorerUrl: UnichainConfig.mainnet.explorer,
-            imageId: "unichain"
+            token: .init(name: "Monad", symbol: "MON", decimal: 18),
+            rpcUrl: MonadConfig.mainnet.rpcUrl,
+            blockExplorerUrl: MonadConfig.mainnet.explorer,
+            imageId: "monad"
         )
 
         AppKit.instance.addChainPreset(chain)
@@ -272,7 +263,7 @@ public class WalletConnectManager: ObservableObject {
             "accountsChanged"
         ]
         let chains: [Blockchain] = [
-            Blockchain("eip155:\(UnichainConfig.mainnetChainId)")!
+            Blockchain("eip155:\(MonadConfig.mainnetChainId)")!
         ]
         let namespaces: [String: ProposalNamespace] = [
             "eip155": ProposalNamespace(
@@ -318,14 +309,14 @@ public class WalletConnectManager: ObservableObject {
             print("[WalletConnect] Processing session: \(session.peer.name)")
             print("[WalletConnect]   Available accounts: \(session.accounts.count)")
 
-            // Try to find an account on Unichain first, otherwise use the first account
+            // Try to find an account on Monad first, otherwise use the first account
             var bestAccount = session.accounts.first
             for account in session.accounts {
                 let chainIdStr = account.blockchain.reference
                 print("[WalletConnect]   - Account \(account.address.prefix(10))... on chain \(chainIdStr)")
-                if chainIdStr == "130" || chainIdStr == String(UnichainConfig.mainnetChainId) {
+                if chainIdStr == "143" || chainIdStr == String(MonadConfig.mainnetChainId) {
                     bestAccount = account
-                    print("[WalletConnect]   → Selected (Unichain account)")
+                    print("[WalletConnect]   → Selected (Monad account)")
                     break
                 }
             }
@@ -337,7 +328,7 @@ public class WalletConnectManager: ObservableObject {
 
             let address = account.address
             let chainIdString = account.blockchain.reference
-            let chainId = Int(chainIdString) ?? UnichainConfig.mainnetChainId
+            let chainId = Int(chainIdString) ?? MonadConfig.mainnetChainId
 
             currentSessionTopic = session.topic
 
@@ -347,7 +338,7 @@ public class WalletConnectManager: ObservableObject {
                 walletName: session.peer.name
             )
 
-            // Check if we need to switch to Unichain
+            // Check if we need to switch to Monad
             let wasDisconnected = connectedWallet == nil
 
             connectedWallet = wallet
@@ -360,14 +351,12 @@ public class WalletConnectManager: ObservableObject {
             // Dismiss the AppKit modal after successful connection
             self.dismissPresentedModal()
 
-            // If just connected and not on Unichain, request network switch
-            // Skip for Uniswap Wallet since it already defaults to Unichain
-            let isUnichainWallet = session.peer.name.lowercased().contains("uniswap")
-            if wasDisconnected && chainId != UnichainConfig.mainnetChainId && !isUnichainWallet {
-                print("[WalletConnect] Not on Unichain (chain \(chainId)), requesting switch...")
+            // If just connected and not on Monad, request network switch
+            if wasDisconnected && chainId != MonadConfig.mainnetChainId {
+                print("[WalletConnect] Not on Monad (chain \(chainId)), requesting switch...")
                 Task {
                     try? await Task.sleep(nanoseconds: 500_000_000) // Wait 0.5s for connection to stabilize
-                    await switchToUnichain()
+                    await switchToMonad()
                 }
             }
         } else {
@@ -698,8 +687,8 @@ public class WalletConnectManager: ObservableObject {
 
     // MARK: - Network Switching
 
-    /// Switch the connected wallet to Unichain network
-    public func switchToUnichain() async {
+    /// Switch the connected wallet to Monad network
+    public func switchToMonad() async {
         guard let topic = currentSessionTopic else {
             print("[WalletConnect] Cannot switch network: no active session")
             return
@@ -710,21 +699,21 @@ public class WalletConnectManager: ObservableObject {
             return
         }
 
-        let unichainHex = String(format: "0x%x", UnichainConfig.mainnetChainId) // 0x82
+        let monadHex = String(format: "0x%x", MonadConfig.mainnetChainId) // 0x8f
 
         // Use the current chain the wallet is on for the request
         let currentChainId = wallet.chainId > 0 ? wallet.chainId : 1
-        print("[WalletConnect] Current chain: \(currentChainId), switching to Unichain (130)")
+        print("[WalletConnect] Current chain: \(currentChainId), switching to Monad (143)")
 
         do {
-            // First try to switch to Unichain (if already added)
-            print("[WalletConnect] Requesting wallet_switchEthereumChain to \(unichainHex)...")
+            // First try to switch to Monad (if already added)
+            print("[WalletConnect] Requesting wallet_switchEthereumChain to \(monadHex)...")
 
             struct SwitchChainParams: Codable {
                 let chainId: String
             }
 
-            let switchParams = SwitchChainParams(chainId: unichainHex)
+            let switchParams = SwitchChainParams(chainId: monadHex)
             let params = AnyCodable([switchParams])
 
             // Use the current chain the wallet is on
@@ -745,19 +734,19 @@ public class WalletConnectManager: ObservableObject {
             print("[WalletConnect] Switch chain request sent")
 
         } catch {
-            print("[WalletConnect] Switch failed: \(error), trying to add Unichain...")
+            print("[WalletConnect] Switch failed: \(error), trying to add Monad...")
 
-            // If switch fails (chain not added), try to add Unichain
-            await addUnichainNetwork()
+            // If switch fails (chain not added), try to add Monad
+            await addMonadNetwork()
         }
     }
 
-    /// Add Unichain network to the wallet
-    private func addUnichainNetwork() async {
+    /// Add Monad network to the wallet
+    private func addMonadNetwork() async {
         guard let topic = currentSessionTopic else { return }
         guard let wallet = connectedWallet else { return }
 
-        let unichainHex = String(format: "0x%x", UnichainConfig.mainnetChainId)
+        let monadHex = String(format: "0x%x", MonadConfig.mainnetChainId)
         let currentChainId = wallet.chainId > 0 ? wallet.chainId : 1
 
         do {
@@ -776,15 +765,15 @@ public class WalletConnectManager: ObservableObject {
             }
 
             let addParams = AddChainParams(
-                chainId: unichainHex,
-                chainName: "Unichain",
+                chainId: monadHex,
+                chainName: "Monad",
                 nativeCurrency: AddChainParams.NativeCurrency(
-                    name: "Ethereum",
-                    symbol: "ETH",
+                    name: "Monad",
+                    symbol: "MON",
                     decimals: 18
                 ),
-                rpcUrls: ["https://mainnet.unichain.org"],
-                blockExplorerUrls: ["https://uniscan.xyz"]
+                rpcUrls: ["https://rpc.monad.xyz"],
+                blockExplorerUrls: ["https://monadscan.com"]
             )
 
             let params = AnyCodable([addParams])
@@ -796,7 +785,7 @@ public class WalletConnectManager: ObservableObject {
                 chainId: blockchain
             )
 
-            print("[WalletConnect] Requesting wallet_addEthereumChain for Unichain...")
+            print("[WalletConnect] Requesting wallet_addEthereumChain for Monad...")
             try await AppKit.instance.request(params: request)
 
             print("[WalletConnect] Launching wallet for approval...")
@@ -805,7 +794,7 @@ public class WalletConnectManager: ObservableObject {
             print("[WalletConnect] Add chain request sent")
 
         } catch {
-            print("[WalletConnect] Failed to add Unichain: \(error)")
+            print("[WalletConnect] Failed to add Monad: \(error)")
         }
     }
 
@@ -909,7 +898,7 @@ public struct WalletConnectView: View {
                                 .fontWeight(.bold)
                                 .foregroundColor(.white)
 
-                            Text("Connect your wallet to make voice payments on Unichain")
+                            Text("Connect your wallet to make voice payments on Monad")
                                 .font(.subheadline)
                                 .foregroundColor(.gray)
                                 .multilineTextAlignment(.center)
@@ -1000,7 +989,7 @@ public struct WalletConnectView: View {
                                 Circle()
                                     .fill(Color.pink)
                                     .frame(width: 8, height: 8)
-                                Text("Unichain Mainnet")
+                                Text("Monad Mainnet")
                                     .font(.caption)
                                     .foregroundColor(.gray)
                             }

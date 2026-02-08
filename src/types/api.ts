@@ -42,8 +42,7 @@ export interface QuoteResponse {
   route: string[];
   estimatedGas: string;
   timestamp: number;
-  routingType?: 'v4' | 'uniswap_x';
-  uniswapXEncodedOrder?: string; // Encoded order for signing if routingType is uniswap_x
+  routingType?: 'v3';
 }
 
 export interface RouteResponse extends QuoteResponse {

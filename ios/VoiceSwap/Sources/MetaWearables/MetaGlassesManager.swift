@@ -9,7 +9,6 @@
 import Foundation
 import Combine
 import AVFoundation
-import Speech
 import UIKit
 import CoreImage
 import SwiftUI
@@ -92,7 +91,7 @@ public struct QRScanResult {
         }
 
         // 3. Handle EIP-681 ethereum: URLs (standard for crypto payments)
-        //    Format: ethereum:0x1234...?value=1000000&chainId=130
+        //    Format: ethereum:0x1234...?value=1000000&chainId=143
         if trimmed.lowercased().hasPrefix("ethereum:") {
             return parseEIP681URL(trimmed)
         }
@@ -164,7 +163,7 @@ public struct QRScanResult {
 
         // Extract address (and optional chainId after @)
         var address: String
-        var chainId: Int? = 130  // Default to Unichain
+        var chainId: Int? = 143  // Default to Monad
 
         if let atIndex = remaining.firstIndex(of: "@") {
             address = String(remaining[..<atIndex])
@@ -334,13 +333,6 @@ public class MetaGlassesManager: NSObject, ObservableObject {
     private var errorListenerToken: AnyListenerToken?
     private var compatibilityListenerToken: AnyListenerToken?
 
-    // MARK: - Speech Recognition Properties
-    private var speechRecognizer: SFSpeechRecognizer?
-    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
-    private var recognitionTask: SFSpeechRecognitionTask?
-    private var audioEngine: AVAudioEngine!
-    private let synthesizer = AVSpeechSynthesizer()
-
     // MARK: - QR Detection (Vision Framework)
     private var qrDetector: CIDetector?  // Fallback
     private var lastQRDetectionTime: Date = .distantPast
@@ -355,11 +347,8 @@ public class MetaGlassesManager: NSObject, ObservableObject {
     private let apiBaseURL: String
     private var userWalletAddress: String?
 
-    // Wake word detection
-    private let wakeWords = ["hey voiceswap", "oye voiceswap", "voice swap", "pagar", "pay"]
-    private var isWakeWordDetected = false
-    private var isDirectMode = false
-    private var pendingTranscript = ""
+    // MARK: - Video Frame Callback (for Gemini Live streaming)
+    public var onVideoFrame: ((UIImage) -> Void)?
 
     // MARK: - Initialization
 
@@ -370,7 +359,6 @@ public class MetaGlassesManager: NSObject, ObservableObject {
         #else
         self.apiBaseURL = "https://voiceswap.vercel.app"
         #endif
-        self.audioEngine = AVAudioEngine()
 
         super.init()
 
@@ -390,29 +378,61 @@ public class MetaGlassesManager: NSObject, ObservableObject {
             // Initialize Meta Wearables SDK
             self.initializeWearablesSDK()
 
-            // DISABLED FOR DEBUGGING - Testing if audio interferes with Meta callback
-            // Setup speech recognition
-            // self.setupSpeechRecognition()
-
-            // Restore registration state if previously registered
+            // Restore persisted flag, but do NOT trust it as source of truth.
+            // The SDK stream is authoritative and stale local flags can block re-registration.
             if UserDefaults.standard.bool(forKey: "metaGlassesRegistered") {
-                self.connectionState = .registered
+                self.connectionState = .searching
                 self.setupDeviceStream()
+                // NOTE: Don't call requestPermission(.camera) at startup - it fails without a connected device
+                // and tries to open Safari. Camera permission will be requested when devices are found.
             }
 
-            print("[MetaGlasses] Initialized (AUDIO DISABLED FOR DEBUGGING)")
+            print("[MetaGlasses] Initialized (audio managed by Gemini AudioManager)")
         }
     }
 
     // MARK: - Meta Wearables SDK Setup
 
     private func initializeWearablesSDK() {
+        // Log what Info.plist MWDAT config the SDK will read
+        if let mwdatConfig = Bundle.main.object(forInfoDictionaryKey: "MWDAT") as? [String: Any] {
+            let teamID = mwdatConfig["TeamID"] as? String ?? "MISSING"
+            print("[MetaGlasses] Info.plist MWDAT config:")
+            print("[MetaGlasses]   MetaAppID: \(mwdatConfig["MetaAppID"] ?? "MISSING")")
+            print("[MetaGlasses]   AppLinkURLScheme: \(mwdatConfig["AppLinkURLScheme"] ?? "MISSING")")
+            print("[MetaGlasses]   ClientToken: \(String(describing: mwdatConfig["ClientToken"]).prefix(30))...")
+            print("[MetaGlasses]   TeamID: \(teamID)")
+            // Verify TeamID is resolved (not a build variable)
+            if teamID.contains("$") || teamID.contains("DEVELOPMENT_TEAM") {
+                print("[MetaGlasses] ⚠️ CRITICAL: TeamID contains unresolved build variable!")
+                print("[MetaGlasses]   App Attest will fail without a valid Team ID")
+            }
+        } else {
+            print("[MetaGlasses] ⚠️ WARNING: No MWDAT key found in Info.plist!")
+        }
+
         do {
             try Wearables.configure()
             self.wearables = Wearables.shared
             print("[MetaGlasses] Wearables SDK configured successfully")
 
             setupRegistrationListener()
+        } catch let wearablesError as MWDATCore.WearablesError {
+            switch wearablesError {
+            case .configurationError:
+                print("[MetaGlasses] WearablesError.configurationError - Info.plist MWDAT config is invalid")
+                connectionState = .error("SDK config error - check Info.plist MWDAT section")
+            case .alreadyConfigured:
+                print("[MetaGlasses] WearablesError.alreadyConfigured - using existing instance")
+                self.wearables = Wearables.shared
+                setupRegistrationListener()
+            case .internalError:
+                print("[MetaGlasses] WearablesError.internalError")
+                connectionState = .error("Meta SDK internal error")
+            @unknown default:
+                print("[MetaGlasses] WearablesError unknown: \(wearablesError.rawValue)")
+                connectionState = .error("Meta SDK error: \(wearablesError.description)")
+            }
         } catch {
             print("[MetaGlasses] Failed to configure Wearables SDK: \(error)")
             connectionState = .error("Failed to initialize Meta SDK: \(error.localizedDescription)")
@@ -431,6 +451,22 @@ public class MetaGlassesManager: NSObject, ObservableObject {
                     print("[MetaGlasses] Registration state changed: \(registrationState)")
                     await MainActor.run {
                         switch registrationState {
+                            case .unavailable:
+                                // SDK not ready or no Meta AI app
+                                print("[MetaGlasses] → State: unavailable (current connectionState: \(self.connectionState))")
+                                // Don't change state - may be transient
+                            case .available:
+                                // Ready to register (not yet registered)
+                                print("[MetaGlasses] → State: available (current connectionState: \(self.connectionState))")
+                                // Reconcile stale local registration.
+                                // If SDK says available, local "registered" is no longer valid.
+                                if self.connectionState == .registered || self.connectionState == .searching {
+                                    print("[MetaGlasses] Clearing stale local registration state")
+                                    UserDefaults.standard.removeObject(forKey: "metaGlassesRegistered")
+                                    self.connectionState = .disconnected
+                                } else if self.connectionState != .connected && self.connectionState != .streaming && self.connectionState != .connecting {
+                                    self.connectionState = .disconnected
+                                }
                             case .registering:
                                 print("[MetaGlasses] → State: registering")
                                 self.connectionState = .connecting
@@ -444,17 +480,7 @@ public class MetaGlassesManager: NSObject, ObservableObject {
                                     self.setupDeviceStream()
                                 }
                             @unknown default:
-                                // Unknown states - log but don't change connection state aggressively
-                                // This prevents losing registered state on transient/unknown states
                                 print("[MetaGlasses] → State: unknown (rawValue: \(registrationState)) - ignoring")
-                                // Only disconnect if we're not already registered or connected
-                                if case .disconnected = self.connectionState {
-                                    // Already disconnected, nothing to do
-                                } else if case .connecting = self.connectionState {
-                                    // Still connecting, reset to disconnected
-                                    self.connectionState = .disconnected
-                                }
-                                // If registered/connected, keep that state - don't downgrade on unknown
                         }
                     }
                 }
@@ -508,8 +534,20 @@ public class MetaGlassesManager: NSObject, ObservableObject {
                         print("[MetaGlasses] Device connected via Bluetooth: \(devices.count) device(s)")
                         for (index, device) in devices.enumerated() {
                             print("[MetaGlasses]   Device \(index + 1): \(device)")
-                            // Check device compatibility (v0.2.0+ API)
                             self.checkDeviceCompatibility(device)
+                        }
+
+                        // Request camera permission now that we have a device
+                        // Per Meta docs Step 5: required for camera access
+                        if let wearables = self.wearables {
+                            Task {
+                                do {
+                                    let status = try await wearables.requestPermission(.camera)
+                                    print("[MetaGlasses] Camera permission result: \(status)")
+                                } catch {
+                                    print("[MetaGlasses] Camera permission error: \(error)")
+                                }
+                            }
                         }
                     }
                 }
@@ -549,9 +587,19 @@ public class MetaGlassesManager: NSObject, ObservableObject {
         }
     }
 
+    /// Pass URL to Meta SDK for processing (v0.4.0+)
+    /// Returns true if the SDK handled the URL (e.g., registration callback)
+    public func handleURL(_ url: URL) async throws -> Bool {
+        guard let wearables = wearables else { return false }
+        print("[MetaGlasses] Passing URL to SDK handleUrl: \(url.absoluteString.prefix(80))...")
+        let handled = try await wearables.handleUrl(url)
+        print("[MetaGlasses] SDK handleUrl result: \(handled)")
+        return handled
+    }
+
     /// Handle registration callback from Meta View app
     public func handleRegistrationCallback(authorityKey: String?, constellationGroupId: String?) async {
-        guard wearables != nil else {
+        guard let wearables = wearables else {
             connectionState = .error("SDK not initialized")
             return
         }
@@ -565,6 +613,9 @@ public class MetaGlassesManager: NSObject, ObservableObject {
 
             // Set to registered
             connectionState = .registered
+
+            // NOTE: Camera permission (Step 5) will be requested when devicesStream() finds a device.
+            // Calling requestPermission(.camera) without a connected device causes errors and opens Safari.
 
             // Setup device stream to listen for connected devices
             setupDeviceStream()
@@ -590,10 +641,82 @@ public class MetaGlassesManager: NSObject, ObservableObject {
                 } else {
                     // List available Bluetooth devices for debugging
                     listAvailableBluetoothDevices()
+
+                    // Known issue: App may remain registered in Meta AI after reinstall
+                    // causing devicesStream to return empty. User needs to disconnect from Meta AI.
+                    print("[MetaGlasses] ⚠️ KNOWN ISSUE: If devicesStream keeps returning empty:")
+                    print("[MetaGlasses]   1. Open Meta AI app")
+                    print("[MetaGlasses]   2. Tap profile icon (top right)")
+                    print("[MetaGlasses]   3. Go to App Connections")
+                    print("[MetaGlasses]   4. Find VoiceSwap > Disconnect")
+                    print("[MetaGlasses]   5. Re-register in VoiceSwap")
                 }
             }
         } else {
             connectionState = .error("Registration failed - please try again")
+        }
+    }
+
+    /// Track retry attempts to prevent infinite loops
+    private var retryAttempts = 0
+    private static let maxRetryAttempts = 1
+
+    /// Retry registration after returning from Meta AI app.
+    /// Unlike connectToGlasses(), this bypasses the .connecting guard because
+    /// we EXPECT to be in .connecting state when the Meta AI callback fails to arrive.
+    /// If the registration completed on Meta AI's side, startRegistration() will throw
+    /// .alreadyRegistered, which we handle by setting state to .registered.
+    public func retryRegistrationAfterResume() async {
+        guard let wearables = wearables else { return }
+
+        // Only retry if we're stuck in .connecting (sent to Meta AI but callback never came)
+        guard connectionState == .connecting else {
+            print("[MetaGlasses] retryRegistration: not in .connecting state (\(connectionState)), skipping")
+            return
+        }
+
+        // Prevent infinite retry loop - only try once
+        guard retryAttempts < Self.maxRetryAttempts else {
+            print("[MetaGlasses] RETRY: Max attempts (\(Self.maxRetryAttempts)) reached")
+            print("[MetaGlasses] RETRY: Registration not confirmed by SDK despite Meta AI showing it")
+            print("[MetaGlasses] RETRY: Setting state back to disconnected - user can try again")
+            retryAttempts = 0
+            connectionState = .disconnected
+            return
+        }
+        retryAttempts += 1
+
+        print("[MetaGlasses] ═══════════════════════════════════════")
+        print("[MetaGlasses] RETRY (\(retryAttempts)/\(Self.maxRetryAttempts)): Checking if Meta AI completed registration...")
+        print("[MetaGlasses] ═══════════════════════════════════════")
+
+        // First, check current registration state from the stream
+        // The SDK may already know about the registration
+        print("[MetaGlasses] RETRY: Current connectionState: \(connectionState)")
+
+        do {
+            try await wearables.startRegistration()
+            // startRegistration() succeeded = SDK re-opened Meta AI (registration wasn't completed)
+            // DON'T let this loop - set state to show user they need to complete in Meta AI
+            print("[MetaGlasses] RETRY: startRegistration() succeeded - SDK re-opened Meta AI")
+            print("[MetaGlasses] RETRY: User needs to complete authorization in Meta AI")
+            // Keep .connecting state but don't retry again (retryAttempts prevents loop)
+        } catch let regError as MWDATCore.RegistrationError {
+            switch regError {
+            case .alreadyRegistered:
+                // SUCCESS - Registration DID complete on Meta AI side
+                print("[MetaGlasses] RETRY: ✅ alreadyRegistered - callback was missed but registration succeeded!")
+                connectionState = .registered
+                UserDefaults.standard.set(true, forKey: "metaGlassesRegistered")
+                retryAttempts = 0
+                if deviceStreamTask == nil {
+                    setupDeviceStream()
+                }
+            default:
+                print("[MetaGlasses] RETRY: RegistrationError: \(regError) (rawValue: \(regError.rawValue))")
+            }
+        } catch {
+            print("[MetaGlasses] RETRY: Unexpected error: \(error)")
         }
     }
 
@@ -603,21 +726,53 @@ public class MetaGlassesManager: NSObject, ObservableObject {
             throw NSError(domain: "MetaGlasses", code: 1, userInfo: [NSLocalizedDescriptionKey: "Wearables SDK not initialized"])
         }
 
-        // Only skip registration if actually streaming or have real device connection
-        // Don't skip if just "registered" - we need to start registration flow to open Meta View
-        if connectionState == .streaming || (!devices.isEmpty && connectionState == .connected) {
-            print("[MetaGlasses] Already streaming/connected with devices, skipping registration")
+        // Skip if already registered, in progress, streaming, or connected
+        if connectionState == .connecting || connectionState == .registered || connectionState == .streaming || connectionState == .connected {
+            print("[MetaGlasses] Already \(connectionState), skipping registration")
             return
         }
 
         connectionState = .connecting
+        retryAttempts = 0  // Reset retry counter for fresh registration
 
         do {
-            try wearables.startRegistration()
+            try await wearables.startRegistration()
             print("[MetaGlasses] Started registration - redirecting to Meta AI app")
             print("[MetaGlasses] Expected callback: voiceswap://?metaWearablesAction=register&...")
             print("[MetaGlasses] Verify Meta Developer Portal has URL scheme: voiceswap://")
+        } catch let regError as MWDATCore.RegistrationError {
+            // Decode the specific RegistrationError case
+            switch regError {
+            case .alreadyRegistered:
+                print("[MetaGlasses] RegistrationError: alreadyRegistered (rawValue: \(regError.rawValue))")
+                print("[MetaGlasses] Already registered - setting state to .registered")
+                connectionState = .registered
+                UserDefaults.standard.set(true, forKey: "metaGlassesRegistered")
+                if deviceStreamTask == nil {
+                    setupDeviceStream()
+                }
+                return // Not an error - we're already registered
+            case .configurationInvalid:
+                print("[MetaGlasses] RegistrationError: configurationInvalid (rawValue: \(regError.rawValue))")
+                print("[MetaGlasses] Check Info.plist: MWDAT > MetaAppID, AppLinkURLScheme")
+                connectionState = .error("Invalid config - check MetaAppID in Info.plist")
+            case .metaAINotInstalled:
+                print("[MetaGlasses] RegistrationError: metaAINotInstalled (rawValue: \(regError.rawValue))")
+                print("[MetaGlasses] User needs to install Meta AI (formerly Meta View) app")
+                connectionState = .error("Install Meta AI app from App Store")
+            case .networkUnavailable:
+                print("[MetaGlasses] RegistrationError: networkUnavailable (rawValue: \(regError.rawValue))")
+                connectionState = .error("Network unavailable - check internet connection")
+            case .unknown:
+                print("[MetaGlasses] RegistrationError: unknown (rawValue: \(regError.rawValue))")
+                connectionState = .error("Unknown registration error")
+            @unknown default:
+                print("[MetaGlasses] RegistrationError: unhandled case (rawValue: \(regError.rawValue))")
+                connectionState = .error("Registration error: \(regError.description)")
+            }
+            throw regError
         } catch {
+            print("[MetaGlasses] Unexpected registration error type: \(type(of: error)) - \(error)")
             connectionState = .error("Failed to start registration: \(error.localizedDescription)")
             throw error
         }
@@ -629,10 +784,12 @@ public class MetaGlassesManager: NSObject, ObservableObject {
         cleanupStreamSession()
 
         if let wearables = wearables {
-            do {
-                try wearables.startUnregistration()
-            } catch {
-                print("[MetaGlasses] Failed to unregister: \(error)")
+            Task {
+                do {
+                    try await wearables.startUnregistration()
+                } catch {
+                    print("[MetaGlasses] Failed to unregister: \(error)")
+                }
             }
         }
 
@@ -641,7 +798,45 @@ public class MetaGlassesManager: NSObject, ObservableObject {
 
         connectionState = .disconnected
         devices = []
+        isGlassesHFPConnected = false
         delegate?.glassesDidDisconnect()
+    }
+
+    /// Full reset - clears all local state. Use when Meta AI shows stale registration.
+    /// After calling this, user should also disconnect from Meta AI app > App Connections.
+    public func fullReset() {
+        print("[MetaGlasses] Performing full reset...")
+
+        stopListening()
+        cleanupStreamSession()
+
+        // Try to unregister with SDK
+        if let wearables = wearables {
+            Task {
+                do {
+                    try await wearables.startUnregistration()
+                } catch {
+                    print("[MetaGlasses] Unregistration error (may be expected): \(error)")
+                }
+            }
+        }
+
+        // Clear ALL local state
+        UserDefaults.standard.removeObject(forKey: "metaGlassesRegistered")
+
+        // Reset all properties
+        connectionState = .disconnected
+        devices = []
+        isGlassesHFPConnected = false
+        isStreamingCamera = false
+        lastDetectedQR = nil
+        lastQRDetectionTime = .distantPast
+
+        delegate?.glassesDidDisconnect()
+
+        print("[MetaGlasses] ✓ Full reset complete")
+        print("[MetaGlasses] If issues persist, also disconnect from Meta AI app:")
+        print("[MetaGlasses]   Meta AI > Profile > App Connections > VoiceSwap > Disconnect")
     }
 
     // MARK: - QR Scanning
@@ -957,6 +1152,7 @@ public class MetaGlassesManager: NSObject, ObservableObject {
                     self.currentVideoFrame = image
                     self.delegate?.glassesDidUpdateVideoFrame(image)
                     self.scanForQRCode(in: image)
+                    self.onVideoFrame?(image)  // Forward to Gemini Live session
                 }
             }
         }
@@ -1280,56 +1476,19 @@ public class MetaGlassesManager: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - Voice Commands
+    // MARK: - Voice Commands (managed by Gemini AudioManager)
 
     public func startListening() {
-        if connectionState == .disconnected {
-            connectionState = .connected
-            batteryLevel = 100
-            isDirectMode = true
-        }
-
-        do {
-            try startSpeechRecognition()
-            isListening = true
-            isWakeWordDetected = isDirectMode
-        } catch {
-            delegate?.glassesDidEncounterError(error)
-        }
+        isListening = true
     }
 
     public func stopListening() {
-        let transcriptToProcess = pendingTranscript
-        let shouldProcess = !transcriptToProcess.isEmpty && isWakeWordDetected
-
-        cleanupAudioEngine()
-        recognitionRequest?.endAudio()
-        recognitionTask?.cancel()
-        recognitionRequest = nil
-        recognitionTask = nil
         isListening = false
-
-        if shouldProcess {
-            pendingTranscript = ""
-            let result = VoiceCommandResult(
-                transcript: transcriptToProcess,
-                confidence: 0.9,
-                language: detectLanguage(transcriptToProcess),
-                timestamp: Date()
-            )
-            delegate?.glassesDidReceiveVoiceCommand(result)
-        }
     }
 
+    /// Speak is now a no-op — all audio output goes through Gemini Live API
     public func speak(_ text: String, language: String = "en-US") {
-        // DISABLED FOR DEBUGGING - Testing if audio interferes with Meta callback
-        print("[MetaGlasses] SPEAK (disabled): \(text)")
-        // let utterance = AVSpeechUtterance(string: text)
-        // utterance.voice = AVSpeechSynthesisVoice(language: language)
-        // utterance.rate = AVSpeechUtteranceDefaultSpeechRate
-        // utterance.pitchMultiplier = 1.0
-        // utterance.volume = 1.0
-        // synthesizer.speak(utterance)
+        print("[MetaGlasses] [Gemini handles audio] \(text)")
     }
 
     public func triggerHaptic(_ pattern: HapticPattern) {
@@ -1344,140 +1503,9 @@ public class MetaGlassesManager: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - Speech Recognition Private Methods
-
-    private func setupSpeechRecognition() {
-        SFSpeechRecognizer.requestAuthorization { [weak self] status in
-            DispatchQueue.main.async {
-                if status == .authorized {
-                    self?.speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
-                }
-            }
-        }
-    }
-
-    private func startSpeechRecognition() throws {
-        // DISABLED FOR DEBUGGING - Testing if audio interferes with Meta callback
-        print("[MetaGlasses] startSpeechRecognition() DISABLED FOR DEBUGGING")
-        return
-        /*
-        recognitionTask?.cancel()
-        recognitionTask = nil
-
-        if audioEngine != nil {
-            if audioEngine.isRunning { audioEngine.stop() }
-            audioEngine.inputNode.removeTap(onBus: 0)
-        }
-
-        let audioSession = AVAudioSession.sharedInstance()
-        try audioSession.setCategory(.playAndRecord, mode: .measurement, options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers])
-        try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
-
-        audioEngine = AVAudioEngine()
-        recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
-
-        guard let recognitionRequest = recognitionRequest else {
-            throw NSError(domain: "MetaGlasses", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unable to create recognition request"])
-        }
-
-        recognitionRequest.shouldReportPartialResults = true
-
-        let inputNode = audioEngine.inputNode
-        let recordingFormat = inputNode.outputFormat(forBus: 0)
-
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, _ in
-            self?.recognitionRequest?.append(buffer)
-        }
-
-        recognitionTask = speechRecognizer?.recognitionTask(with: recognitionRequest) { [weak self] result, error in
-            guard let self = self else { return }
-
-            if let result = result {
-                let transcript = result.bestTranscription.formattedString
-                self.lastTranscript = transcript
-                if !transcript.isEmpty { self.pendingTranscript = transcript }
-
-                Task { @MainActor in
-                    await self.processTranscript(transcript, isFinal: result.isFinal)
-                }
-            }
-
-            if error != nil || result?.isFinal == true {
-                self.cleanupAudioEngine()
-                self.recognitionRequest = nil
-                self.recognitionTask = nil
-
-                if self.connectionState == .connected && self.isListening {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        if !self.synthesizer.isSpeaking {
-                            try? self.startSpeechRecognition()
-                        }
-                    }
-                }
-            }
-        }
-
-        audioEngine.prepare()
-        try audioEngine.start()
-        */
-    }
-
-    private func cleanupAudioEngine() {
-        guard audioEngine != nil else { return }
-        if audioEngine.isRunning { audioEngine.stop() }
-        audioEngine.inputNode.removeTap(onBus: 0)
-    }
-
-    private func processTranscript(_ transcript: String, isFinal: Bool) async {
-        guard !transcript.isEmpty else { return }
-
-        let lowercased = transcript.lowercased()
-
-        if !isWakeWordDetected {
-            for wakeWord in wakeWords {
-                if lowercased.contains(wakeWord) {
-                    isWakeWordDetected = true
-                    speak("I'm listening")
-                    triggerHaptic(.short)
-                    return
-                }
-            }
-            return
-        }
-
-        if isFinal && isWakeWordDetected {
-            if !isDirectMode { isWakeWordDetected = false }
-            pendingTranscript = ""
-
-            let result = VoiceCommandResult(
-                transcript: transcript,
-                confidence: 0.9,
-                language: detectLanguage(transcript),
-                timestamp: Date()
-            )
-            delegate?.glassesDidReceiveVoiceCommand(result)
-        }
-    }
-
-    private func detectLanguage(_ text: String) -> String {
-        let spanishIndicators = ["pagar", "enviar", "cuánto", "cuanto", "confirmar", "cancelar", "sí", "dale"]
-        for indicator in spanishIndicators {
-            if text.lowercased().contains(indicator) { return "es" }
-        }
-        return "en"
-    }
-
     deinit {
         registrationTask?.cancel()
         deviceStreamTask?.cancel()
         deviceMonitorTask?.cancel()
-    }
-}
-
-// MARK: - AVSpeechSynthesizerDelegate
-
-extension MetaGlassesManager: AVSpeechSynthesizerDelegate {
-    nonisolated public func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        print("[MetaGlasses] Finished speaking")
     }
 }

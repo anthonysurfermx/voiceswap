@@ -38,18 +38,44 @@ public struct AIProcessResponse: Decodable {
 
 public struct ContextInfo: Decodable {
     public let balance: String?
-    public let ethBalance: String?
+    public let monBalance: String?
     public let merchantName: String?
 }
 
 public struct WalletBalances: Decodable {
     public let address: String
     public let chainId: Int
-    public let nativeETH: TokenBalance
+    public let nativeMON: TokenBalance
     public let tokens: [TokenBalance]
     public let totalUSDC: String
     public let totalUSD: String
-    public let ethPriceUSD: Double
+    public let monPriceUSD: Double
+
+    enum CodingKeys: String, CodingKey {
+        case address, chainId, nativeMON, tokens, totalUSDC, totalUSD, monPriceUSD
+        // Fallbacks for old Unichain backend
+        case nativeETH, ethPriceUSD
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        address = try c.decode(String.self, forKey: .address)
+        chainId = try c.decode(Int.self, forKey: .chainId)
+        tokens = try c.decode([TokenBalance].self, forKey: .tokens)
+        totalUSDC = try c.decode(String.self, forKey: .totalUSDC)
+        totalUSD = try c.decode(String.self, forKey: .totalUSD)
+        // Accept nativeMON or fall back to nativeETH (old backend)
+        if let mon = try? c.decode(TokenBalance.self, forKey: .nativeMON) {
+            nativeMON = mon
+        } else {
+            nativeMON = try c.decode(TokenBalance.self, forKey: .nativeETH)
+        }
+        if let price = try? c.decode(Double.self, forKey: .monPriceUSD) {
+            monPriceUSD = price
+        } else {
+            monPriceUSD = try c.decodeIfPresent(Double.self, forKey: .ethPriceUSD) ?? 0
+        }
+    }
 }
 
 public struct TokenBalance: Decodable {
@@ -81,8 +107,8 @@ public struct SwapInfo: Decodable {
     public let swapFrom: String?
     public let swapFromSymbol: String?
     public let hasEnoughUSDC: Bool
-    public let hasEnoughETH: Bool
-    public let hasEnoughWETH: Bool
+    public let hasEnoughMON: Bool
+    public let hasEnoughWMON: Bool
 }
 
 public struct MaxPayable: Decodable {

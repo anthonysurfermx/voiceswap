@@ -15,6 +15,11 @@
 		1A00000B0000000000000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1A00000C0000000000000001 /* Assets.xcassets */; };
 		1A00000D0000000000000001 /* WalletConnectManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000F0000000000000001 /* WalletConnectManager.swift */; };
 		C0D0153A2F0000000000001 /* VoiceSwapCryptoProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0153B2F0000000000001 /* VoiceSwapCryptoProvider.swift */; };
+		1A0000110000000000000001 /* GeminiConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000370000000000000001 /* GeminiConfig.swift */; };
+		1A0000120000000000000001 /* GeminiLiveService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000380000000000000001 /* GeminiLiveService.swift */; };
+		1A0000130000000000000001 /* AudioManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000390000000000000001 /* AudioManager.swift */; };
+		1A0000140000000000000001 /* GeminiSessionViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00003A0000000000000001 /* GeminiSessionViewModel.swift */; };
+		1A0000150000000000000001 /* VoiceSwapSystemPrompt.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00003B0000000000000001 /* VoiceSwapSystemPrompt.swift */; };
 		A515AF1A2EED338A00AC5AD7 /* ReownAppKit in Frameworks */ = {isa = PBXBuildFile; productRef = A515AF192EED338A00AC5AD7 /* ReownAppKit */; };
 		A515AF1C2EED338A00AC5AD7 /* ReownAppKitUI in Frameworks */ = {isa = PBXBuildFile; productRef = A515AF1B2EED338A00AC5AD7 /* ReownAppKitUI */; };
 		A515AF1E2EED338A00AC5AD7 /* ReownRouter in Frameworks */ = {isa = PBXBuildFile; productRef = A515AF1D2EED338A00AC5AD7 /* ReownRouter */; };
@@ -37,6 +42,11 @@
 		1A0000100000000000000001 /* VoiceSwap.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VoiceSwap.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A515AF232EEDAAEA00AC5AD7 /* VoiceSwap.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = VoiceSwap.entitlements; sourceTree = "<group>"; };
 		C0D0153B2F0000000000001 /* VoiceSwapCryptoProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSwapCryptoProvider.swift; sourceTree = "<group>"; };
+		1A0000370000000000000001 /* GeminiConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiConfig.swift; sourceTree = "<group>"; };
+		1A0000380000000000000001 /* GeminiLiveService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiLiveService.swift; sourceTree = "<group>"; };
+		1A0000390000000000000001 /* AudioManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioManager.swift; sourceTree = "<group>"; };
+		1A00003A0000000000000001 /* GeminiSessionViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiSessionViewModel.swift; sourceTree = "<group>"; };
+		1A00003B0000000000000001 /* VoiceSwapSystemPrompt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSwapSystemPrompt.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -88,11 +98,24 @@
 			isa = PBXGroup;
 			children = (
 				1A0000020000000000000001 /* VoiceSwapApp.swift */,
+				1A00003C0000000000000001 /* Gemini */,
 				1A0000340000000000000001 /* Views */,
 				1A0000350000000000000001 /* MetaWearables */,
 				1A0000360000000000000001 /* Wallet */,
 			);
 			path = Sources;
+			sourceTree = "<group>";
+		};
+		1A00003C0000000000000001 /* Gemini */ = {
+			isa = PBXGroup;
+			children = (
+				1A0000370000000000000001 /* GeminiConfig.swift */,
+				1A0000380000000000000001 /* GeminiLiveService.swift */,
+				1A0000390000000000000001 /* AudioManager.swift */,
+				1A00003A0000000000000001 /* GeminiSessionViewModel.swift */,
+				1A00003B0000000000000001 /* VoiceSwapSystemPrompt.swift */,
+			);
+			path = Gemini;
 			sourceTree = "<group>";
 		};
 		1A0000340000000000000001 /* Views */ = {
@@ -213,6 +236,11 @@
 				1A0000090000000000000001 /* VoiceSwapViewModel.swift in Sources */,
 				1A00000D0000000000000001 /* WalletConnectManager.swift in Sources */,
 				C0D0153A2F0000000000001 /* VoiceSwapCryptoProvider.swift in Sources */,
+				1A0000110000000000000001 /* GeminiConfig.swift in Sources */,
+				1A0000120000000000000001 /* GeminiLiveService.swift in Sources */,
+				1A0000130000000000000001 /* AudioManager.swift in Sources */,
+				1A0000140000000000000001 /* GeminiSessionViewModel.swift in Sources */,
+				1A0000150000000000000001 /* VoiceSwapSystemPrompt.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -459,8 +487,8 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/facebook/meta-wearables-dat-ios";
 			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 0.2.1;
+				kind = exactVersion;
+				version = 0.4.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */

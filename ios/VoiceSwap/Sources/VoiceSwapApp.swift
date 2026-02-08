@@ -3,12 +3,13 @@
  * VoiceSwap - Main App Entry Point
  *
  * Voice-activated crypto payments for Meta Ray-Ban smart glasses.
- * Built on Unichain with USDC payments.
+ * Built on Monad with USDC payments.
  */
 
 import SwiftUI
 import UserNotifications
 import ReownAppKit
+import AVFoundation
 
 @main
 struct VoiceSwapApp: App {
@@ -31,6 +32,20 @@ struct VoiceSwapApp: App {
                 // Check for wallet sessions only once when app becomes active
                 // The checkForNewSessions function handles retries internally
                 WalletConnectManager.shared.checkForNewSessions()
+
+                // WORKAROUND: Meta AI callback deep link never arrives after registration.
+                // When returning to app after Meta AI completes registration,
+                // retry startRegistration() - if it throws .alreadyRegistered,
+                // our catch handler sets state to .registered and starts device stream.
+                let glassesManager = MetaGlassesManager.shared
+                if glassesManager.connectionState == .connecting {
+                    print("[VoiceSwap] App resumed while connecting - retrying registration to detect completion...")
+                    Task { @MainActor in
+                        // Small delay to let the app fully activate
+                        try? await Task.sleep(nanoseconds: 500_000_000)
+                        await glassesManager.retryRegistrationAfterResume()
+                    }
+                }
             }
         }
     }
@@ -44,12 +59,14 @@ struct VoiceSwapApp: App {
 
         // Configure app
         print("[VoiceSwap] App started")
-        print("[VoiceSwap] Network: Unichain Mainnet (Chain ID: 130)")
+        print("[VoiceSwap] Network: Monad Mainnet (Chain ID: 143)")
     }
 
     private func requestPermissions() {
-        // Microphone permission is requested when starting speech recognition
-        // Camera permission would be requested when using QR scanning
+        // Request microphone permission for Gemini Live audio streaming
+        AVAudioSession.sharedInstance().requestRecordPermission { granted in
+            print("[VoiceSwap] Microphone permission: \(granted)")
+        }
 
         // Request notification permission for payment alerts
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
@@ -72,38 +89,56 @@ struct VoiceSwapApp: App {
         print("[VoiceSwap] Query: \(url.query ?? "nil")")
         print("[VoiceSwap] ═══════════════════════════════════════")
 
-        // Handle WalletConnect deep links first
+        // PRIORITY 1: Meta Wearables SDK callback (VisionClaw pattern)
+        // Check for metaWearablesAction query param FIRST, before any other processing.
+        // This is the pattern that works in VisionClaw — direct handleUrl() call.
+        if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+           components.queryItems?.contains(where: { $0.name == "metaWearablesAction" }) == true {
+            print("[VoiceSwap] 🎯 Meta Wearables callback detected!")
+            Task { @MainActor in
+                do {
+                    let handled = try await MetaGlassesManager.shared.handleURL(url)
+                    print("[VoiceSwap] Meta SDK handleUrl result: \(handled)")
+                    if !handled {
+                        // Fallback: manually process the callback
+                        let queryItems = components.queryItems ?? []
+                        let action = queryItems.first(where: { $0.name == "metaWearablesAction" })?.value ?? ""
+                        self.handleMetaWearablesCallback(queryItems: queryItems, action: action)
+                    }
+                } catch {
+                    print("[VoiceSwap] Meta SDK handleURL error: \(error)")
+                    // Still try manual callback processing
+                    let queryItems = components.queryItems ?? []
+                    let action = queryItems.first(where: { $0.name == "metaWearablesAction" })?.value ?? ""
+                    self.handleMetaWearablesCallback(queryItems: queryItems, action: action)
+                }
+            }
+            return
+        }
+
+        // PRIORITY 2: WalletConnect deep links
         if url.scheme == "wc" || url.absoluteString.contains("wc:") {
             print("[VoiceSwap] Handling WalletConnect deep link")
             AppKit.instance.handleDeeplink(url)
-            // Also trigger a session check after handling the deep link
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 WalletConnectManager.shared.checkForNewSessions()
             }
             return
         }
 
+        // PRIORITY 3: Other voiceswap:// URLs
+        if url.scheme == "voiceswap" {
+            processVoiceSwapURL(url)
+            return
+        }
+
+        // Handle Universal Links (https://voiceswap.cc/...)
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: true) else {
             print("[VoiceSwap] Invalid URL components")
             return
         }
 
-        // Handle voiceswap:// scheme
-        if url.scheme == "voiceswap" {
-            // Check if it's a WalletConnect callback
-            if url.host == "wc" || url.absoluteString.contains("wc") {
-                print("[VoiceSwap] Handling voiceswap WC callback")
-                AppKit.instance.handleDeeplink(url)
-                // Also trigger a session check
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    WalletConnectManager.shared.checkForNewSessions()
-                }
-                return
-            }
-            handleVoiceSwapURL(components)
-        }
-        // Handle Universal Links (https://voiceswap.cc/... or https://www.voiceswap.cc/...)
-        else if url.host == "voiceswap.cc" || url.host == "www.voiceswap.cc" {
+        if url.host == "voiceswap.cc" || url.host == "www.voiceswap.cc" {
             handleUniversalLink(components)
         }
 
@@ -111,6 +146,22 @@ struct VoiceSwapApp: App {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             WalletConnectManager.shared.checkForNewSessions()
         }
+    }
+
+    /// Process voiceswap:// URLs that were NOT handled by Meta SDK
+    private func processVoiceSwapURL(_ url: URL) {
+        // Check for WalletConnect callback
+        if url.host == "wc" || url.absoluteString.contains("wc") {
+            print("[VoiceSwap] Handling voiceswap WC callback")
+            AppKit.instance.handleDeeplink(url)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                WalletConnectManager.shared.checkForNewSessions()
+            }
+            return
+        }
+
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: true) else { return }
+        handleVoiceSwapURL(components)
     }
 
     private func handleVoiceSwapURL(_ components: URLComponents) {

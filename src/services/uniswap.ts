@@ -3,19 +3,26 @@ import { getNetworkConfig, FEE_TIERS, type NetworkType } from '../config/network
 import type { QuoteResponse, RouteResponse, ExecuteResponse, StatusResponse } from '../types/api.js';
 import { multicall, encodeCall, decodeResult } from './multicall.js';
 
-// V4 Quoter ABI
-const V4_QUOTER_ABI = [
-  'function quoteExactInputSingle((tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) poolKey, bool zeroForOne, uint128 exactAmount, bytes hookData)) external returns (uint256 amountOut, uint256 gasEstimate)',
+// Uniswap V3 QuoterV2 ABI
+const QUOTER_V2_ABI = [
+  'function quoteExactInputSingle(tuple(address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96) params) external returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)',
 ];
 
-// Simplified pool key struct ABI for encoding
-const POOL_KEY_ABI = [
-  'tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks)',
+// Uniswap V3 SwapRouter02 ABI
+const SWAP_ROUTER_ABI = [
+  'function exactInputSingle(tuple(address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96) params) external payable returns (uint256 amountOut)',
+  'function multicall(uint256 deadline, bytes[] data) external payable returns (bytes[] memory)',
 ];
 
-// Universal Router ABI
-const UNIVERSAL_ROUTER_ABI = [
-  'function execute(bytes commands, bytes[] inputs, uint256 deadline) external payable returns (bytes[] memory)',
+// Uniswap V3 Factory ABI
+const FACTORY_ABI = [
+  'function getPool(address tokenA, address tokenB, uint24 fee) external view returns (address pool)',
+];
+
+// Uniswap V3 Pool ABI
+const POOL_ABI = [
+  'function slot0() external view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, uint8 feeProtocol, bool unlocked)',
+  'function liquidity() external view returns (uint128)',
 ];
 
 // ERC20 ABI
@@ -28,39 +35,12 @@ const ERC20_ABI = [
   'function allowance(address owner, address spender) view returns (uint256)',
 ];
 
-// StateView ABI (for reading pool state)
-const STATE_VIEW_ABI = [
-  'function getSlot0(bytes32 poolId) external view returns (uint160 sqrtPriceX96, int24 tick, uint8 protocolFee, uint24 lpFee)',
-  'function getLiquidity(bytes32 poolId) external view returns (uint128 liquidity)',
-];
-
-// V4 Actions enum values
-const Actions = {
-  SWAP_EXACT_IN_SINGLE: 0x06,
-  SETTLE_ALL: 0x0c,
-  TAKE_ALL: 0x0d,
-} as const;
-
-// Universal Router command types
-const CommandType = {
-  V4_SWAP: 0x10,
-} as const;
-
-// PoolKey interface for V4
-interface PoolKey {
-  currency0: string;
-  currency1: string;
-  fee: number;
-  tickSpacing: number;
-  hooks: string;
-}
-
 export class UniswapService {
   private provider: ethers.providers.JsonRpcProvider;
   private networkConfig: ReturnType<typeof getNetworkConfig>;
   private wallet?: ethers.Wallet;
 
-  constructor(network: NetworkType = 'unichain-sepolia') {
+  constructor(network: NetworkType = 'monad') {
     this.networkConfig = getNetworkConfig(network);
     this.provider = new ethers.providers.JsonRpcProvider(this.networkConfig.rpcUrl);
 
@@ -84,171 +64,137 @@ export class UniswapService {
   }
 
   /**
-   * Sort tokens to get currency0 < currency1 (required for V4)
+   * Find the best pool for a token pair by checking liquidity across fee tiers
+   * Uses Multicall3 to batch all pool lookups in a single RPC call
    */
-  private sortTokens(tokenA: string, tokenB: string): { currency0: string; currency1: string; zeroForOne: boolean } {
-    const addressA = tokenA.toLowerCase();
-    const addressB = tokenB.toLowerCase();
-
-    if (addressA < addressB) {
-      return { currency0: tokenA, currency1: tokenB, zeroForOne: true };
-    } else {
-      return { currency0: tokenB, currency1: tokenA, zeroForOne: false };
-    }
-  }
-
-  /**
-   * Build a PoolKey for the token pair
-   */
-  private buildPoolKey(tokenIn: string, tokenOut: string, feeTier: { fee: number; tickSpacing: number } = FEE_TIERS.MEDIUM): PoolKey {
-    const { currency0, currency1 } = this.sortTokens(tokenIn, tokenOut);
-
-    return {
-      currency0,
-      currency1,
-      fee: feeTier.fee,
-      tickSpacing: feeTier.tickSpacing,
-      hooks: ethers.constants.AddressZero, // No hooks for standard pools
-    };
-  }
-
-  /**
-   * Calculate Pool ID from PoolKey (keccak256 of encoded PoolKey)
-   */
-  private getPoolId(poolKey: PoolKey): string {
-    const abiCoder = new ethers.utils.AbiCoder();
-    const encoded = abiCoder.encode(
-      ['address', 'address', 'uint24', 'int24', 'address'],
-      [poolKey.currency0, poolKey.currency1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks]
+  private async findBestPool(tokenIn: string, tokenOut: string): Promise<{ pool: string; fee: number }> {
+    const factory = new ethers.Contract(
+      this.networkConfig.contracts.FACTORY,
+      FACTORY_ABI,
+      this.provider
     );
-    return ethers.utils.keccak256(encoded);
-  }
 
-  /**
-   * Find the best pool for the pair by checking liquidity across tiers
-   * OPTIMIZED: Uses Multicall3 to batch all liquidity checks in a single RPC call
-   */
-  private async findBestPool(tokenIn: string, tokenOut: string): Promise<PoolKey> {
-    const stateViewInterface = new ethers.utils.Interface(STATE_VIEW_ABI);
     const tiers = Object.values(FEE_TIERS);
 
-    // Build pool keys for all tiers
-    const poolKeys = tiers.map(tier => this.buildPoolKey(tokenIn, tokenOut, tier));
-    const poolIds = poolKeys.map(key => this.getPoolId(key));
-
-    // Prepare multicall for all liquidity checks
-    const calls = poolIds.map(poolId => ({
-      target: this.networkConfig.contracts.STATE_VIEW,
-      allowFailure: true, // Don't fail if pool doesn't exist
-      callData: encodeCall(stateViewInterface, 'getLiquidity', [poolId]),
+    // Get pool addresses for all fee tiers via multicall
+    const factoryInterface = new ethers.utils.Interface(FACTORY_ABI);
+    const calls = tiers.map(tier => ({
+      target: this.networkConfig.contracts.FACTORY,
+      allowFailure: true,
+      callData: encodeCall(factoryInterface, 'getPool', [tokenIn, tokenOut, tier.fee]),
     }));
 
     try {
-      // Execute all calls in a single RPC request (HUGE performance gain)
       const results = await multicall(this.provider, calls);
 
-      // Find pool with max liquidity
-      let bestPoolKey: PoolKey | null = null;
-      let maxLiquidity = ethers.BigNumber.from(0);
-
+      // Find pools that exist (non-zero address)
+      const poolAddresses: { address: string; fee: number }[] = [];
       results.forEach((result, index) => {
         if (result.success) {
           try {
-            const [liquidity] = decodeResult(stateViewInterface, 'getLiquidity', result.returnData);
-
-            if (liquidity.gt(maxLiquidity)) {
-              maxLiquidity = liquidity;
-              bestPoolKey = poolKeys[index];
+            const [poolAddress] = decodeResult(factoryInterface, 'getPool', result.returnData);
+            if (poolAddress !== ethers.constants.AddressZero) {
+              poolAddresses.push({ address: poolAddress, fee: tiers[index].fee });
             }
-          } catch (error) {
+          } catch {
             // Ignore decode errors
           }
         }
       });
 
-      // Default to MEDIUM if no liquidity found
-      if (!bestPoolKey) {
-        return this.buildPoolKey(tokenIn, tokenOut, FEE_TIERS.MEDIUM);
+      if (poolAddresses.length === 0) {
+        // Default to MEDIUM fee tier
+        return { pool: ethers.constants.AddressZero, fee: FEE_TIERS.MEDIUM.fee };
       }
 
-      return bestPoolKey;
+      if (poolAddresses.length === 1) {
+        return { pool: poolAddresses[0].address, fee: poolAddresses[0].fee };
+      }
 
+      // Check liquidity for each pool to find the best one
+      const poolInterface = new ethers.utils.Interface(POOL_ABI);
+      const liquidityCalls = poolAddresses.map(p => ({
+        target: p.address,
+        allowFailure: true,
+        callData: encodeCall(poolInterface, 'liquidity', []),
+      }));
+
+      const liquidityResults = await multicall(this.provider, liquidityCalls);
+
+      let bestPool = poolAddresses[0];
+      let maxLiquidity = ethers.BigNumber.from(0);
+
+      liquidityResults.forEach((result, index) => {
+        if (result.success) {
+          try {
+            const [liquidity] = decodeResult(poolInterface, 'liquidity', result.returnData);
+            if (liquidity.gt(maxLiquidity)) {
+              maxLiquidity = liquidity;
+              bestPool = poolAddresses[index];
+            }
+          } catch {
+            // Ignore
+          }
+        }
+      });
+
+      return { pool: bestPool.address, fee: bestPool.fee };
     } catch (error) {
-      console.warn('Multicall failed, falling back to MEDIUM tier:', error);
-      return this.buildPoolKey(tokenIn, tokenOut, FEE_TIERS.MEDIUM);
+      console.warn('Multicall failed for pool lookup, falling back to MEDIUM tier:', error);
+      const poolAddress = await factory.getPool(tokenIn, tokenOut, FEE_TIERS.MEDIUM.fee);
+      return { pool: poolAddress, fee: FEE_TIERS.MEDIUM.fee };
     }
   }
 
   /**
-   * Compute Price Impact
+   * Calculate price impact from quote results
    */
   private async calculatePriceImpact(
-    poolKey: PoolKey,
+    poolAddress: string,
     amountIn: ethers.BigNumber,
     amountOut: ethers.BigNumber,
     tokenInDecimals: number,
     tokenOutDecimals: number,
-    zeroForOne: boolean
+    tokenIn: string,
+    tokenOut: string
   ): Promise<number> {
     try {
-      const stateView = new ethers.Contract(
-        this.networkConfig.contracts.STATE_VIEW,
-        STATE_VIEW_ABI,
-        this.provider
-      );
-
-      const poolId = this.getPoolId(poolKey);
-      const slot0 = await stateView.getSlot0(poolId);
+      const pool = new ethers.Contract(poolAddress, POOL_ABI, this.provider);
+      const slot0 = await pool.slot0();
       const sqrtPriceX96 = slot0.sqrtPriceX96;
 
-      // Calculate spot price from sqrtPriceX96
-      // price = (sqrtPriceX96 / 2^96)^2
       const Q96 = ethers.BigNumber.from(2).pow(96);
-
-      // We calculate prices with high precision
-      // Execution Price = amountOut / amountIn
-      const executionPrice = parseFloat(ethers.utils.formatUnits(amountOut, tokenOutDecimals)) /
-        parseFloat(ethers.utils.formatUnits(amountIn, tokenInDecimals));
-
-      // Spot Price calculation
-      // If zeroForOne (Token0 -> Token1), price is Token1/Token0
-      // If oneForZero (Token1 -> Token0), price is Token0/Token1 = 1 / (Token1/Token0)
-
-      // Calculate Token1/Token0 price
-      // price = (sqrtPrice / Q96) ** 2
-      // To improve precision handling with BN, we can use a library or simplified float math for estimation
       const sqrtPriceFloat = parseFloat(sqrtPriceX96.toString()) / parseFloat(Q96.toString());
       const rawPrice = sqrtPriceFloat * sqrtPriceFloat;
 
-      // Adjust for decimal difference: price * 10^(decimals0 - decimals1)
-      const decimals0 = zeroForOne ? tokenInDecimals : tokenOutDecimals;
-      const decimals1 = zeroForOne ? tokenOutDecimals : tokenInDecimals;
+      // Determine token ordering (V3 pools sort by address)
+      const token0 = tokenIn.toLowerCase() < tokenOut.toLowerCase() ? tokenIn : tokenOut;
+      const isToken0In = token0.toLowerCase() === tokenIn.toLowerCase();
+
+      const decimals0 = isToken0In ? tokenInDecimals : tokenOutDecimals;
+      const decimals1 = isToken0In ? tokenOutDecimals : tokenInDecimals;
       const spotPriceToken1PerToken0 = rawPrice * Math.pow(10, decimals0 - decimals1);
 
-      let spotPrice;
-      if (zeroForOne) {
-        // We are selling Token0 (In) for Token1 (Out) -> we want Price of Token0 in terms of Token1
+      const executionPrice = parseFloat(ethers.utils.formatUnits(amountOut, tokenOutDecimals)) /
+        parseFloat(ethers.utils.formatUnits(amountIn, tokenInDecimals));
+
+      let spotPrice: number;
+      if (isToken0In) {
         spotPrice = spotPriceToken1PerToken0;
       } else {
-        // We are selling Token1 (In) for Token0 (Out) -> we want Price of Token1 in terms of Token0
         spotPrice = 1 / spotPriceToken1PerToken0;
       }
 
-      // Price Impact = (Spot Price - Execution Price) / Spot Price
       const impact = (spotPrice - executionPrice) / spotPrice;
-
-      // Return percentage (e.g., 0.05 for 5%)
-      // If negative (execution better than spot due to math/rounding), return 0
       return Math.max(0, impact);
-
     } catch (error) {
       console.warn('Failed to calculate price impact:', error);
-      return 0.0; // Fallback
+      return 0.0;
     }
   }
 
   /**
-   * Get a quote for a swap using V4 Quoter
+   * Get a quote for a swap using V3 QuoterV2
    */
   async getQuote(
     tokenInAddress: string,
@@ -256,63 +202,50 @@ export class UniswapService {
     amountIn: string
   ): Promise<QuoteResponse> {
     try {
-      // Get token info
       const [tokenInInfo, tokenOutInfo] = await Promise.all([
         this.getTokenInfo(tokenInAddress),
         this.getTokenInfo(tokenOutAddress),
       ]);
 
-      // Dynamically find the best pool
-      const poolKey = await this.findBestPool(tokenInAddress, tokenOutAddress);
-      const { zeroForOne } = this.sortTokens(tokenInAddress, tokenOutAddress);
-
-      // Parse amount with correct decimals
+      const { pool: poolAddress, fee } = await this.findBestPool(tokenInAddress, tokenOutAddress);
       const amountInParsed = ethers.utils.parseUnits(amountIn, tokenInInfo.decimals);
 
-      // Create quoter contract
       const quoter = new ethers.Contract(
-        this.networkConfig.contracts.QUOTER,
-        V4_QUOTER_ABI,
+        this.networkConfig.contracts.QUOTER_V2,
+        QUOTER_V2_ABI,
         this.provider
       );
 
-      // Build quote params struct
-      // The quoter expects the poolKey as a struct, not encoded bytes
       const quoteParams = {
-        poolKey: {
-          currency0: poolKey.currency0,
-          currency1: poolKey.currency1,
-          fee: poolKey.fee,
-          tickSpacing: poolKey.tickSpacing,
-          hooks: poolKey.hooks,
-        },
-        zeroForOne,
-        exactAmount: amountInParsed,
-        hookData: '0x',
+        tokenIn: tokenInAddress,
+        tokenOut: tokenOutAddress,
+        amountIn: amountInParsed,
+        fee: fee,
+        sqrtPriceLimitX96: 0,
       };
 
       let amountOut: ethers.BigNumber;
       let gasEstimate: ethers.BigNumber;
 
       try {
-        // Call quoter using callStatic (doesn't modify state)
         const result = await quoter.callStatic.quoteExactInputSingle(quoteParams);
         amountOut = result.amountOut || result[0];
-        gasEstimate = result.gasEstimate || result[1] || ethers.BigNumber.from(150000);
+        gasEstimate = result.gasEstimate || result[3] || ethers.BigNumber.from(150000);
       } catch (error) {
-        // Fallback for different ABI variations or errors
-        throw new Error(`Quoter failed: ${(error as Error).message}`);
+        throw new Error(`QuoterV2 failed: ${(error as Error).message}`);
       }
 
-      // Calculate REAL price impact
-      const priceImpactRaw = await this.calculatePriceImpact(
-        poolKey,
-        amountInParsed,
-        amountOut,
-        tokenInInfo.decimals,
-        tokenOutInfo.decimals,
-        zeroForOne
-      );
+      const priceImpactRaw = poolAddress !== ethers.constants.AddressZero
+        ? await this.calculatePriceImpact(
+            poolAddress,
+            amountInParsed,
+            amountOut,
+            tokenInInfo.decimals,
+            tokenOutInfo.decimals,
+            tokenInAddress,
+            tokenOutAddress
+          )
+        : 0;
 
       return {
         tokenIn: {
@@ -329,7 +262,7 @@ export class UniswapService {
           amount: ethers.utils.formatUnits(amountOut, tokenOutInfo.decimals),
           amountRaw: amountOut.toString(),
         },
-        priceImpact: (priceImpactRaw * 100).toFixed(4), // Convert to percentage string
+        priceImpact: (priceImpactRaw * 100).toFixed(4),
         route: [tokenInAddress, tokenOutAddress],
         estimatedGas: gasEstimate.toString(),
         timestamp: Date.now(),
@@ -340,7 +273,7 @@ export class UniswapService {
   }
 
   /**
-   * Get route with calldata for execution via Universal Router
+   * Get route with calldata for execution via SwapRouter02
    */
   async getRoute(
     tokenInAddress: string,
@@ -350,108 +283,43 @@ export class UniswapService {
     slippageTolerance: number = 0.5,
     deadlineMinutes: number = 30
   ): Promise<RouteResponse> {
-    // First get the quote (this will now use findBestPool internally)
     const quote = await this.getQuote(tokenInAddress, tokenOutAddress, amountIn);
+    const { fee } = await this.findBestPool(tokenInAddress, tokenOutAddress);
 
-    // Calculate minimum amount out with slippage
     const amountOutMin = ethers.BigNumber.from(quote.tokenOut.amountRaw)
       .mul(10000 - Math.floor(slippageTolerance * 100))
       .div(10000);
 
-    // Deadline timestamp
     const deadline = Math.floor(Date.now() / 1000) + deadlineMinutes * 60;
 
-    // We must rebuild the pool key that matched the quote (best pool)
-    const bestPoolKey = await this.findBestPool(tokenInAddress, tokenOutAddress);
-    const { zeroForOne } = this.sortTokens(tokenInAddress, tokenOutAddress);
+    const routerInterface = new ethers.utils.Interface(SWAP_ROUTER_ABI);
 
-    // Encode V4 swap actions
-    const calldata = this.encodeV4SwapCalldata(
-      bestPoolKey,
-      zeroForOne,
-      ethers.BigNumber.from(quote.tokenIn.amountRaw),
-      amountOutMin,
-      recipient,
-      deadline
-    );
+    const swapParams = {
+      tokenIn: tokenInAddress,
+      tokenOut: tokenOutAddress,
+      fee: fee,
+      recipient: recipient,
+      amountIn: ethers.BigNumber.from(quote.tokenIn.amountRaw),
+      amountOutMinimum: amountOutMin,
+      sqrtPriceLimitX96: 0,
+    };
+
+    const swapCalldata = routerInterface.encodeFunctionData('exactInputSingle', [swapParams]);
+
+    // Wrap in multicall with deadline
+    const calldata = routerInterface.encodeFunctionData('multicall', [
+      deadline,
+      [swapCalldata],
+    ]);
 
     return {
       ...quote,
       calldata,
-      value: '0', // Only needed if swapping from native ETH
-      to: this.networkConfig.contracts.UNIVERSAL_ROUTER,
+      value: '0',
+      to: this.networkConfig.contracts.SWAP_ROUTER_02,
       slippageTolerance,
       deadline,
     };
-  }
-
-  /**
-   * Encode V4 swap calldata for Universal Router
-   */
-  private encodeV4SwapCalldata(
-    poolKey: PoolKey,
-    zeroForOne: boolean,
-    amountIn: ethers.BigNumber,
-    amountOutMin: ethers.BigNumber,
-    recipient: string,
-    deadline: number
-  ): string {
-    const abiCoder = new ethers.utils.AbiCoder();
-
-    // Encode the actions sequence: SWAP_EXACT_IN_SINGLE, SETTLE_ALL, TAKE_ALL
-    const actions = ethers.utils.hexConcat([
-      ethers.utils.hexlify([Actions.SWAP_EXACT_IN_SINGLE]),
-      ethers.utils.hexlify([Actions.SETTLE_ALL]),
-      ethers.utils.hexlify([Actions.TAKE_ALL]),
-    ]);
-
-    // Encode parameters for each action
-    // Action 1: SWAP_EXACT_IN_SINGLE params
-    const swapParams = abiCoder.encode(
-      ['tuple(tuple(address,address,uint24,int24,address),bool,uint128,uint128,bytes)'],
-      [[
-        [poolKey.currency0, poolKey.currency1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks],
-        zeroForOne,
-        amountIn,
-        amountOutMin,
-        '0x', // hookData
-      ]]
-    );
-
-    // Action 2: SETTLE_ALL params (currency, maxAmount)
-    const settleParams = abiCoder.encode(
-      ['address', 'uint256'],
-      [zeroForOne ? poolKey.currency0 : poolKey.currency1, amountIn]
-    );
-
-    // Action 3: TAKE_ALL params (currency, minAmount)
-    const takeParams = abiCoder.encode(
-      ['address', 'uint256'],
-      [zeroForOne ? poolKey.currency1 : poolKey.currency0, amountOutMin]
-    );
-
-    // Combine all params
-    const params = abiCoder.encode(
-      ['bytes[]'],
-      [[swapParams, settleParams, takeParams]]
-    );
-
-    // Encode the V4_SWAP command for Universal Router
-    const commands = ethers.utils.hexlify([CommandType.V4_SWAP]);
-
-    // Encode the V4 swap input (actions + params)
-    const v4SwapInput = abiCoder.encode(
-      ['bytes', 'bytes[]'],
-      [actions, [swapParams, settleParams, takeParams]]
-    );
-
-    // Encode the full Universal Router execute call
-    const universalRouterInterface = new ethers.utils.Interface(UNIVERSAL_ROUTER_ABI);
-    return universalRouterInterface.encodeFunctionData('execute', [
-      commands,
-      [v4SwapInput],
-      deadline,
-    ]);
   }
 
   /**
@@ -469,15 +337,12 @@ export class UniswapService {
     }
 
     try {
-      // Validation: Check ETH balance for gas
       const balance = await this.wallet.getBalance();
-      const minBalance = ethers.utils.parseEther("0.001"); // Minimal buffer
+      const minBalance = ethers.utils.parseEther("0.01");
       if (balance.lt(minBalance)) {
-        throw new Error('Relayer wallet has insufficient ETH for gas');
+        throw new Error('Relayer wallet has insufficient MON for gas');
       }
 
-      // Get the route with calldata
-      // NOTE: In production, you might want to re-check the quote here to ensure it hasn't expired or moved significantly
       const route = await this.getRoute(
         tokenInAddress,
         tokenOutAddress,
@@ -490,17 +355,14 @@ export class UniswapService {
         throw new Error('Failed to generate swap calldata');
       }
 
-      // Estimate gas
       const gasEstimate = await this.wallet.estimateGas({
         to: route.to,
         data: route.calldata,
         value: route.value,
       });
 
-      // Add 20% buffer to gas estimate
       const gasLimit = gasEstimate.mul(120).div(100);
 
-      // Send transaction
       const tx = await this.wallet.sendTransaction({
         to: route.to,
         data: route.calldata,
@@ -530,7 +392,6 @@ export class UniswapService {
       const receipt = await this.provider.getTransactionReceipt(txHash);
 
       if (!receipt) {
-        // Transaction might be pending
         const tx = await this.provider.getTransaction(txHash);
         if (tx) {
           return {
@@ -569,7 +430,7 @@ let uniswapService: UniswapService | null = null;
 
 export const getUniswapService = (network?: NetworkType): UniswapService => {
   if (!uniswapService) {
-    uniswapService = new UniswapService(network || (process.env.NETWORK as NetworkType) || 'unichain-sepolia');
+    uniswapService = new UniswapService(network || (process.env.NETWORK as NetworkType) || 'monad');
   }
   return uniswapService;
 };

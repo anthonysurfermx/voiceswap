@@ -1,7 +1,7 @@
 {
-  "name": "x402-swap-executor",
-  "version": "1.0.0",
-  "description": "Swap-as-a-Service: x402-powered Uniswap swap execution for AI agents",
+  "name": "voiceswap",
+  "version": "3.0.0",
+  "description": "Voice-activated crypto payments with Uniswap V3 on Monad",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -11,30 +11,25 @@
     "test": "vitest"
   },
   "keywords": [
-    "x402",
+    "voiceswap",
     "uniswap",
+    "monad",
     "defi",
     "swap",
     "ai-agents",
-    "micropayments"
+    "voice-payments"
   ],
   "author": "Anthony Chavez",
   "license": "MIT",
   "dependencies": {
-    "@coinbase/x402": "^0.7.3",
     "@uniswap/sdk-core": "^6.0.0",
-    "@uniswap/universal-router-sdk": "^3.3.0",
-    "@uniswap/v4-sdk": "^1.6.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "ethers": "^5.7.2",
     "express": "^4.21.0",
     "helmet": "^8.0.0",
-    "openai": "^6.10.0",
     "sqlite": "^5.1.1",
     "sqlite3": "^5.1.7",
-    "thirdweb": "^5.74.0",
-    "x402-express": "^0.7.3",
     "zod": "^3.23.8"
   },
   "devDependencies": {

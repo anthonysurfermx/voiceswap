@@ -1,7 +1,7 @@
 /**
  * VoiceSwap API Routes
  *
- * Endpoints for voice-activated payments on Unichain
+ * Endpoints for voice-activated payments on Monad
  */
 
 import { Router } from 'express';
@@ -33,14 +33,7 @@ import {
   generateMerchantQRData,
   generatePaymentWebURL,
 } from '../services/voiceswap.js';
-import {
-  parseIntent,
-  generateResponse,
-  extractPaymentDetails,
-  healthCheck as openaiHealthCheck,
-} from '../services/openai.js';
 import { getUniswapService } from '../services/uniswap.js';
-import thirdwebEngine from '../services/thirdwebEngine.js';
 import {
   saveTransaction,
   saveMerchantPayment,
@@ -64,7 +57,7 @@ router.get('/info', (_req, res) => {
     version: '1.0.0',
     network: NETWORK_CONFIG,
     supportedTokens: {
-      input: ['ETH', 'WETH', 'USDC'],
+      input: ['MON', 'WMON', 'USDC'],
       output: 'USDC',
     },
     tokens: SUPPORTED_TOKENS,
@@ -75,7 +68,7 @@ router.get('/info', (_req, res) => {
       },
       '/voiceswap/balance/:address': {
         method: 'GET',
-        description: 'Get wallet balances on Unichain',
+        description: 'Get wallet balances on Monad',
       },
       '/voiceswap/prepare': {
         method: 'POST',
@@ -148,7 +141,7 @@ router.post('/parse-qr', (req, res) => {
 
 /**
  * GET /voiceswap/balance/:address
- * Get wallet balances on Unichain
+ * Get wallet balances on Monad
  */
 router.get('/balance/:address', async (req, res) => {
   try {
@@ -226,7 +219,7 @@ router.post('/prepare', async (req, res) => {
     // Determine swap requirements
     const swapInfo = paymentRequest.amount
       ? determineSwapToken(balances, paymentRequest.amount)
-      : { needsSwap: false, hasEnoughUSDC: true, hasEnoughETH: true, hasEnoughWETH: false };
+      : { needsSwap: false, hasEnoughUSDC: true, hasEnoughMON: true, hasEnoughWMON: false };
 
     // Get max payable if no amount specified
     const maxPayable = getMaxPayableAmount(balances);
@@ -327,7 +320,7 @@ router.post('/prepare-tx', async (req, res) => {
           value: '0x0',               // No ETH value for ERC20 transfer
           data: transferData,         // Encoded transfer call
           from: userAddress,          // User's address
-          chainId: 130,               // Unichain mainnet
+          chainId: 143,               // Monad mainnet
         },
         tokenAddress: SUPPORTED_TOKENS.USDC,
         tokenSymbol: 'USDC',
@@ -335,7 +328,7 @@ router.post('/prepare-tx', async (req, res) => {
         recipient: merchantWallet,
         recipientShort: `${merchantWallet.slice(0, 6)}...${merchantWallet.slice(-4)}`,
         message: `Transfer ${amount} USDC to ${merchantWallet.slice(0, 6)}...${merchantWallet.slice(-4)}`,
-        explorerBaseUrl: 'https://uniscan.xyz/tx/',
+        explorerBaseUrl: 'https://monadscan.com/tx/',
       },
     });
 
@@ -350,188 +343,13 @@ router.post('/prepare-tx', async (req, res) => {
 
 /**
  * POST /voiceswap/execute
- * Execute the payment using backend wallet (gasless for user)
- *
- * DEPRECATED: Use /voiceswap/prepare-tx for client-side signing instead.
- * This endpoint is kept for backwards compatibility.
- *
- * For VoiceSwap, we use a server-side wallet to execute transfers.
- * This allows gasless transactions for the user.
- *
- * IMPORTANT: Uses atomic batch transactions when swap is needed.
- * If Swap + Transfer, both succeed or both fail together.
- *
- * Body:
- * - userAddress: User's wallet address
- * - merchantWallet: Merchant's wallet address
- * - amount: Amount in USDC
+ * DEPRECATED: Use /voiceswap/prepare-tx + WalletConnect for client-side signing.
  */
-router.post('/execute', async (req, res) => {
-  try {
-    const { userAddress, merchantWallet, amount } = req.body;
-
-    if (!userAddress || !merchantWallet || !amount) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing required fields: userAddress, merchantWallet, amount',
-      });
-    }
-
-    // Validate addresses
-    if (!isValidAddress(userAddress) || !isValidAddress(merchantWallet)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid wallet address format',
-      });
-    }
-
-    console.log(`[VoiceSwap] Payment request: ${amount} USDC from ${userAddress} to ${merchantWallet}`);
-
-    // Get current balances
-    const balances = await getWalletBalances(userAddress);
-    const swapInfo = determineSwapToken(balances, amount);
-
-    // Convert amount to USDC units (6 decimals)
-    const amountInUnits = ethers.utils.parseUnits(amount.toString(), 6).toString();
-
-    // SCENARIO 1: User has enough USDC - Direct transfer
-    if (swapInfo.hasEnoughUSDC) {
-      console.log(`[VoiceSwap] User has USDC, executing direct transfer`);
-
-      try {
-        const result = await thirdwebEngine.executeERC20Transfer({
-          tokenAddress: SUPPORTED_TOKENS.USDC,
-          to: merchantWallet,
-          amount: amountInUnits,
-        });
-
-        // Save to database
-        await saveTransaction({
-          queueId: result.queueId,
-          userAddress,
-          tokenIn: SUPPORTED_TOKENS.USDC,
-          tokenOut: SUPPORTED_TOKENS.USDC,
-          amountIn: amount.toString(),
-          routingType: 'direct_transfer',
-        });
-
-        return res.json({
-          success: true,
-          data: {
-            action: 'transfer',
-            status: 'queued',
-            queueId: result.queueId,
-            txHash: result.transactionHash,
-            token: SUPPORTED_TOKENS.USDC,
-            tokenSymbol: 'USDC',
-            amount,
-            to: merchantWallet,
-            from: userAddress,
-            explorerUrl: result.transactionHash
-              ? `https://uniscan.xyz/tx/${result.transactionHash}`
-              : undefined,
-            message: `Payment of ${amount} USDC queued for ${merchantWallet.slice(0, 6)}...${merchantWallet.slice(-4)}`,
-          },
-        });
-      } catch (error) {
-        console.error('[VoiceSwap] Direct transfer failed:', error);
-        return res.status(500).json({
-          success: false,
-          error: `Transfer failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        });
-      }
-    }
-
-    // SCENARIO 2: User needs to swap first
-    if (!swapInfo.swapFrom) {
-      return res.status(400).json({
-        success: false,
-        error: 'Insufficient funds. You need ETH, WETH, or USDC on Unichain.',
-      });
-    }
-
-    console.log(`[VoiceSwap] User needs swap: ${swapInfo.swapFromSymbol} → USDC`);
-
-    // Determine token input address
-    const tokenIn = swapInfo.swapFrom === 'NATIVE_ETH'
-      ? SUPPORTED_TOKENS.WETH // For native ETH, we use WETH in the swap
-      : swapInfo.swapFrom;
-
-    try {
-      // Get Uniswap route with calldata
-      const uniswap = getUniswapService();
-      const route = await uniswap.getRoute(
-        tokenIn,
-        SUPPORTED_TOKENS.USDC,
-        amountInUnits, // Amount of USDC we want out
-        merchantWallet, // Recipient gets USDC directly
-        0.5 // 0.5% slippage
-      );
-
-      if (!route.calldata) {
-        return res.status(500).json({
-          success: false,
-          error: 'Failed to generate swap route',
-        });
-      }
-
-      // For atomic execution: Swap outputs directly to merchant
-      // This is a single transaction that does swap AND sends to merchant
-      console.log(`[VoiceSwap] Executing atomic swap+transfer via Uniswap`);
-
-      const result = await thirdwebEngine.executeSwapViaEngine({
-        userAddress,
-        calldata: route.calldata,
-        value: swapInfo.swapFrom === 'NATIVE_ETH' ? route.value : '0',
-      });
-
-      // Save to database
-      await saveTransaction({
-        queueId: result.queueId,
-        userAddress,
-        tokenIn,
-        tokenOut: SUPPORTED_TOKENS.USDC,
-        amountIn: route.tokenIn?.amount || '0',
-        routingType: 'swap_and_transfer',
-      });
-
-      return res.json({
-        success: true,
-        data: {
-          action: 'swap_and_transfer',
-          status: 'queued',
-          queueId: result.queueId,
-          txHash: result.transactionHash,
-          swap: {
-            tokenIn,
-            tokenInSymbol: swapInfo.swapFromSymbol,
-            tokenOut: SUPPORTED_TOKENS.USDC,
-            tokenOutSymbol: 'USDC',
-            amountOut: amount,
-          },
-          to: merchantWallet,
-          from: userAddress,
-          explorerUrl: result.transactionHash
-            ? `https://uniscan.xyz/tx/${result.transactionHash}`
-            : undefined,
-          message: `Swapping ${swapInfo.swapFromSymbol} to ${amount} USDC and sending to ${merchantWallet.slice(0, 6)}...${merchantWallet.slice(-4)}`,
-        },
-      });
-    } catch (error) {
-      console.error('[VoiceSwap] Swap+Transfer failed:', error);
-      return res.status(500).json({
-        success: false,
-        error: `Swap failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      });
-    }
-
-  } catch (error) {
-    console.error('[VoiceSwap] Execute error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to execute payment',
-    });
-  }
+router.post('/execute', async (_req, res) => {
+  res.status(410).json({
+    success: false,
+    error: 'This endpoint is deprecated. Use /voiceswap/prepare-tx with WalletConnect for client-side signing.',
+  });
 });
 
 /**
@@ -676,192 +494,9 @@ router.put('/session/:sessionId', (req, res) => {
   }
 });
 
-// ============================================
-// OpenAI-powered Natural Language Processing
-// ============================================
-
-/**
- * POST /voiceswap/ai/parse
- * Parse natural language voice command using OpenAI
- *
- * Body:
- * - transcript: Voice transcript to parse
- *
- * Examples:
- * - "Paga 50 dólares al café" → payment intent with amount: 50, currency: USD
- * - "Cuánto tengo en mi wallet?" → balance intent
- * - "Swap my ETH to USDC" → swap intent
- */
-router.post('/ai/parse', async (req, res) => {
-  try {
-    const { transcript } = req.body;
-
-    if (!transcript) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing transcript in request body',
-      });
-    }
-
-    const intent = await parseIntent(transcript);
-    const voiceResponse = generateResponse(intent);
-
-    res.json({
-      success: true,
-      data: {
-        intent,
-        voiceResponse,
-        timestamp: Date.now(),
-      },
-    });
-  } catch (error) {
-    console.error('[VoiceSwap] AI parse error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to parse voice command',
-    });
-  }
-});
-
-/**
- * POST /voiceswap/ai/payment-details
- * Extract detailed payment information from natural language
- *
- * Body:
- * - transcript: Voice transcript with payment intent
- *
- * Returns structured payment details:
- * - amount: Payment amount
- * - currency: Currency (USD, USDC, ETH)
- * - recipient: Merchant name or description
- * - notes: Additional context
- */
-router.post('/ai/payment-details', async (req, res) => {
-  try {
-    const { transcript } = req.body;
-
-    if (!transcript) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing transcript in request body',
-      });
-    }
-
-    const details = await extractPaymentDetails(transcript);
-
-    res.json({
-      success: true,
-      data: details,
-    });
-  } catch (error) {
-    console.error('[VoiceSwap] AI payment details error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to extract payment details',
-    });
-  }
-});
-
-/**
- * POST /voiceswap/ai/process
- * Full AI-powered voice command processing
- * Combines intent parsing with wallet balance checking
- *
- * Body:
- * - transcript: Voice transcript
- * - userAddress: User's wallet address (optional, needed for balance/payment)
- * - merchantWallet: Merchant wallet (optional, for payment context)
- */
-router.post('/ai/process', async (req, res) => {
-  try {
-    const { transcript, userAddress, merchantWallet } = req.body;
-
-    if (!transcript) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing transcript in request body',
-      });
-    }
-
-    // Parse the intent
-    const intent = await parseIntent(transcript);
-
-    // Build context for response generation
-    const context: {
-      balance?: string;
-      ethBalance?: string;
-      merchantName?: string;
-    } = {};
-
-    // If it's a balance or payment intent and we have an address, get balances
-    if (userAddress && (intent.type === 'balance' || intent.type === 'payment')) {
-      try {
-        const balances = await getWalletBalances(userAddress);
-        const usdcBalance = balances.tokens.find(t => t.symbol === 'USDC');
-        context.balance = usdcBalance?.balance || '0';
-        context.ethBalance = balances.nativeETH.balance;
-      } catch (e) {
-        console.error('[VoiceSwap] Failed to get balances:', e);
-      }
-    }
-
-    // Add merchant context if available
-    if (merchantWallet) {
-      context.merchantName = `${merchantWallet.slice(0, 6)}...${merchantWallet.slice(-4)}`;
-    } else if (intent.recipient) {
-      context.merchantName = intent.recipient;
-    }
-
-    // Generate voice response with context
-    const voiceResponse = generateResponse(intent, context);
-
-    // Determine next action based on intent
-    let nextAction: string;
-    switch (intent.type) {
-      case 'payment':
-        nextAction = merchantWallet ? 'await_confirmation' : 'scan_qr';
-        break;
-      case 'balance':
-        nextAction = 'show_balance';
-        break;
-      case 'swap':
-        nextAction = 'prepare_swap';
-        break;
-      case 'confirm':
-        nextAction = 'execute_transaction';
-        break;
-      case 'cancel':
-        nextAction = 'cancel_transaction';
-        break;
-      case 'help':
-        nextAction = 'show_help';
-        break;
-      default:
-        nextAction = 'await_command';
-    }
-
-    res.json({
-      success: true,
-      data: {
-        intent,
-        voiceResponse,
-        nextAction,
-        context,
-        timestamp: Date.now(),
-      },
-    });
-  } catch (error) {
-    console.error('[VoiceSwap] AI process error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to process voice command',
-    });
-  }
-});
-
 /**
  * GET /voiceswap/tx/:txHash
- * Get transaction status and receipt from Unichain
+ * Get transaction status and receipt from Monad
  *
  * Returns:
  * - status: 'pending' | 'confirmed' | 'failed'
@@ -881,10 +516,10 @@ router.get('/tx/:txHash', async (req, res) => {
 
     console.log(`[VoiceSwap] Checking tx status: ${txHash}`);
 
-    // Create provider for Unichain
+    // Create provider for Monad
     const provider = new ethers.providers.JsonRpcProvider(
       NETWORK_CONFIG.rpcUrl,
-      { name: 'unichain', chainId: NETWORK_CONFIG.chainId }
+      { name: 'monad', chainId: NETWORK_CONFIG.chainId }
     );
 
     // Get transaction receipt
@@ -938,7 +573,7 @@ router.get('/tx/:txHash', async (req, res) => {
         effectiveGasPrice: receipt.effectiveGasPrice?.toString(),
         from: receipt.from,
         to: receipt.to,
-        explorerUrl: `https://uniscan.xyz/tx/${txHash}`,
+        explorerUrl: `https://monadscan.com/tx/${txHash}`,
         message: isSuccess
           ? `Transaction confirmed with ${confirmations} confirmations`
           : 'Transaction failed on-chain',
@@ -950,32 +585,6 @@ router.get('/tx/:txHash', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to check transaction status',
-    });
-  }
-});
-
-/**
- * GET /voiceswap/ai/health
- * Check OpenAI API health and configuration
- */
-router.get('/ai/health', async (_req, res) => {
-  try {
-    const health = await openaiHealthCheck();
-
-    res.json({
-      success: true,
-      data: {
-        openai: health,
-        service: 'VoiceSwap AI',
-        features: ['intent_parsing', 'payment_extraction', 'multilingual'],
-        supportedLanguages: ['en', 'es'],
-      },
-    });
-  } catch (error) {
-    console.error('[VoiceSwap] AI health check error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to check AI health',
     });
   }
 });
@@ -1056,7 +665,7 @@ router.post('/generate-qr', (req, res) => {
         display: {
           amount: qrData.displayAmount,
           merchant: qrData.displayMerchant,
-          network: 'Unichain',
+          network: 'Monad',
           token: 'USDC',
         },
         // Instructions for the merchant to show customers
@@ -1322,7 +931,7 @@ router.get('/merchant/transactions/:wallet', async (req, res) => {
     }
 
     // Fetch token transfers from Blockscout API
-    const blockscoutUrl = `https://unichain.blockscout.com/api/v2/addresses/${wallet}/token-transfers`;
+    const blockscoutUrl = `https://monad.socialscan.io/api/v2/addresses/${wallet}/token-transfers`;
     const response = await fetch(blockscoutUrl);
 
     if (!response.ok) {

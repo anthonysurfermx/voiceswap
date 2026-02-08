@@ -115,7 +115,7 @@ async function monitorTransaction(queueId: string) {
 /**
  * Manual push endpoint (for webhook integration)
  *
- * Thirdweb Engine could call this when tx status changes
+ * External services can call this when tx status changes
  */
 router.post('/push/:queueId', (req: Request, res: Response) => {
   const { queueId } = req.params;

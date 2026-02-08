@@ -39,8 +39,8 @@ app.use(async (_req, _res, next) => {
 
 // Get payment receiver address from env
 const PAYMENT_RECEIVER = process.env.PAYMENT_RECEIVER_ADDRESS ?? '';
-const NETWORK = (process.env.NETWORK || 'unichain') as 'unichain' | 'unichain-sepolia';
-const CHAIN_ID = NETWORK === 'unichain' ? 130 : 1301;
+const NETWORK = (process.env.NETWORK || 'monad') as 'monad';
+const CHAIN_ID = 143;
 
 // Mount routes
 app.use('/', swapRoutes);

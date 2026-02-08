@@ -29,13 +29,17 @@
     <dict>
         <key>MetaAppID</key>
         <string>865317392634736</string>
+        <key>ClientToken</key>
+        <string>AR|865317392634736|35756886433322e3b7c0ddde182611ef</string>
+        <key>TeamID</key>
+        <string>QZRTV6CMTT</string>
+        <key>AppLinkURLScheme</key>
+        <string>voiceswap://</string>
         <key>Analytics</key>
         <dict>
             <key>OptOut</key>
             <false/>
         </dict>
-        <key>AppLinkURLScheme</key>
-        <string>voiceswap://</string>
     </dict>
 
     <!-- Required Permissions for VoiceSwap -->
@@ -147,13 +151,25 @@
     <!-- URL Schemes (Deep Links) -->
     <key>CFBundleURLTypes</key>
     <array>
+        <!-- Meta Wearables DAT callback scheme (MUST have CFBundleTypeRole) -->
         <dict>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
             <key>CFBundleURLName</key>
             <string>com.voiceswap.app</string>
             <key>CFBundleURLSchemes</key>
             <array>
                 <string>voiceswap</string>
-                <string>voiceswap.cc</string>
+            </array>
+        </dict>
+        <!-- WalletConnect scheme -->
+        <dict>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>CFBundleURLName</key>
+            <string>com.voiceswap.app.wc</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
                 <string>wc</string>
             </array>
         </dict>

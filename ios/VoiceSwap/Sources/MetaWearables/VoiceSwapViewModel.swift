@@ -56,7 +56,7 @@ public class VoiceSwapViewModel: ObservableObject {
     @Published public var glassesBatteryLevel: Int = 0
     @Published public var walletAddress: String = ""
     @Published public var walletBalance: String = "0.00"
-    @Published public var ethBalance: String = "0.0000"
+    @Published public var monBalance: String = "0.0000"
     @Published public var tokenBalances: [TokenDisplayInfo] = []
     @Published public var lastVoiceCommand: String = ""
     @Published public var lastResponse: String = ""
@@ -74,9 +74,12 @@ public class VoiceSwapViewModel: ObservableObject {
 
     // MARK: - Private Properties
 
-    private let glassesManager = MetaGlassesManager.shared
+    let glassesManager = MetaGlassesManager.shared
     private let apiClient = VoiceSwapAPIClient.shared
     private var cancellables = Set<AnyCancellable>()
+
+    // Gemini Live session reference
+    private(set) var geminiSession: GeminiSessionViewModel?
 
     // MARK: - Initialization
 
@@ -111,6 +114,13 @@ public class VoiceSwapViewModel: ObservableObject {
             .assign(to: &$lastVoiceCommand)
     }
 
+    // MARK: - Gemini Session
+
+    func setupGeminiSession(_ session: GeminiSessionViewModel) {
+        self.geminiSession = session
+        session.paymentViewModel = self
+    }
+
     // MARK: - Wallet Management
 
     /// Set the user's wallet address
@@ -132,20 +142,20 @@ public class VoiceSwapViewModel: ObservableObject {
             let response = try await apiClient.getWalletBalances(address: walletAddress)
 
             if let balances = response.data {
-                walletBalance = balances.totalUSD  // Total in USD (USDC + ETH)
-                ethBalance = balances.nativeETH.balance
+                walletBalance = balances.totalUSD  // Total in USD (USDC + MON)
+                monBalance = balances.nativeMON.balance
 
-                // Build token display list (Unichain only)
+                // Build token display list (Monad only)
                 var tokens: [TokenDisplayInfo] = []
 
-                // Always show ETH first
-                let ethBal = Double(balances.nativeETH.balance) ?? 0
-                if ethBal > 0.0001 {
+                // Always show MON first
+                let monBal = Double(balances.nativeMON.balance) ?? 0
+                if monBal > 0.0001 {
                     tokens.append(TokenDisplayInfo(
-                        symbol: "ETH",
-                        balance: formatBalance(ethBal, decimals: 4),
-                        icon: "diamond.fill",
-                        color: "627EEA"  // Ethereum blue
+                        symbol: "MON",
+                        balance: formatBalance(monBal, decimals: 4),
+                        icon: "m.circle.fill",
+                        color: "836EF9"  // Monad purple
                     ))
                 }
 
@@ -162,28 +172,15 @@ public class VoiceSwapViewModel: ObservableObject {
                     }
                 }
 
-                // UNI
-                if let uni = balances.tokens.first(where: { $0.symbol == "UNI" }) {
-                    let bal = Double(uni.balance) ?? 0
-                    if bal > 0.001 {
+                // WMON
+                if let wmon = balances.tokens.first(where: { $0.symbol == "WMON" }) {
+                    let bal = Double(wmon.balance) ?? 0
+                    if bal > 0.0001 {
                         tokens.append(TokenDisplayInfo(
-                            symbol: "UNI",
-                            balance: formatBalance(bal, decimals: 3),
-                            icon: "u.circle.fill",
-                            color: "FF007A"  // Uniswap pink
-                        ))
-                    }
-                }
-
-                // WBTC
-                if let wbtc = balances.tokens.first(where: { $0.symbol == "WBTC" }) {
-                    let bal = Double(wbtc.balance) ?? 0
-                    if bal > 0.00001 {
-                        tokens.append(TokenDisplayInfo(
-                            symbol: "WBTC",
-                            balance: formatBalance(bal, decimals: 6),
-                            icon: "bitcoinsign.circle.fill",
-                            color: "F7931A"  // Bitcoin orange
+                            symbol: "WMON",
+                            balance: formatBalance(bal, decimals: 4),
+                            icon: "w.circle.fill",
+                            color: "836EF9"  // Monad purple
                         ))
                     }
                 }
@@ -217,77 +214,29 @@ public class VoiceSwapViewModel: ObservableObject {
         glassesManager.disconnect()
     }
 
-    // MARK: - Voice Commands
+    // MARK: - Voice Commands (Gemini Live)
 
-    /// Start listening for voice commands
+    /// Start Gemini Live voice session
     public func startListening() {
-        // IMPORTANT: Set delegate before starting to listen
-        // This ensures voice commands are routed back to the ViewModel
         glassesManager.delegate = self
-        glassesManager.startListening()
+        let audioMode: AudioMode = glassesManager.isConnected ? .glasses : .phone
+        geminiSession?.startSession(audioMode: audioMode)
         flowState = .listening
     }
 
-    /// Stop listening
+    /// Stop Gemini Live voice session
     public func stopListening() {
-        glassesManager.stopListening()
+        geminiSession?.stopSession()
         if flowState == .listening {
             flowState = .idle
         }
     }
 
-    /// Process a voice command manually (for testing without glasses)
-    public func processVoiceCommand(_ transcript: String) async {
-        print("[ViewModel] Processing voice command: '\(transcript)' with wallet: \(walletAddress)")
-        lastVoiceCommand = transcript
-
-        // If we're waiting for an amount, try to extract it from the voice command directly
-        if case .enteringAmount = flowState {
-            // Try to extract just the number from the transcript (e.g., "10 dollars" -> "10")
-            let numberPattern = try? NSRegularExpression(pattern: "\\d+\\.?\\d*", options: [])
-            if let match = numberPattern?.firstMatch(in: transcript, options: [], range: NSRange(transcript.startIndex..., in: transcript)),
-               let range = Range(match.range, in: transcript) {
-                let amount = String(transcript[range])
-                print("[ViewModel] Extracted amount from voice: \(amount)")
-                await setPaymentAmount(amount)
-                return
-            }
-        }
-
-        flowState = .processing
-
-        do {
-            let response = try await apiClient.processVoiceCommand(
-                transcript: transcript,
-                userAddress: walletAddress.isEmpty ? nil : walletAddress,
-                merchantWallet: currentMerchantWallet
-            )
-
-            print("[ViewModel] API response success: \(response.success)")
-
-            guard let data = response.data else {
-                print("[ViewModel] No data in response!")
-                throw APIError.serverError("No data in response")
-            }
-
-            print("[ViewModel] Voice response: '\(data.voiceResponse)'")
-            print("[ViewModel] Next action: \(data.nextAction)")
-            lastResponse = data.voiceResponse
-
-            // Speak the response
-            let language = data.intent.language == "es" ? "es-ES" : "en-US"
-            print("[ViewModel] Speaking in language: \(language)")
-            glassesManager.speak(data.voiceResponse, language: language)
-
-            // Handle the next action
-            await handleNextAction(data.nextAction, intent: data.intent)
-
-        } catch {
-            print("[ViewModel] ERROR: \(error)")
-            errorMessage = error.localizedDescription
-            flowState = .failed(error: error.localizedDescription)
-            glassesManager.speak("Sorry, there was an error", language: "en-US")
-        }
+    /// Start QR scanning (callable from Gemini tool dispatch)
+    public func startQRScanning() async {
+        flowState = .scanningQR
+        glassesManager.triggerHaptic(.short)
+        await glassesManager.startQRScanning()
     }
 
     // MARK: - Payment Flow
@@ -569,54 +518,6 @@ public class VoiceSwapViewModel: ObservableObject {
 
     // MARK: - Private Helpers
 
-    private func handleNextAction(_ action: String, intent: ParsedIntent) async {
-        switch action {
-        case "scan_qr":
-            flowState = .scanningQR
-            glassesManager.triggerHaptic(.short)
-
-        case "await_confirmation":
-            let amount = intent.amount ?? currentAmount ?? "?"
-            let merchant = intent.recipient ?? currentMerchantName ?? "merchant"
-            flowState = .awaitingConfirmation(amount: amount, merchant: merchant)
-
-            // Store context
-            if let amount = intent.amount {
-                currentAmount = amount
-            }
-            if let recipient = intent.recipient {
-                currentMerchantName = recipient
-            }
-
-        case "execute_transaction":
-            await confirmPayment()
-
-        case "cancel_transaction":
-            cancelPayment()
-
-        case "show_balance":
-            await refreshBalances()
-            flowState = .idle
-
-        case "show_help":
-            flowState = .idle
-
-        case "set_amount":
-            // Voice command provided an amount while we're waiting for one
-            if let amount = intent.amount {
-                await setPaymentAmount(amount)
-            }
-
-        default:
-            // If we're in enteringAmount state and got a voice command with an amount, use it
-            if case .enteringAmount = flowState, let amount = intent.amount {
-                await setPaymentAmount(amount)
-            } else {
-                flowState = .listening
-            }
-        }
-    }
-
     /// Poll backend for transaction confirmation
     /// Returns true if confirmed, false if failed
     /// Throws on timeout or network error
@@ -700,27 +601,33 @@ extension VoiceSwapViewModel: MetaGlassesDelegate {
     nonisolated public func glassesDidConnect() {
         Task { @MainActor in
             isConnectedToGlasses = true
-            glassesManager.speak("VoiceSwap connected. Say 'Hey VoiceSwap' to start.", language: "en-US")
+            print("[ViewModel] Glasses connected")
         }
     }
 
     nonisolated public func glassesDidDisconnect() {
         Task { @MainActor in
             isConnectedToGlasses = false
+            geminiSession?.stopSession()
             flowState = .idle
         }
     }
 
     nonisolated public func glassesDidReceiveVoiceCommand(_ result: VoiceCommandResult) {
-        print("[ViewModel] Delegate received voice command: '\(result.transcript)'")
-        Task { @MainActor in
-            await processVoiceCommand(result.transcript)
-        }
+        // Voice commands now handled by Gemini Live — this delegate is no longer used
+        print("[ViewModel] Voice command via delegate (ignored, using Gemini): '\(result.transcript)'")
     }
 
     nonisolated public func glassesDidScanQR(_ result: QRScanResult) {
         Task { @MainActor in
             await handleQRScan(result.rawData)
+
+            // Notify Gemini about the QR detection so it can speak about it
+            geminiSession?.notifyQRDetected(
+                merchantWallet: result.merchantWallet ?? result.rawData,
+                merchantName: result.merchantName,
+                amount: result.amount
+            )
         }
     }
 

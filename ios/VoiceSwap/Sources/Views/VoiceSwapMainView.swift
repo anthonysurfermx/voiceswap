@@ -33,8 +33,11 @@ public struct VoiceSwapMainView: View {
     @StateObject private var viewModel = VoiceSwapViewModel()
     @ObservedObject private var walletManager = WalletConnectManager.shared
     @StateObject private var glassesManager = MetaGlassesManager.shared
+    @StateObject private var geminiSession = GeminiSessionViewModel()
     @State private var isBalanceHidden = false
     @State private var showPhoneCameraScanner = false
+    @State private var showGeminiKeyInput = false
+    @State private var geminiKeyInput: String = ""
     @State private var amountInput: String = ""
 
     public init() {}
@@ -47,6 +50,7 @@ public struct VoiceSwapMainView: View {
 
                 walletCard
                 glassesCard
+                geminiCard
 
                 // Manual QR scan button (phone camera fallback)
                 if walletManager.isConnected {
@@ -77,6 +81,14 @@ public struct VoiceSwapMainView: View {
             if let address = walletManager.currentAddress {
                 viewModel.setWalletAddress(address)
             }
+
+            // Wire Gemini session to ViewModel
+            viewModel.setupGeminiSession(geminiSession)
+
+            // Forward glasses video frames to Gemini for scene understanding
+            glassesManager.onVideoFrame = { [weak geminiSession] image in
+                geminiSession?.processVideoFrame(image)
+            }
         }
         .onChange(of: walletManager.connectionState) { state in
             if case .connected(let address) = state {
@@ -96,6 +108,17 @@ public struct VoiceSwapMainView: View {
             PhoneCameraScannerView(viewModel: viewModel) {
                 showPhoneCameraScanner = false
             }
+        }
+        .alert("Gemini API Key", isPresented: $showGeminiKeyInput) {
+            TextField("Paste your API key", text: $geminiKeyInput)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            Button("Save") {
+                GeminiConfig.apiKey = geminiKeyInput
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Get a free key from Google AI Studio")
         }
     }
 
@@ -255,22 +278,32 @@ public struct VoiceSwapMainView: View {
             // Currently streaming - stop QR scan
             glassesManager.stopQRScanning()
 
-        case .connected, .registered:
+        case .connected:
             // Start QR scan if SDK has devices OR glasses detected via audio route
             if !glassesManager.devices.isEmpty || glassesManager.isGlassesHFPConnected {
                 glassesManager.delegate = viewModel
                 await glassesManager.startQRScanning()
             } else {
-                // No glasses detected - open Meta View to establish connection
-                await glassesManager.connect()
+                // Connected but no devices - try to start QR anyway
+                glassesManager.delegate = viewModel
+                await glassesManager.startQRScanning()
             }
 
-        case .disconnected:
-            // Not registered - start registration flow
-            await glassesManager.connect()
+        case .registered:
+            // Already registered, waiting for Bluetooth device
+            // Don't call connect() again - it would loop with RegistrationError
+            if !glassesManager.devices.isEmpty || glassesManager.isGlassesHFPConnected {
+                glassesManager.delegate = viewModel
+                await glassesManager.startQRScanning()
+            } else {
+                print("[VoiceSwap] Registered but no glasses detected via Bluetooth")
+                print("[VoiceSwap] Make sure glasses are connected in iOS Settings > Bluetooth")
+                print("[VoiceSwap] Attempting automatic re-registration recovery...")
+                await forceReconnectGlasses()
+            }
 
-        case .error:
-            // Error state - clear and retry registration
+        case .disconnected, .error:
+            // Not registered or error - start registration flow
             await glassesManager.connect()
 
         case .searching, .connecting:
@@ -280,10 +313,11 @@ public struct VoiceSwapMainView: View {
     }
 
     /// Force disconnect and re-register glasses (long press action)
+    /// Uses fullReset() to clear stale registration state (known Meta SDK issue)
     private func forceReconnectGlasses() async {
-        print("[VoiceSwap] Force re-registration requested")
-        // Disconnect first to clear state
-        glassesManager.disconnect()
+        print("[VoiceSwap] Force re-registration requested (full reset)")
+        // Full reset clears all local state - fixes stale registration issue
+        glassesManager.fullReset()
         // Small delay then reconnect
         try? await Task.sleep(nanoseconds: 500_000_000)
         await glassesManager.connect()
@@ -319,6 +353,96 @@ public struct VoiceSwapMainView: View {
             return Theme.accent  // Teal X on dark background
         default:
             return Theme.dark  // Dark icon on teal background
+        }
+    }
+
+    // MARK: - Gemini Card
+
+    private var geminiCard: some View {
+        MinimalCard {
+            HStack(spacing: 12) {
+                // Status dot
+                Circle()
+                    .fill(geminiSession.isSessionActive ? Theme.accent : Theme.border)
+                    .frame(width: 8, height: 8)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("GEMINI")
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundColor(Theme.dark)
+
+                    Text(geminiStatusText)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(Theme.muted)
+                }
+
+                Spacer()
+
+                if geminiSession.isAISpeaking {
+                    // Speaking indicator
+                    HStack(spacing: 2) {
+                        ForEach(0..<3, id: \.self) { i in
+                            RoundedRectangle(cornerRadius: 1)
+                                .fill(Theme.accent)
+                                .frame(width: 2, height: CGFloat([8, 14, 10][i]))
+                        }
+                    }
+                    .padding(.trailing, 8)
+                }
+
+                Button {
+                    handleGeminiButtonTap()
+                } label: {
+                    Circle()
+                        .fill(geminiSession.isSessionActive ? Theme.dark : (GeminiConfig.isConfigured ? Theme.accent : Theme.border))
+                        .frame(width: 32, height: 32)
+                        .overlay(
+                            Image(systemName: geminiButtonIcon)
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(geminiSession.isSessionActive ? Theme.accent : Theme.dark)
+                        )
+                }
+            }
+        }
+    }
+
+    private var geminiStatusText: String {
+        if let error = geminiSession.sessionError {
+            return error
+        }
+        if geminiSession.isAISpeaking {
+            return "Speaking..."
+        }
+        if geminiSession.isListening {
+            return "Listening..."
+        }
+        if geminiSession.isSessionActive {
+            return "Active"
+        }
+        if !GeminiConfig.isConfigured {
+            return "Tap to set API key"
+        }
+        return "Tap to start voice"
+    }
+
+    private var geminiButtonIcon: String {
+        if geminiSession.isSessionActive {
+            return "stop.fill"
+        }
+        if !GeminiConfig.isConfigured {
+            return "key.fill"
+        }
+        return "mic.fill"
+    }
+
+    private func handleGeminiButtonTap() {
+        if geminiSession.isSessionActive {
+            viewModel.stopListening()
+        } else if !GeminiConfig.isConfigured {
+            geminiKeyInput = GeminiConfig.apiKey
+            showGeminiKeyInput = true
+        } else {
+            viewModel.startListening()
         }
     }
 
@@ -462,7 +586,7 @@ public struct VoiceSwapMainView: View {
                 HStack {
                     Spacer()
 
-                    Text("UNICHAIN")
+                    Text("MONAD")
                         .font(.system(size: 9, weight: .bold, design: .monospaced))
                         .foregroundColor(Theme.dark.opacity(0.4))
                         .padding(.horizontal, 8)

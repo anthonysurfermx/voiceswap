@@ -7,35 +7,24 @@
  * 3. Swap to USDC if needed
  * 4. Transfer USDC to merchant
  *
- * Network: Unichain Mainnet (Chain ID: 130) or Sepolia (Chain ID: 1301)
+ * Network: Monad Mainnet (Chain ID: 143)
  * Output Token: USDC only
  */
 
 import { ethers } from 'ethers';
 import { getEthPrice } from './priceOracle.js';
 
-// Network Configuration - support both mainnet and sepolia
-const IS_SEPOLIA = process.env.NETWORK === 'unichain-sepolia';
-const UNICHAIN_RPC = IS_SEPOLIA
-  ? (process.env.UNICHAIN_SEPOLIA_RPC_URL || 'https://sepolia.unichain.org')
-  : (process.env.UNICHAIN_RPC_URL || 'https://mainnet.unichain.org');
-const CHAIN_ID = IS_SEPOLIA ? 1301 : 130;
+// Network Configuration - Monad Mainnet
+const MONAD_RPC = process.env.MONAD_RPC_URL || 'https://rpc.monad.xyz';
+const CHAIN_ID = 143;
 
-// Token Addresses - different on mainnet vs sepolia
-const TOKENS_MAINNET = {
-  USDC: '0x078D782b760474a361dDA0AF3839290b0EF57AD6',
-  WETH: '0x4200000000000000000000000000000000000006',
+// Token Addresses on Monad
+const TOKENS = {
+  USDC: '0x754704Bc059F8C67012fEd69BC8A327a5aafb603',
+  WMON: '0x3bd359C1119dA7Da1D913D1C4D2B7c461115433A',
 } as const;
 
-// Sepolia tokens (may need to deploy test tokens or use existing ones)
-const TOKENS_SEPOLIA = {
-  USDC: '0x31d0220469e10c4E71834a79b1f276d740d3768F', // Unichain Sepolia USDC
-  WETH: '0x4200000000000000000000000000000000000006', // WETH is same address
-} as const;
-
-const TOKENS = IS_SEPOLIA ? TOKENS_SEPOLIA : TOKENS_MAINNET;
-
-console.log(`[VoiceSwap] Network: ${IS_SEPOLIA ? 'Unichain Sepolia' : 'Unichain Mainnet'} (Chain ID: ${CHAIN_ID})`);
+console.log(`[VoiceSwap] Network: Monad Mainnet (Chain ID: ${CHAIN_ID})`);
 
 // ERC20 ABI (minimal)
 const ERC20_ABI = [
@@ -47,7 +36,7 @@ const ERC20_ABI = [
 ];
 
 // Provider
-const provider = new ethers.providers.JsonRpcProvider(UNICHAIN_RPC);
+const provider = new ethers.providers.JsonRpcProvider(MONAD_RPC);
 
 /**
  * Token balance with metadata
@@ -67,11 +56,11 @@ export interface TokenBalance {
 export interface WalletBalances {
   address: string;
   chainId: number;
-  nativeETH: TokenBalance;
+  nativeMON: TokenBalance;
   tokens: TokenBalance[];
   totalUSDC: string; // USDC balance only
-  totalUSD: string;  // Total value in USD (USDC + ETH converted)
-  ethPriceUSD: number; // Current ETH price used for calculation
+  totalUSD: string;  // Total value in USD (USDC + MON converted)
+  monPriceUSD: number; // Current MON price used for calculation
 }
 
 /**
@@ -101,9 +90,9 @@ export interface PaymentResult {
  * Supported formats:
  * - Simple: "0x..." (just wallet address)
  * - JSON: {"wallet": "0x...", "amount": "10.00", "name": "Store"}
- * - URI: "unichain:0x...?amount=10.00&name=Store"
+ * - URI: "monad:0x...?amount=10.00&name=Store"
  * - Deep link: "voiceswap://pay?wallet=0x...&amount=10.00"
- * - EIP-681: "ethereum:0x...@130" or "ethereum:0x...@130/transfer?address=...&uint256=..."
+ * - EIP-681: "ethereum:0x...@143" or "ethereum:0x...@143/transfer?address=...&uint256=..."
  *   (Standard format used by Zerion, MetaMask, Rainbow, etc.)
  */
 export function parseQRCode(qrData: string): PaymentRequest | null {
@@ -132,9 +121,9 @@ export function parseQRCode(qrData: string): PaymentRequest | null {
     // Check if it's EIP-681 format (ethereum:0x...@chainId or ethereum:0x...@chainId/transfer?...)
     // This is the standard format used by Zerion, MetaMask, Rainbow, etc.
     // Examples:
-    //   ethereum:0x1234...@130 (simple address on Unichain)
-    //   ethereum:0x1234...@130?value=1000000000000000000 (send ETH)
-    //   ethereum:0xUSDC@130/transfer?address=0xRecipient&uint256=1000000 (ERC20 transfer)
+    //   ethereum:0x1234...@143 (simple address on Monad)
+    //   ethereum:0x1234...@143?value=1000000000000000000 (send MON)
+    //   ethereum:0xUSDC@143/transfer?address=0xRecipient&uint256=1000000 (ERC20 transfer)
     const eip681Match = qrData.match(/^ethereum:(0x[a-fA-F0-9]{40})(?:@(\d+))?(?:\/([a-zA-Z]+))?(?:\?(.*))?$/);
     if (eip681Match) {
       const targetAddress = eip681Match[1];
@@ -177,10 +166,10 @@ export function parseQRCode(qrData: string): PaymentRequest | null {
         const valueWei = params.get('value');
         if (valueWei) {
           try {
-            // ETH has 18 decimals - store as ETH, convert in API layer
-            const ethAmount = parseFloat(ethers.utils.formatEther(valueWei));
-            // Mark as ETH amount with prefix for later conversion
-            amount = `ETH:${ethAmount}`;
+            // MON has 18 decimals - store as MON, convert in API layer
+            const monAmount = parseFloat(ethers.utils.formatEther(valueWei));
+            // Mark as MON amount with prefix for later conversion
+            amount = `MON:${monAmount}`;
           } catch {
             // Ignore parsing errors
           }
@@ -193,8 +182,8 @@ export function parseQRCode(qrData: string): PaymentRequest | null {
       }
     }
 
-    // Check if it's a URI format (voiceswap:0x... or unichain:0x...)
-    const uriMatch = qrData.match(/^(?:voiceswap|unichain):([0-9a-fA-Fx]+)(?:\?(.*))?$/);
+    // Check if it's a URI format (voiceswap:0x... or monad:0x...)
+    const uriMatch = qrData.match(/^(?:voiceswap|monad):([0-9a-fA-Fx]+)(?:\?(.*))?$/);
     if (uriMatch) {
       const wallet = uriMatch[1];
       if (!ethers.utils.isAddress(wallet)) {
@@ -211,7 +200,7 @@ export function parseQRCode(qrData: string): PaymentRequest | null {
     }
 
     // Check if it's a deep link format (voiceswap://pay?wallet=...)
-    const deepLinkMatch = qrData.match(/^(?:voiceswap|unichain):\/\/pay\?(.*)$/);
+    const deepLinkMatch = qrData.match(/^(?:voiceswap|monad):\/\/pay\?(.*)$/);
     if (deepLinkMatch) {
       const params = new URLSearchParams(deepLinkMatch[1]);
       const wallet = params.get('wallet');
@@ -243,52 +232,53 @@ export function parseQRCode(qrData: string): PaymentRequest | null {
 }
 
 /**
- * Get wallet balances for a user on Unichain
- * Returns ETH, WETH, and USDC balances
+ * Get wallet balances for a user on Monad
+ * Returns MON, WMON, and USDC balances
  */
 export async function getWalletBalances(userAddress: string): Promise<WalletBalances> {
   const checksumAddress = ethers.utils.getAddress(userAddress);
 
-  // Get native ETH balance
-  const ethBalance = await provider.getBalance(checksumAddress);
+  // Get native MON balance
+  const monBalance = await provider.getBalance(checksumAddress);
 
-  // Get WETH balance
-  const wethContract = new ethers.Contract(TOKENS.WETH, ERC20_ABI, provider);
-  const wethBalance = await wethContract.balanceOf(checksumAddress);
+  // Get WMON balance
+  const wmonContract = new ethers.Contract(TOKENS.WMON, ERC20_ABI, provider);
+  const wmonBalance = await wmonContract.balanceOf(checksumAddress);
 
   // Get USDC balance
   const usdcContract = new ethers.Contract(TOKENS.USDC, ERC20_ABI, provider);
   const usdcBalance = await usdcContract.balanceOf(checksumAddress);
 
   // Format balances
-  const ethFormatted = ethers.utils.formatEther(ethBalance);
-  const wethFormatted = ethers.utils.formatEther(wethBalance);
+  const monFormatted = ethers.utils.formatEther(monBalance);
+  const wmonFormatted = ethers.utils.formatEther(wmonBalance);
   const usdcFormatted = ethers.utils.formatUnits(usdcBalance, 6);
 
-  // Calculate total USD value (USDC + ETH) using live price
-  const ethPriceUSD = await getEthPrice();
-  const ethValue = parseFloat(ethFormatted);
-  const wethValue = parseFloat(wethFormatted);
+  // Calculate total USD value (USDC + MON) using live price
+  // TODO: Replace getEthPrice with MON price oracle when available
+  const monPriceUSD = await getEthPrice(); // Placeholder - use MON price
+  const monValue = parseFloat(monFormatted);
+  const wmonValue = parseFloat(wmonFormatted);
   const usdcValue = parseFloat(usdcFormatted);
-  const totalETHValue = (ethValue + wethValue) * ethPriceUSD;
-  const totalUSD = (usdcValue + totalETHValue).toFixed(2);
+  const totalMONValue = (monValue + wmonValue) * monPriceUSD;
+  const totalUSD = (usdcValue + totalMONValue).toFixed(2);
 
   return {
     address: checksumAddress,
     chainId: CHAIN_ID,
-    nativeETH: {
-      symbol: 'ETH',
+    nativeMON: {
+      symbol: 'MON',
       address: ethers.constants.AddressZero,
-      balance: ethFormatted,
-      balanceRaw: ethBalance.toString(),
+      balance: monFormatted,
+      balanceRaw: monBalance.toString(),
       decimals: 18,
     },
     tokens: [
       {
-        symbol: 'WETH',
-        address: TOKENS.WETH,
-        balance: wethFormatted,
-        balanceRaw: wethBalance.toString(),
+        symbol: 'WMON',
+        address: TOKENS.WMON,
+        balance: wmonFormatted,
+        balanceRaw: wmonBalance.toString(),
         decimals: 18,
       },
       {
@@ -301,41 +291,41 @@ export async function getWalletBalances(userAddress: string): Promise<WalletBala
     ],
     totalUSDC: usdcFormatted,
     totalUSD: totalUSD,
-    ethPriceUSD: ethPriceUSD,
+    monPriceUSD: monPriceUSD,
   };
 }
 
 /**
  * Determine which token to swap based on user's balances
- * Priority: USDC (no swap needed) > WETH > ETH
+ * Priority: USDC (no swap needed) > WMON > MON
  */
 export function determineSwapToken(balances: WalletBalances, amountUSDC: string): {
   needsSwap: boolean;
   swapFrom?: string;
   swapFromSymbol?: string;
   hasEnoughUSDC: boolean;
-  hasEnoughETH: boolean;
-  hasEnoughWETH: boolean;
+  hasEnoughMON: boolean;
+  hasEnoughWMON: boolean;
 } {
   const requiredUSDC = parseFloat(amountUSDC);
   const currentUSDC = parseFloat(balances.tokens.find(t => t.symbol === 'USDC')?.balance || '0');
-  const currentWETH = parseFloat(balances.tokens.find(t => t.symbol === 'WETH')?.balance || '0');
-  const currentETH = parseFloat(balances.nativeETH.balance);
+  const currentWMON = parseFloat(balances.tokens.find(t => t.symbol === 'WMON')?.balance || '0');
+  const currentMON = parseFloat(balances.nativeMON.balance);
 
-  // Minimum ETH to keep for gas
-  const gasReserve = 0.001;
+  // Minimum MON to keep for gas
+  const gasReserve = 0.01;
 
   return {
     needsSwap: currentUSDC < requiredUSDC,
     swapFrom: currentUSDC >= requiredUSDC ? undefined :
-              currentWETH > 0 ? TOKENS.WETH :
-              currentETH > gasReserve ? 'NATIVE_ETH' : undefined,
+              currentWMON > 0 ? TOKENS.WMON :
+              currentMON > gasReserve ? 'NATIVE_MON' : undefined,
     swapFromSymbol: currentUSDC >= requiredUSDC ? undefined :
-                    currentWETH > 0 ? 'WETH' :
-                    currentETH > gasReserve ? 'ETH' : undefined,
+                    currentWMON > 0 ? 'WMON' :
+                    currentMON > gasReserve ? 'MON' : undefined,
     hasEnoughUSDC: currentUSDC >= requiredUSDC,
-    hasEnoughETH: currentETH > gasReserve,
-    hasEnoughWETH: currentWETH > 0,
+    hasEnoughMON: currentMON > gasReserve,
+    hasEnoughWMON: currentWMON > 0,
   };
 }
 
@@ -361,30 +351,30 @@ export async function getMaxPayableAmount(balances: WalletBalances): Promise<{
     };
   }
 
-  const wethBalance = parseFloat(balances.tokens.find(t => t.symbol === 'WETH')?.balance || '0');
-  const ethBalance = parseFloat(balances.nativeETH.balance);
+  const wmonBalance = parseFloat(balances.tokens.find(t => t.symbol === 'WMON')?.balance || '0');
+  const monBalance = parseFloat(balances.nativeMON.balance);
 
-  // Get live ETH price
-  const ethPrice = await getEthPrice();
+  // Get live MON price (TODO: use MON-specific oracle)
+  const monPrice = await getEthPrice();
 
-  if (wethBalance > 0) {
+  if (wmonBalance > 0) {
     return {
-      tokenSymbol: 'WETH',
-      tokenAddress: TOKENS.WETH,
-      maxAmount: wethBalance.toFixed(6),
-      estimatedUSDC: (wethBalance * ethPrice).toFixed(2),
+      tokenSymbol: 'WMON',
+      tokenAddress: TOKENS.WMON,
+      maxAmount: wmonBalance.toFixed(6),
+      estimatedUSDC: (wmonBalance * monPrice).toFixed(2),
     };
   }
 
-  // Keep some ETH for gas
-  const gasReserve = 0.001;
-  const availableETH = Math.max(0, ethBalance - gasReserve);
+  // Keep some MON for gas
+  const gasReserve = 0.01;
+  const availableMON = Math.max(0, monBalance - gasReserve);
 
   return {
-    tokenSymbol: 'ETH',
+    tokenSymbol: 'MON',
     tokenAddress: ethers.constants.AddressZero,
-    maxAmount: availableETH.toFixed(6),
-    estimatedUSDC: (availableETH * ethPrice).toFixed(2),
+    maxAmount: availableMON.toFixed(6),
+    estimatedUSDC: (availableMON * monPrice).toFixed(2),
   };
 }
 
@@ -407,7 +397,7 @@ export function generateVoicePrompt(
     return `You don't have enough USDC. I'll swap your ${swapInfo.swapFromSymbol} to USDC and pay ${amount} to ${merchantName}. Say "confirm" to proceed or "cancel" to stop.`;
   }
 
-  return `Sorry, you don't have enough funds to complete this payment. You need more ETH or USDC on Unichain.`;
+  return `Sorry, you don't have enough funds to complete this payment. You need more MON or USDC on Monad.`;
 }
 
 /**
@@ -491,7 +481,7 @@ export const VOICE_PROMPTS = {
     `I'll swap your ${fromToken} to ${amount} USDC and send it to ${merchant}. Say "confirm" to proceed or "cancel" to stop.`,
 
   insufficientFunds: () =>
-    `Sorry, you don't have enough funds to complete this payment. You need more ETH or USDC on Unichain.`,
+    `Sorry, you don't have enough funds to complete this payment. You need more MON or USDC on Monad.`,
 
   // Confirmation prompts
   confirming: () =>
@@ -515,8 +505,8 @@ export const VOICE_PROMPTS = {
     `I couldn't detect a valid wallet address in the QR code. Please try scanning again.`,
 
   // Balance prompts
-  balanceCheck: (eth: string, usdc: string) =>
-    `Your balance on Unichain: ${eth} ETH and ${usdc} USDC.`,
+  balanceCheck: (mon: string, usdc: string) =>
+    `Your balance on Monad: ${mon} MON and ${usdc} USDC.`,
 };
 
 /**
@@ -584,8 +574,8 @@ export function updateSessionState(
 export const SUPPORTED_TOKENS = TOKENS;
 export const NETWORK_CONFIG = {
   chainId: CHAIN_ID,
-  rpcUrl: UNICHAIN_RPC,
-  name: 'Unichain Mainnet',
+  rpcUrl: MONAD_RPC,
+  name: 'Monad Mainnet',
 };
 
 // ============================================
@@ -635,8 +625,8 @@ export function generateMerchantQRData(
   if (merchantName) voiceswapParams.set('name', merchantName);
   const voiceswapUri = `voiceswap://pay?${voiceswapParams.toString()}`;
 
-  // EIP-681 format for USDC transfer on Unichain (chain ID 130)
-  // Format: ethereum:USDC_CONTRACT@130/transfer?address=RECIPIENT&uint256=AMOUNT_IN_WEI
+  // EIP-681 format for USDC transfer on Monad (chain ID 143)
+  // Format: ethereum:USDC_CONTRACT@143/transfer?address=RECIPIENT&uint256=AMOUNT_IN_WEI
   let eip681Uri: string;
   if (amount) {
     // Convert USDC amount to wei (6 decimals)

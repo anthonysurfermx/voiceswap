@@ -17,7 +17,7 @@ let package = Package(
     ],
     dependencies: [
         // Meta Wearables Device Access Toolkit
-        .package(url: "https://github.com/facebook/meta-wearables-dat-ios.git", from: "0.3.0"),
+        .package(url: "https://github.com/facebook/meta-wearables-dat-ios.git", exact: "0.4.0"),
     ],
     targets: [
         .target(

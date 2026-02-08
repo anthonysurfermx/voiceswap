@@ -28,7 +28,6 @@ app.get('/.well-known/apple-app-site-association', (_req, res) => {
 
 // Deep link handler for VoiceSwap app
 app.get('/app/*', (req, res) => {
-  // Redirect to app or show web fallback
   const appUrl = `voiceswap://${req.path.replace('/app/', '')}`;
   res.redirect(appUrl);
 });
@@ -39,7 +38,6 @@ app.get('/pay/:wallet', (req, res) => {
   const amount = req.query.amount as string;
   const name = req.query.name as string;
 
-  // Try to open app, fallback to web
   const appUrl = `voiceswap://pay?wallet=${wallet}${amount ? `&amount=${amount}` : ''}${name ? `&name=${name}` : ''}`;
 
   res.send(`
@@ -71,73 +69,30 @@ app.get('/pay/:wallet', (req, res) => {
   `);
 });
 
-// Get payment receiver address from env
-const PAYMENT_RECEIVER = process.env.PAYMENT_RECEIVER_ADDRESS ?? '';
-if (!PAYMENT_RECEIVER) {
-  console.error('❌ PAYMENT_RECEIVER_ADDRESS not set in environment variables');
-  console.error('   Please set your Ethereum address to receive x402 payments');
-  process.exit(1);
-}
+// Network configuration (Monad mainnet)
+const NETWORK = 'monad';
+const CHAIN_ID = 143;
 
-// Network configuration (Unichain for both swaps and x402 payments)
-const NETWORK = (process.env.NETWORK || 'unichain-sepolia') as 'unichain' | 'unichain-sepolia';
-const CHAIN_ID = NETWORK === 'unichain' ? 130 : 1301;
-
-// Mount swap routes (x402 middleware is applied per-route in swap.ts)
+// Mount routes
 app.use('/', swapRoutes);
-
-// Mount SSE events routes for real-time transaction monitoring
 app.use('/events', eventsRoutes);
-
-// Mount VoiceSwap routes for voice-activated payments
 app.use('/voiceswap', voiceswapRoutes);
 
 // Root endpoint - service info
 app.get('/', (_req, res) => {
   res.json({
-    service: 'x402 Swap Executor',
-    description: 'Swap-as-a-Service: x402-powered Uniswap V4 swap execution for AI agents on Unichain',
-    version: '2.0.0',
+    service: 'VoiceSwap',
+    description: 'Voice-activated crypto payments with Uniswap V3 on Monad',
+    version: '3.0.0',
     network: NETWORK,
     chainId: CHAIN_ID,
     endpoints: {
-      '/quote': {
-        method: 'GET | POST',
-        price: '$0.001',
-        description: 'Get a swap quote',
-      },
-      '/route': {
-        method: 'POST',
-        price: '$0.005',
-        description: 'Calculate optimal route with calldata',
-      },
-      '/execute': {
-        method: 'POST',
-        price: '$0.02',
-        description: 'Execute swap on-chain',
-      },
-      '/status/:txHash': {
-        method: 'GET',
-        price: '$0.001',
-        description: 'Check transaction status',
-      },
-      '/tokens': {
-        method: 'GET',
-        price: 'FREE',
-        description: 'List supported tokens',
-      },
-      '/health': {
-        method: 'GET',
-        price: 'FREE',
-        description: 'Health check',
-      },
-    },
-    documentation: 'https://github.com/your-repo/x402-swap-executor',
-    x402: {
-      protocol: 'https://x402.org',
-      paymentToken: 'USDC',
-      paymentNetwork: NETWORK,
-      chainId: CHAIN_ID,
+      '/quote': { method: 'GET | POST', description: 'Get a swap quote' },
+      '/route': { method: 'POST', description: 'Calculate optimal route with calldata' },
+      '/execute': { method: 'POST', description: 'Execute swap on-chain' },
+      '/status/:txHash': { method: 'GET', description: 'Check transaction status' },
+      '/tokens': { method: 'GET', description: 'List supported tokens' },
+      '/health': { method: 'GET', description: 'Health check' },
     },
   });
 });
@@ -154,7 +109,6 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 // Initialize database and start server
 async function startServer() {
   try {
-    // Initialize SQLite database
     await initDatabase();
     console.log('[Database] SQLite initialized successfully');
 
@@ -162,25 +116,24 @@ async function startServer() {
       console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║                                                               ║
-║   🔄 x402 Swap Executor v2.0 (Uniswap V4 on Unichain)        ║
-║   Swap-as-a-Service for AI Agents                            ║
+║   🔄 VoiceSwap v3.0 (Uniswap V3 on Monad)                    ║
+║   Voice-activated crypto payments                            ║
 ║                                                               ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║                                                               ║
 ║   Server running at: http://localhost:${PORT}                   ║
 ║   Network: ${NETWORK.padEnd(23)}                             ║
 ║   Chain ID: ${String(CHAIN_ID).padEnd(22)}                             ║
-║   Payment receiver: ${PAYMENT_RECEIVER.slice(0, 10)}...${PAYMENT_RECEIVER.slice(-8)}            ║
 ║                                                               ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║   Endpoints:                                                  ║
-║   ├─ GET  /quote    ($0.001) - Get swap quote                ║
-║   ├─ POST /route    ($0.005) - Calculate optimal route       ║
-║   ├─ POST /execute  ($0.02)  - Execute swap on-chain         ║
-║   ├─ GET  /status   ($0.001) - Check transaction status      ║
-║   ├─ GET  /tokens   (FREE)   - List supported tokens         ║
-║   ├─ GET  /events   (FREE)   - SSE transaction monitoring    ║
-║   └─ GET  /health   (FREE)   - Health check                  ║
+║   ├─ GET  /quote              - Get swap quote                ║
+║   ├─ POST /route              - Calculate optimal route       ║
+║   ├─ POST /execute            - Execute swap on-chain         ║
+║   ├─ GET  /status             - Check transaction status      ║
+║   ├─ GET  /tokens             - List supported tokens         ║
+║   ├─ GET  /events             - SSE transaction monitoring    ║
+║   └─ GET  /health             - Health check                  ║
 ║                                                               ║
 ╚═══════════════════════════════════════════════════════════════╝
       `);
@@ -208,4 +161,3 @@ async function startServer() {
 startServer();
 
 export default app;
-
