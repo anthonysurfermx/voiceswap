@@ -16,6 +16,8 @@ public struct APIResponse<T: Decodable>: Decodable {
     public let error: String?
 }
 
+public struct EmptyResponse: Decodable {}
+
 public struct ParsedIntent: Decodable {
     public let type: String
     public let confidence: Double
@@ -53,7 +55,7 @@ public struct WalletBalances: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case address, chainId, nativeMON, tokens, totalUSDC, totalUSD, monPriceUSD
-        // Fallbacks for old Unichain backend
+        // Legacy field names for backwards compatibility
         case nativeETH, ethPriceUSD
     }
 
@@ -178,8 +180,26 @@ public struct SessionUpdateResponse: Decodable {
 
 // MARK: - Transaction Preparation (for WalletConnect signing)
 
+public struct TransactionStep: Decodable {
+    public let type: String        // "wrap", "approve", "swap", "transfer"
+    public let tx: TransactionData
+    public let description: String
+}
+
+public struct SwapDetails: Decodable {
+    public let fromToken: String?
+    public let toToken: String?
+    public let amountIn: String?
+    public let estimatedOut: String?
+    public let priceImpact: String?
+    public let slippage: String?
+}
+
 public struct PrepareTransactionResponse: Decodable {
     public let transaction: TransactionData
+    public let steps: [TransactionStep]?
+    public let needsSwap: Bool?
+    public let swapInfo: SwapDetails?
     public let tokenAddress: String
     public let tokenSymbol: String
     public let amount: String
@@ -209,6 +229,61 @@ public struct InsufficientBalanceError: Decodable {
     public let error: String
     public let currentBalance: String?
     public let requiredAmount: String?
+}
+
+// MARK: - Gas Sponsorship
+
+public struct GasRequestResponse: Decodable {
+    public let status: String    // "funded" or "sufficient"
+    public let txHash: String?
+    public let amount: String?
+    public let balance: String?
+    public let message: String
+}
+
+// MARK: - User Payment History
+
+public struct UserPayment: Decodable, Identifiable {
+    public var id: Int? { _id }
+    private let _id: Int?
+    public let merchant_wallet: String
+    public let tx_hash: String
+    public let from_address: String
+    public let amount: String
+    public let concept: String?
+    public let merchant_name: String?
+    public let block_number: Int
+    public let created_at: Int
+
+    enum CodingKeys: String, CodingKey {
+        case _id = "id"
+        case merchant_wallet, tx_hash, from_address, amount, concept, merchant_name, block_number, created_at
+    }
+
+    public var merchantShort: String {
+        guard merchant_wallet.count > 10 else { return merchant_wallet }
+        return "\(merchant_wallet.prefix(6))...\(merchant_wallet.suffix(4))"
+    }
+
+    public var txHashShort: String {
+        guard tx_hash.count > 12 else { return tx_hash }
+        return "\(tx_hash.prefix(8))...\(tx_hash.suffix(4))"
+    }
+
+    public var date: Date {
+        Date(timeIntervalSince1970: TimeInterval(created_at / 1000))
+    }
+}
+
+public struct UserPaymentsResponse: Decodable {
+    public let payments: [UserPayment]
+    public let pagination: PaginationInfo
+}
+
+public struct PaginationInfo: Decodable {
+    public let limit: Int
+    public let offset: Int
+    public let count: Int
 }
 
 // MARK: - Transaction Status
@@ -430,6 +505,45 @@ public actor VoiceSwapAPIClient {
     /// Returns status: "pending", "confirmed", "failed", or "not_found"
     public func getTransactionStatus(txHash: String) async throws -> APIResponse<TransactionStatusResponse> {
         return try await get("/voiceswap/tx/\(txHash)")
+    }
+
+    // MARK: - Merchant Payment Tracking
+
+    /// Record a payment with purchase concept for merchant history
+    public func saveMerchantPayment(
+        merchantWallet: String,
+        txHash: String,
+        fromAddress: String,
+        amount: String,
+        concept: String?
+    ) async throws {
+        var body: [String: Any] = [
+            "merchantWallet": merchantWallet,
+            "txHash": txHash,
+            "fromAddress": fromAddress,
+            "amount": amount
+        ]
+        if let concept = concept {
+            body["concept"] = concept
+        }
+
+        // Fire and forget — don't fail the payment if tracking fails
+        let _: APIResponse<EmptyResponse> = try await post("/voiceswap/merchant/payment", body: body)
+    }
+
+    // MARK: - Gas Sponsorship
+
+    /// Request gas airdrop for new users
+    public func requestGas(userAddress: String) async throws -> APIResponse<GasRequestResponse> {
+        let body: [String: Any] = ["userAddress": userAddress]
+        return try await post("/voiceswap/gas/request", body: body)
+    }
+
+    // MARK: - User Payment History
+
+    /// Get user's payment history
+    public func getUserPayments(address: String, limit: Int = 50, offset: Int = 0) async throws -> APIResponse<UserPaymentsResponse> {
+        return try await get("/voiceswap/user/payments/\(address)?limit=\(limit)&offset=\(offset)")
     }
 
     // MARK: - Health Check

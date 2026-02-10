@@ -304,8 +304,15 @@ class GeminiLiveService: ObservableObject {
     // MARK: - Private: Message Parsing
 
     private func handleMessage(_ text: String) {
-        guard let data = text.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        guard let data = text.data(using: .utf8) else {
+            NSLog("[Gemini] ⚠️ Message not UTF-8 decodable (length: %d)", text.count)
+            return
+        }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            let preview = String(text.prefix(200))
+            NSLog("[Gemini] ⚠️ Failed to parse JSON message: %@", preview)
+            return
+        }
 
         // 1. Setup complete
         if json["setupComplete"] != nil {
@@ -399,7 +406,13 @@ class GeminiLiveService: ObservableObject {
                let text = outputTranscription["text"] as? String, !text.isEmpty {
                 NSLog("[Gemini] AI said: %@", text)
             }
+
+            return
         }
+
+        // Log unrecognized message types
+        let keys = Array(json.keys).joined(separator: ", ")
+        NSLog("[Gemini] ⚠️ Unrecognized message keys: %@", keys)
     }
 
     // MARK: - Private: Helpers

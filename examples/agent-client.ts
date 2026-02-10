@@ -4,7 +4,7 @@
  * This demonstrates how an AI agent can use the swap service
  * by paying micropayments via the x402 protocol.
  *
- * Network: Unichain (Uniswap V4)
+ * Network: Monad (Uniswap V3)
  */
 
 // In production, you'd use the x402 client library
@@ -12,7 +12,7 @@
 
 const SWAP_EXECUTOR_URL = 'http://localhost:4021';
 
-// Example tokens on Unichain Sepolia
+// Example tokens on Monad Mainnet
 const TOKENS = {
   WETH: '0x4200000000000000000000000000000000000006',
   USDC: '0x31d0220469e10c4E71834a79b1f276d740d3768F',
@@ -22,7 +22,7 @@ const TOKENS = {
  * Simulates an AI agent that wants to swap tokens
  */
 async function aiAgentSwapExample() {
-  console.log('🤖 AI Agent: I need to swap 0.01 WETH for USDC on Unichain\n');
+  console.log('🤖 AI Agent: I need to swap 0.01 WETH for USDC on Monad\n');
 
   // Step 1: Check service health (free)
   console.log('📡 Checking swap service health...');
@@ -124,7 +124,7 @@ async function fullSwapFlowExample() {
     data: {
       ...mockQuote.data,
       calldata: '0x3593564c...',
-      to: '0xef740bf23acae26f6492b10de645d6b98dc8eaf3', // Universal Router on Unichain
+      to: '0x0d97dc33264bfc1c226207428a79b26757fb9dc3', // Universal Router on Monad
       value: '0',
       slippageTolerance: 0.5,
       deadline: Math.floor(Date.now() / 1000) + 1800,
@@ -166,14 +166,14 @@ async function fullSwapFlowExample() {
   console.log(JSON.stringify(mockStatus, null, 2));
   console.log('');
 
-  console.log('✅ Swap completed successfully on Unichain!');
+  console.log('✅ Swap completed successfully on Monad!');
   console.log('   Total x402 cost: $0.027');
   console.log('   Tokens received: 35.02 USDC');
 }
 
 // Run examples
 console.log('╔═══════════════════════════════════════════════════════════════╗');
-console.log('║     x402 Swap Executor - Client Example (Unichain V4)        ║');
+console.log('║     x402 Swap Executor - Client Example (Monad V3)            ║');
 console.log('╚═══════════════════════════════════════════════════════════════╝\n');
 
 aiAgentSwapExample()

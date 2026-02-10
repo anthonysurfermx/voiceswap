@@ -16,7 +16,7 @@ echo "1️⃣  Testing /health..."
 curl -s "$API_URL/health" | python3 -m json.tool || echo "❌ Failed"
 echo "----------------------------------------"
 
-# 2. Get Quote (Hybrid V4 + Uniswap X)
+# 2. Get Quote (Hybrid V3 + Uniswap X)
 echo "2️⃣  Testing /quote (Hybrid)..."
 RESPONSE=$(curl -s "$API_URL/quote?tokenIn=$TOKEN_IN&tokenOut=$TOKEN_OUT&amountIn=$AMOUNT_IN")
 echo "$RESPONSE" | python3 -m json.tool

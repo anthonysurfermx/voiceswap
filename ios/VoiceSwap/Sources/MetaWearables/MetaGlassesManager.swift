@@ -292,6 +292,7 @@ public class MetaGlassesManager: NSObject, ObservableObject {
     @Published public private(set) var devices: [DeviceIdentifier] = []
     @Published public private(set) var lastDetectedQR: QRScanResult?
     @Published public private(set) var isGlassesHFPConnected: Bool = false
+    private var isStoppingStream: Bool = false
 
     // MARK: - Computed Properties
     public var isConnected: Bool {
@@ -1248,6 +1249,22 @@ public class MetaGlassesManager: NSObject, ObservableObject {
             return
         }
 
+        // Don't start if already streaming
+        if isStreamingCamera || connectionState == .streaming {
+            print("[MetaGlasses] Camera already streaming, skipping start")
+            return
+        }
+
+        // Wait briefly if stream is stopping to avoid continuation leak
+        if isStoppingStream {
+            print("[MetaGlasses] Stream is stopping, waiting...")
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            if isStoppingStream {
+                print("[MetaGlasses] Stream still stopping, aborting start")
+                return
+            }
+        }
+
         print("[MetaGlasses] Starting camera stream...")
         print("[MetaGlasses] Connected devices: \(devices.count), HFP: \(isGlassesHFPConnected)")
 
@@ -1323,15 +1340,22 @@ public class MetaGlassesManager: NSObject, ObservableObject {
     /// Stop camera streaming
     /// Note: We only stop the stream, not destroy the session (reused per Meta SDK pattern)
     public func stopCameraStream() {
-        Task {
-            await streamSession?.stop()
+        guard !isStoppingStream else {
+            print("[MetaGlasses] Already stopping stream, skipping")
+            return
         }
 
+        isStoppingStream = true
         isStreamingCamera = false
         currentVideoFrame = nil
 
         if connectionState == .streaming {
             connectionState = .connected
+        }
+
+        Task {
+            await streamSession?.stop()
+            await MainActor.run { isStoppingStream = false }
         }
 
         print("[MetaGlasses] Camera streaming stopped (session preserved for reuse)")

@@ -71,6 +71,13 @@ export async function initDatabase(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_merchant_wallet ON merchant_payments(merchant_wallet);
     CREATE INDEX IF NOT EXISTS idx_merchant_tx_hash ON merchant_payments(tx_hash);
     CREATE INDEX IF NOT EXISTS idx_merchant_block ON merchant_payments(block_number);
+
+    -- Address labels for human-readable names
+    CREATE TABLE IF NOT EXISTS address_labels (
+      address TEXT PRIMARY KEY NOT NULL,
+      label TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
   `);
 
   console.log('[Database] Initialized at:', dbPath);
@@ -109,7 +116,7 @@ export async function saveTransaction(data: {
       data.tokenIn,
       data.tokenOut,
       data.amountIn,
-      data.routingType || 'v4',
+      data.routingType || 'v3',
       now,
       now,
     ]
@@ -314,6 +321,25 @@ export async function getMerchantPayments(
 }
 
 /**
+ * Get user payment history (payments sent by a user)
+ */
+export async function getUserPayments(
+  userAddress: string,
+  options: {
+    limit?: number;
+    offset?: number;
+  } = {}
+): Promise<MerchantPayment[]> {
+  const db = getDb();
+  const { limit = 50, offset = 0 } = options;
+
+  return await db.all(
+    `SELECT * FROM merchant_payments WHERE from_address = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+    [userAddress.toLowerCase(), limit, offset]
+  );
+}
+
+/**
  * Get payment by txHash
  */
 export async function getMerchantPaymentByTxHash(txHash: string): Promise<MerchantPayment | null> {
@@ -379,6 +405,50 @@ export async function getMerchantStats(merchantWallet: string): Promise<{
       total: c.total.toFixed(2),
     })),
   };
+}
+
+/**
+ * Save or update an address label
+ */
+export async function setAddressLabel(address: string, label: string): Promise<void> {
+  const db = getDb();
+  await db.run(
+    `INSERT INTO address_labels (address, label, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(address) DO UPDATE SET label = ?, updated_at = ?`,
+    [address.toLowerCase(), label, Date.now(), label, Date.now()]
+  );
+}
+
+/**
+ * Get label for an address
+ */
+export async function getAddressLabel(address: string): Promise<string | null> {
+  const db = getDb();
+  const row = await db.get(
+    'SELECT label FROM address_labels WHERE address = ?',
+    [address.toLowerCase()]
+  );
+  return row?.label ?? null;
+}
+
+/**
+ * Resolve multiple addresses to labels at once
+ */
+export async function resolveAddressLabels(addresses: string[]): Promise<Record<string, string>> {
+  const db = getDb();
+  if (addresses.length === 0) return {};
+
+  const placeholders = addresses.map(() => '?').join(',');
+  const rows = await db.all(
+    `SELECT address, label FROM address_labels WHERE address IN (${placeholders})`,
+    addresses.map(a => a.toLowerCase())
+  );
+
+  const result: Record<string, string> = {};
+  for (const row of rows) {
+    result[row.address] = row.label;
+  }
+  return result;
 }
 
 /**

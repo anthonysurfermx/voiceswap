@@ -1,7 +1,7 @@
 /**
  * Price Oracle Service
  *
- * Fetches real-time ETH prices from multiple sources with caching
+ * Fetches real-time MON (Monad) prices from multiple sources with caching
  */
 
 interface PriceCache {
@@ -11,15 +11,15 @@ interface PriceCache {
 
 // Cache duration: 60 seconds
 const CACHE_DURATION_MS = 60 * 1000;
-let ethPriceCache: PriceCache | null = null;
+let monPriceCache: PriceCache | null = null;
 
 /**
- * Get ETH price in USD from CoinGecko
+ * Get MON price in USD from CoinGecko
  */
 async function fetchFromCoinGecko(): Promise<number | null> {
   try {
     const response = await fetch(
-      'https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd',
+      'https://api.coingecko.com/api/v3/simple/price?ids=monad&vs_currencies=usd',
       { headers: { 'Accept': 'application/json' } }
     );
 
@@ -28,8 +28,8 @@ async function fetchFromCoinGecko(): Promise<number | null> {
       return null;
     }
 
-    const data = await response.json() as { ethereum?: { usd?: number } };
-    return data.ethereum?.usd ?? null;
+    const data = await response.json() as { monad?: { usd?: number } };
+    return data.monad?.usd ?? null;
   } catch (error) {
     console.warn('[PriceOracle] CoinGecko fetch failed:', error);
     return null;
@@ -37,12 +37,12 @@ async function fetchFromCoinGecko(): Promise<number | null> {
 }
 
 /**
- * Get ETH price in USD from Uniswap via DeFiLlama
+ * Get MON price in USD from DeFiLlama
  */
 async function fetchFromDeFiLlama(): Promise<number | null> {
   try {
     const response = await fetch(
-      'https://coins.llama.fi/prices/current/coingecko:ethereum',
+      'https://coins.llama.fi/prices/current/coingecko:monad',
       { headers: { 'Accept': 'application/json' } }
     );
 
@@ -51,8 +51,8 @@ async function fetchFromDeFiLlama(): Promise<number | null> {
       return null;
     }
 
-    const data = await response.json() as { coins?: { 'coingecko:ethereum'?: { price?: number } } };
-    return data.coins?.['coingecko:ethereum']?.price ?? null;
+    const data = await response.json() as { coins?: { 'coingecko:monad'?: { price?: number } } };
+    return data.coins?.['coingecko:monad']?.price ?? null;
   } catch (error) {
     console.warn('[PriceOracle] DeFiLlama fetch failed:', error);
     return null;
@@ -60,12 +60,12 @@ async function fetchFromDeFiLlama(): Promise<number | null> {
 }
 
 /**
- * Get current ETH price in USD with caching and fallback
+ * Get current MON price in USD with caching and fallback
  */
-export async function getEthPrice(): Promise<number> {
+export async function getMonPrice(): Promise<number> {
   // Check cache first
-  if (ethPriceCache && Date.now() - ethPriceCache.timestamp < CACHE_DURATION_MS) {
-    return ethPriceCache.price;
+  if (monPriceCache && Date.now() - monPriceCache.timestamp < CACHE_DURATION_MS) {
+    return monPriceCache.price;
   }
 
   // Try CoinGecko first
@@ -78,50 +78,59 @@ export async function getEthPrice(): Promise<number> {
 
   // Fallback to hardcoded if all APIs fail
   if (!price) {
-    console.warn('[PriceOracle] All APIs failed, using fallback price');
-    price = 3500; // Conservative fallback
+    console.warn('[PriceOracle] All APIs failed, using fallback MON price');
+    price = 0.40; // Conservative fallback for MON
   }
 
   // Update cache
-  ethPriceCache = {
+  monPriceCache = {
     price,
     timestamp: Date.now(),
   };
 
-  console.log(`[PriceOracle] ETH price: $${price.toFixed(2)}`);
+  console.log(`[PriceOracle] MON price: $${price.toFixed(4)}`);
   return price;
 }
 
+// Keep backward-compatible alias
+export const getEthPrice = getMonPrice;
+
 /**
- * Convert ETH amount to USD
+ * Convert MON amount to USD
  */
-export async function ethToUsd(ethAmount: number): Promise<number> {
-  const price = await getEthPrice();
-  return ethAmount * price;
+export async function monToUsd(monAmount: number): Promise<number> {
+  const price = await getMonPrice();
+  return monAmount * price;
 }
 
 /**
- * Convert USD amount to ETH
+ * Convert USD amount to MON
  */
-export async function usdToEth(usdAmount: number): Promise<number> {
-  const price = await getEthPrice();
+export async function usdToMon(usdAmount: number): Promise<number> {
+  const price = await getMonPrice();
   return usdAmount / price;
 }
+
+// Keep backward-compatible aliases
+export const ethToUsd = monToUsd;
+export const usdToEth = usdToMon;
 
 /**
  * Get price info for API response
  */
 export async function getPriceInfo(): Promise<{
+  monPriceUSD: number;
   ethPriceUSD: number;
   source: string;
   cachedAt: string;
   cacheAge: number;
 }> {
-  const price = await getEthPrice();
+  const price = await getMonPrice();
   return {
-    ethPriceUSD: price,
+    monPriceUSD: price,
+    ethPriceUSD: price, // backward compat
     source: 'coingecko/defillama',
-    cachedAt: ethPriceCache ? new Date(ethPriceCache.timestamp).toISOString() : new Date().toISOString(),
-    cacheAge: ethPriceCache ? Math.floor((Date.now() - ethPriceCache.timestamp) / 1000) : 0,
+    cachedAt: monPriceCache ? new Date(monPriceCache.timestamp).toISOString() : new Date().toISOString(),
+    cacheAge: monPriceCache ? Math.floor((Date.now() - monPriceCache.timestamp) / 1000) : 0,
   };
 }

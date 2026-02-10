@@ -88,12 +88,12 @@ app.get('/pay/:wallet', (req, res) => {
       <meta http-equiv="refresh" content="0;url=${appUrl}">
       <meta name="viewport" content="width=device-width, initial-scale=1">
       <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; padding: 50px; background: #FFE135; color: black; }
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; padding: 50px; background: #1a1a1a; color: white; }
         .container { max-width: 400px; margin: 0 auto; }
-        h1 { font-size: 24px; font-weight: 900; }
-        p { color: #333; }
-        a { color: black; font-weight: bold; }
-        .card { background: white; padding: 20px; border: 3px solid black; box-shadow: 4px 4px 0 black; margin-top: 20px; }
+        h1 { font-size: 24px; font-weight: 900; color: #836EF9; }
+        p { color: #999; }
+        a { color: #836EF9; font-weight: bold; }
+        .card { background: #2a2a2a; padding: 20px; border: 2px solid #836EF9; border-radius: 12px; margin-top: 20px; }
       </style>
     </head>
     <body>

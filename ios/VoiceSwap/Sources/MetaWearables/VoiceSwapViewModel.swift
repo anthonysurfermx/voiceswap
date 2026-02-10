@@ -38,6 +38,7 @@ public enum PaymentFlowState: Equatable {
     case enteringAmount(merchant: String)  // QR scanned but no amount - prompt user
     case awaitingConfirmation(amount: String, merchant: String)
     case executing
+    case swapping(step: Int, total: Int, description: String)  // Multi-step swap progress
     case confirming(txHash: String)  // Transaction sent, waiting for blockchain confirmation
     case success(txHash: String)
     case failed(error: String)
@@ -68,6 +69,11 @@ public class VoiceSwapViewModel: ObservableObject {
     @Published public var currentAmount: String?
     @Published public var needsSwap: Bool = false
     @Published public var swapFromToken: String?
+    @Published public var currentPurchaseConcept: String?
+
+    // Security
+    @Published public var showNewMerchantAlert: Bool = false
+    @Published public var pendingNewMerchantAddress: String?
 
     // Session
     @Published public var currentSessionId: String?
@@ -76,6 +82,7 @@ public class VoiceSwapViewModel: ObservableObject {
 
     let glassesManager = MetaGlassesManager.shared
     private let apiClient = VoiceSwapAPIClient.shared
+    let securitySettings = SecuritySettings.shared
     private var cancellables = Set<AnyCancellable>()
 
     // Gemini Live session reference
@@ -186,9 +193,34 @@ public class VoiceSwapViewModel: ObservableObject {
                 }
 
                 tokenBalances = tokens
+
+                // Auto-request gas if MON balance is zero
+                if monBal < 0.001 {
+                    Task {
+                        await requestGasIfNeeded()
+                    }
+                }
             }
         } catch {
             print("[ViewModel] Failed to refresh balances: \(error)")
+        }
+    }
+
+    /// Request gas sponsorship for users with no MON
+    private func requestGasIfNeeded() async {
+        guard !walletAddress.isEmpty else { return }
+        do {
+            let response = try await apiClient.requestGas(userAddress: walletAddress)
+            if let data = response.data {
+                print("[ViewModel] Gas request: \(data.status) - \(data.message)")
+                if data.status == "funded" {
+                    // Refresh balances after gas is received
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    await refreshBalances()
+                }
+            }
+        } catch {
+            print("[ViewModel] Gas request failed (non-critical): \(error.localizedDescription)")
         }
     }
 
@@ -368,6 +400,41 @@ public class VoiceSwapViewModel: ObservableObject {
             return
         }
 
+        // --- Security checks ---
+        let amountValue = Double(amount) ?? 0
+        let securityResult = await securitySettings.performSecurityChecks(
+            amount: amountValue,
+            merchantWallet: merchantWallet
+        )
+
+        switch securityResult {
+        case .allowed:
+            break
+
+        case .dailyLimitExceeded(let spent, let limit):
+            let remaining = max(0, limit - spent)
+            flowState = .failed(error: "Daily limit ($\(String(format: "%.0f", limit))) reached. Remaining: $\(String(format: "%.2f", remaining))")
+            glassesManager.speak("Daily spending limit reached", language: "en-US")
+            glassesManager.triggerHaptic(.error)
+            return
+
+        case .newMerchantNeedsApproval(let address):
+            pendingNewMerchantAddress = address
+            showNewMerchantAlert = true
+            return
+
+        case .faceIDRequired:
+            let passed = await securitySettings.authenticateWithBiometrics()
+            if passed {
+                securitySettings.resetTransactionCounter()
+            } else {
+                flowState = .failed(error: "Face ID verification required")
+                glassesManager.speak("Face ID verification failed", language: "en-US")
+                glassesManager.triggerHaptic(.error)
+                return
+            }
+        }
+
         flowState = .executing
         glassesManager.speak("Opening your wallet for approval", language: "en-US")
 
@@ -387,40 +454,112 @@ public class VoiceSwapViewModel: ObservableObject {
             print("[ViewModel] Transaction prepared:")
             print("[ViewModel]   to: \(txData.transaction.to)")
             print("[ViewModel]   amount: \(txData.amount) \(txData.tokenSymbol)")
-
-            // Step 2: Send transaction via WalletConnect
-            // This will open the user's wallet for approval
-            glassesManager.speak("Please approve the transaction in your wallet", language: "en-US")
-            glassesManager.triggerHaptic(.double)
+            print("[ViewModel]   needsSwap: \(txData.needsSwap ?? false)")
+            print("[ViewModel]   steps: \(txData.steps?.count ?? 0)")
 
             let walletManager = WalletConnectManager.shared
-            let txHash = try await walletManager.sendTransaction(
-                to: txData.transaction.to,
-                value: txData.transaction.value,
-                data: txData.transaction.data
-            )
+            var finalTxHash: String = ""
 
-            print("[ViewModel] Transaction sent: \(txHash)")
+            // Check if we have multi-step transaction (swap flow)
+            if let steps = txData.steps, steps.count > 1 {
+                // Multi-step: wrap? → approve? → swap → transfer
+                let totalSteps = steps.count
+                print("[ViewModel] Multi-step payment: \(totalSteps) steps")
 
-            // Step 3: Wait for blockchain confirmation
-            flowState = .confirming(txHash: txHash)
-            glassesManager.speak("Transaction sent. Waiting for confirmation.", language: "en-US")
+                if txData.needsSwap == true {
+                    glassesManager.speak("Swapping tokens first. Please approve \(totalSteps) transactions in your wallet.", language: "en-US")
+                }
 
-            // Poll for transaction confirmation
-            let confirmed = try await waitForTransactionConfirmation(txHash: txHash)
+                for (index, step) in steps.enumerated() {
+                    let stepNum = index + 1
+                    flowState = .swapping(step: stepNum, total: totalSteps, description: step.description)
+                    print("[ViewModel] Step \(stepNum)/\(totalSteps): \(step.type) — \(step.description)")
 
-            if confirmed {
-                print("[ViewModel] ✅ Transaction confirmed: \(txHash)")
-                flowState = .success(txHash: txHash)
-                let explorerUrl = "\(txData.explorerBaseUrl)\(txHash)"
-                glassesManager.speak("Payment successful! \(txData.amount) USDC sent to \(txData.recipientShort)", language: "en-US")
-                glassesManager.triggerHaptic(.success)
-                print("[ViewModel] Explorer: \(explorerUrl)")
+                    glassesManager.triggerHaptic(.double)
+
+                    let stepTxHash = try await walletManager.sendTransaction(
+                        to: step.tx.to,
+                        value: step.tx.value,
+                        data: step.tx.data
+                    )
+
+                    print("[ViewModel] Step \(stepNum) tx: \(stepTxHash)")
+
+                    // Wait for on-chain confirmation before next step
+                    flowState = .confirming(txHash: stepTxHash)
+                    let confirmed = try await waitForTransactionConfirmation(txHash: stepTxHash)
+
+                    if !confirmed {
+                        flowState = .failed(error: "Step \(stepNum) failed: \(step.description)")
+                        glassesManager.speak("Transaction failed at step \(stepNum). Please try again.", language: "en-US")
+                        glassesManager.triggerHaptic(.error)
+                        clearPaymentContext()
+                        return
+                    }
+
+                    print("[ViewModel] ✅ Step \(stepNum) confirmed")
+                    finalTxHash = stepTxHash
+
+                    // Small delay between steps to let state settle
+                    if index < steps.count - 1 {
+                        try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    }
+                }
+
             } else {
-                print("[ViewModel] ❌ Transaction failed: \(txHash)")
-                flowState = .failed(error: "Transaction failed on-chain")
-                glassesManager.speak("Transaction failed. Please try again.", language: "en-US")
-                glassesManager.triggerHaptic(.error)
+                // Single-step: direct USDC transfer (legacy path)
+                glassesManager.speak("Please approve the transaction in your wallet", language: "en-US")
+                glassesManager.triggerHaptic(.double)
+
+                finalTxHash = try await walletManager.sendTransaction(
+                    to: txData.transaction.to,
+                    value: txData.transaction.value,
+                    data: txData.transaction.data
+                )
+
+                print("[ViewModel] Transaction sent: \(finalTxHash)")
+
+                // Wait for blockchain confirmation
+                flowState = .confirming(txHash: finalTxHash)
+                glassesManager.speak("Transaction sent. Waiting for confirmation.", language: "en-US")
+
+                let confirmed = try await waitForTransactionConfirmation(txHash: finalTxHash)
+
+                if !confirmed {
+                    print("[ViewModel] ❌ Transaction failed: \(finalTxHash)")
+                    flowState = .failed(error: "Transaction failed on-chain")
+                    glassesManager.speak("Transaction failed. Please try again.", language: "en-US")
+                    glassesManager.triggerHaptic(.error)
+                    clearPaymentContext()
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    await refreshBalances()
+                    return
+                }
+            }
+
+            // Payment successful
+            print("[ViewModel] ✅ Payment confirmed: \(finalTxHash)")
+            flowState = .success(txHash: finalTxHash)
+            let explorerUrl = "\(txData.explorerBaseUrl)\(finalTxHash)"
+            glassesManager.speak("Payment successful! \(txData.amount) USDC sent to \(txData.recipientShort)", language: "en-US")
+            glassesManager.triggerHaptic(.success)
+            print("[ViewModel] Explorer: \(explorerUrl)")
+
+            // Record for security tracking (daily spend + Face ID counter)
+            securitySettings.recordSuccessfulPayment(amount: amountValue)
+
+            // Save payment with purchase concept for merchant history
+            Task {
+                try? await apiClient.saveMerchantPayment(
+                    merchantWallet: merchantWallet,
+                    txHash: finalTxHash,
+                    fromAddress: walletAddress,
+                    amount: amount,
+                    concept: currentPurchaseConcept
+                )
+                if let concept = currentPurchaseConcept {
+                    print("[ViewModel] Payment saved with concept: \(concept)")
+                }
             }
 
             // Clear payment context
@@ -468,6 +607,15 @@ public class VoiceSwapViewModel: ObservableObject {
             glassesManager.speak("Payment failed. Please try again.", language: "en-US")
             glassesManager.triggerHaptic(.error)
         }
+    }
+
+    /// Approve a new merchant and retry the payment
+    public func approveNewMerchantAndRetryPayment() async {
+        guard let address = pendingNewMerchantAddress else { return }
+        securitySettings.approveMerchant(address)
+        pendingNewMerchantAddress = nil
+        showNewMerchantAlert = false
+        await confirmPayment()
     }
 
     /// Cancel current payment
@@ -578,6 +726,7 @@ public class VoiceSwapViewModel: ObservableObject {
         currentAmount = nil
         needsSwap = false
         swapFromToken = nil
+        currentPurchaseConcept = nil
     }
 }
 

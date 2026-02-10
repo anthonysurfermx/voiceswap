@@ -15,8 +15,8 @@ export default function HistoryScreen() {
   const swapHistory = useAppStore((s) => s.swapHistory);
 
   const openExplorer = (txHash: string) => {
-    // Unichain explorer URL
-    const url = `https://uniscan.xyz/tx/${txHash}`;
+    // Monad explorer URL
+    const url = `https://monadscan.com/tx/${txHash}`;
     Linking.openURL(url);
   };
 
@@ -40,7 +40,7 @@ export default function HistoryScreen() {
                 {
                   backgroundColor:
                     item.status === 'confirmed'
-                      ? '#4ade80'
+                      ? '#836EF9'
                       : item.status === 'pending'
                       ? '#fbbf24'
                       : '#f87171',
@@ -165,7 +165,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   quoteText: {
-    color: '#4ade80',
+    color: '#836EF9',
     fontSize: 14,
   },
   txHash: {

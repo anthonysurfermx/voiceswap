@@ -1,7 +1,7 @@
 /**
  * Thirdweb Configuration
  *
- * Setup for Smart Wallets with Gas Sponsorship on Unichain
+ * Setup for Smart Wallets with Gas Sponsorship on Monad
  * Using EIP-7702 for gasless transactions
  */
 
@@ -14,27 +14,16 @@ export const client = createThirdwebClient({
 });
 
 // Chain IDs
-export const UNICHAIN_MAINNET_ID = 130;
-export const UNICHAIN_SEPOLIA_ID = 1301;
+export const MONAD_MAINNET_ID = 143;
 
-// Unichain Mainnet (Chain ID: 130)
-// Using defineChain with just the ID - Thirdweb will fetch chain details
-export const unichainMainnet = defineChain(UNICHAIN_MAINNET_ID);
+// Monad Mainnet (Chain ID: 143)
+export const monadMainnet = defineChain(MONAD_MAINNET_ID);
 
-// Unichain Sepolia Testnet (Chain ID: 1301)
-export const unichainSepolia = defineChain(UNICHAIN_SEPOLIA_ID);
-
-// Current chain (based on environment)
-export const currentChain =
-  process.env.EXPO_PUBLIC_NETWORK === 'unichain'
-    ? unichainMainnet
-    : unichainSepolia;
+// Current chain
+export const currentChain = monadMainnet;
 
 // Current chain ID for easy access
-export const currentChainId =
-  process.env.EXPO_PUBLIC_NETWORK === 'unichain'
-    ? UNICHAIN_MAINNET_ID
-    : UNICHAIN_SEPOLIA_ID;
+export const currentChainId = MONAD_MAINNET_ID;
 
 // Smart Account Configuration with Gas Sponsorship
 // Using EIP-7702 execution mode for gasless transactions
@@ -70,19 +59,10 @@ export const walletExecutionConfig = {
   },
 };
 
-// Token addresses on Unichain Sepolia
-export const TOKENS_SEPOLIA = {
-  WETH: '0x4200000000000000000000000000000000000006',
-  USDC: '0x31d0220469e10c4E71834a79b1f276d740d3768F',
-};
-
-// Token addresses on Unichain Mainnet
+// Token addresses on Monad Mainnet
 export const TOKENS_MAINNET = {
-  WETH: '0x4200000000000000000000000000000000000006',
-  USDC: '0x078D782b760474a361dDA0AF3839290b0EF57AD6',
+  WMON: '0x3bd359C1119dA7Da1D913D1C4D2B7c461115433A',
+  USDC: '0x754704Bc059F8C67012fEd69BC8A327a5aafb603',
 };
 
-export const TOKENS =
-  process.env.EXPO_PUBLIC_NETWORK === 'unichain'
-    ? TOKENS_MAINNET
-    : TOKENS_SEPOLIA;
+export const TOKENS = TOKENS_MAINNET;

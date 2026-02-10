@@ -12,7 +12,7 @@
  */
 
 import { ethers } from 'ethers';
-import { getEthPrice } from './priceOracle.js';
+import { getMonPrice } from './priceOracle.js';
 
 // Network Configuration - Monad Mainnet
 const MONAD_RPC = process.env.MONAD_RPC_URL || 'https://rpc.monad.xyz';
@@ -254,9 +254,8 @@ export async function getWalletBalances(userAddress: string): Promise<WalletBala
   const wmonFormatted = ethers.utils.formatEther(wmonBalance);
   const usdcFormatted = ethers.utils.formatUnits(usdcBalance, 6);
 
-  // Calculate total USD value (USDC + MON) using live price
-  // TODO: Replace getEthPrice with MON price oracle when available
-  const monPriceUSD = await getEthPrice(); // Placeholder - use MON price
+  // Calculate total USD value (USDC + MON) using live MON price
+  const monPriceUSD = await getMonPrice();
   const monValue = parseFloat(monFormatted);
   const wmonValue = parseFloat(wmonFormatted);
   const usdcValue = parseFloat(usdcFormatted);
@@ -354,8 +353,8 @@ export async function getMaxPayableAmount(balances: WalletBalances): Promise<{
   const wmonBalance = parseFloat(balances.tokens.find(t => t.symbol === 'WMON')?.balance || '0');
   const monBalance = parseFloat(balances.nativeMON.balance);
 
-  // Get live MON price (TODO: use MON-specific oracle)
-  const monPrice = await getEthPrice();
+  // Get live MON price
+  const monPrice = await getMonPrice();
 
   if (wmonBalance > 0) {
     return {

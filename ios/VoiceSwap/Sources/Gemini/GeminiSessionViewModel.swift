@@ -7,7 +7,7 @@ import UIKit
 private enum VoiceSwapTools {
 
     static func allDeclarations() -> [[String: Any]] {
-        [scanQR, getBalance, preparePayment, confirmPayment, cancelPayment, setPaymentAmount]
+        [scanQR, getBalance, preparePayment, confirmPayment, cancelPayment, setPaymentAmount, setPurchaseConcept]
     }
 
     static let scanQR: [String: Any] = [
@@ -75,7 +75,7 @@ private enum VoiceSwapTools {
 
     static let setPaymentAmount: [String: Any] = [
         "name": "set_payment_amount",
-        "description": "Set the amount for a pending payment when the QR code did not include an amount. Call this after asking the user how much they want to pay.",
+        "description": "Set the amount for a pending payment when the QR code did not include an amount. You MUST call this tool when the user tells you the amount. After this returns, you MUST call prepare_payment next.",
         "parameters": [
             "type": "object",
             "properties": [
@@ -85,6 +85,21 @@ private enum VoiceSwapTools {
                 ] as [String: Any]
             ] as [String: Any],
             "required": ["amount"]
+        ] as [String: Any]
+    ]
+
+    static let setPurchaseConcept: [String: Any] = [
+        "name": "set_purchase_concept",
+        "description": "Record what the user is buying (e.g. 'coffee', 'lunch', 'groceries'). Call this when the user tells you what they are purchasing, before scanning the QR code.",
+        "parameters": [
+            "type": "object",
+            "properties": [
+                "concept": [
+                    "type": "string",
+                    "description": "Short description of what the user is buying (e.g., 'coffee', 'lunch', 'tacos')"
+                ] as [String: Any]
+            ] as [String: Any],
+            "required": ["concept"]
         ] as [String: Any]
     ]
 }
@@ -243,16 +258,65 @@ class GeminiSessionViewModel: ObservableObject {
             return
         }
 
+        // scan_qr is handled separately — respond immediately, then start camera async
+        // This prevents Gemini from cancelling the tool call while the camera is starting
+        if toolCall.name == "scan_qr" {
+            // Don't re-scan if we already have a QR or are past scanning
+            if case .enteringAmount = vm.flowState {
+                NSLog("[Gemini] scan_qr ignored — already entering amount")
+                geminiService.sendToolResponse(callId: toolCall.id, name: toolCall.name, result: ["status": "already_scanned", "message": "QR already detected, waiting for amount"])
+                return
+            }
+            if case .awaitingConfirmation = vm.flowState {
+                NSLog("[Gemini] scan_qr ignored — already awaiting confirmation")
+                geminiService.sendToolResponse(callId: toolCall.id, name: toolCall.name, result: ["status": "already_scanned", "message": "Payment ready for confirmation"])
+                return
+            }
+            if vm.glassesManager.isStreaming {
+                NSLog("[Gemini] scan_qr ignored — camera already streaming")
+                geminiService.sendToolResponse(callId: toolCall.id, name: toolCall.name, result: ["status": "scanning", "message": "Already scanning for QR"])
+                return
+            }
+
+            // Respond immediately so Gemini doesn't cancel
+            vm.flowState = .scanningQR
+            vm.glassesManager.triggerHaptic(.short)
+            geminiService.sendToolResponse(callId: toolCall.id, name: toolCall.name, result: ["status": "scanning", "message": "QR scanning started. Tell the user to point at the QR code."])
+
+            // Start camera with timeout — if camera fails or takes too long, notify Gemini
+            Task { @MainActor in
+                NSLog("[Gemini] scan_qr: starting camera stream...")
+                await vm.glassesManager.startCameraStream()
+
+                // Check if camera actually started after a brief delay
+                try? await Task.sleep(nanoseconds: 3_000_000_000) // 3 seconds
+
+                // If still in scanningQR state but camera isn't streaming, something went wrong
+                if case .scanningQR = vm.flowState, !vm.glassesManager.isStreaming {
+                    NSLog("[Gemini] scan_qr: camera failed to start after 3s — notifying Gemini")
+                    // Inject context so Gemini knows the camera failed
+                    self.geminiService.sendToolResponse(
+                        callId: "camera_error",
+                        name: "system",
+                        result: [
+                            "event": "camera_error",
+                            "message": "Camera failed to start. The user can still use the phone camera — tell them to point their phone at the QR code instead. Or they can enter the merchant wallet address manually."
+                        ]
+                    )
+                } else {
+                    NSLog("[Gemini] scan_qr: camera streaming OK or QR already detected")
+                }
+            }
+            return
+        }
+
         let task = Task { @MainActor in
             let result: [String: Any]
 
-            switch toolCall.name {
-            case "scan_qr":
-                vm.flowState = .scanningQR
-                vm.glassesManager.triggerHaptic(.short)
-                await vm.glassesManager.startCameraStream()
-                result = ["status": "scanning", "message": "QR scanning started"]
+            // Timeout wrapper — 30s max for any tool call
+            let toolStart = Date()
 
+            switch toolCall.name {
             case "get_balance":
                 await vm.refreshBalances()
                 let tokens = vm.tokenBalances.map { ["symbol": $0.symbol, "balance": $0.balance] }
@@ -273,12 +337,17 @@ class GeminiSessionViewModel: ObservableObject {
                 await vm.preparePayment()
 
                 if case .awaitingConfirmation = vm.flowState {
-                    result = [
+                    var readyResult: [String: Any] = [
                         "status": "ready",
                         "amount": amount,
                         "merchant": merchantName ?? wallet,
-                        "needs_swap": vm.needsSwap
-                    ] as [String: Any]
+                        "needs_swap": vm.needsSwap,
+                    ]
+                    if vm.needsSwap, let swapFrom = vm.swapFromToken {
+                        readyResult["swap_from"] = swapFrom
+                        readyResult["message"] = "Will swap \(swapFrom) to USDC before paying. User will need to approve multiple transactions."
+                    }
+                    result = readyResult
                 } else if case .failed(let error) = vm.flowState {
                     result = ["status": "failed", "error": error]
                 } else {
@@ -286,6 +355,16 @@ class GeminiSessionViewModel: ObservableObject {
                 }
 
             case "confirm_payment":
+                // Guard: confirm_payment requires prepare_payment to have been called first
+                guard case .awaitingConfirmation = vm.flowState else {
+                    NSLog("[Gemini] confirm_payment rejected — not in awaitingConfirmation state (current: \(vm.flowState))")
+                    result = [
+                        "status": "error",
+                        "error": "Cannot confirm — you must call prepare_payment first. Current state: \(vm.flowState)"
+                    ]
+                    break
+                }
+
                 await vm.confirmPayment()
                 if case .success(let txHash) = vm.flowState {
                     result = ["status": "success", "tx_hash": txHash]
@@ -307,12 +386,21 @@ class GeminiSessionViewModel: ObservableObject {
                 if case .awaitingConfirmation = vm.flowState {
                     result = ["status": "ready", "amount": amount]
                 } else {
-                    result = ["status": "amount_set", "amount": amount]
+                    result = ["status": "amount_set", "amount": amount, "next_step": "Now call prepare_payment with the merchant_wallet and this amount"]
                 }
+
+            case "set_purchase_concept":
+                let concept = toolCall.args["concept"] as? String ?? ""
+                vm.currentPurchaseConcept = concept
+                NSLog("[Gemini] Purchase concept set: %@", concept)
+                result = ["status": "recorded", "concept": concept]
 
             default:
                 result = ["error": "Unknown tool: \(toolCall.name)"]
             }
+
+            let elapsed = Date().timeIntervalSince(toolStart)
+            NSLog("[Gemini] Tool %@ completed in %.1fs", toolCall.name, elapsed)
 
             guard !Task.isCancelled else {
                 NSLog("[Gemini] Tool call %@ cancelled, skipping response", toolCall.id)

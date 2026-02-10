@@ -2,8 +2,8 @@
   <!-- Background -->
   <rect width="1024" height="1024" rx="224" fill="#0A0A0A"/>
 
-  <!-- Glasses frame - minimalist Ray-Ban style -->
-  <g fill="none" stroke="#5AC8C8" stroke-width="28" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Glasses frame - minimalist Ray-Ban style (Monad purple) -->
+  <g fill="none" stroke="#836EF9" stroke-width="28" stroke-linecap="round" stroke-linejoin="round">
     <!-- Left lens -->
     <rect x="180" y="420" width="280" height="200" rx="40"/>
 
@@ -20,9 +20,11 @@
     <path d="M844 480 L924 440"/>
   </g>
 
-  <!-- Subtle reflection on lenses -->
-  <g fill="#5AC8C8" opacity="0.15">
-    <rect x="200" y="440" width="80" height="40" rx="10"/>
-    <rect x="584" y="440" width="80" height="40" rx="10"/>
+  <!-- $ signs reflected on lenses -->
+  <g fill="#A18FFF" opacity="0.6">
+    <!-- Left lens $ -->
+    <text x="320" y="565" font-family="'Helvetica Neue', Arial, sans-serif" font-weight="900" font-size="180" text-anchor="middle">$</text>
+    <!-- Right lens $ -->
+    <text x="704" y="565" font-family="'Helvetica Neue', Arial, sans-serif" font-weight="900" font-size="180" text-anchor="middle">$</text>
   </g>
 </svg>

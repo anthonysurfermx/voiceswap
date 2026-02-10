@@ -73,7 +73,7 @@ export default function HomeScreen() {
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>🎙️ VoiceSwap</Text>
-        <Text style={styles.subtitle}>Uniswap V4 on Unichain</Text>
+        <Text style={styles.subtitle}>Voice Payments on Monad</Text>
 
         <View style={styles.headerButtons}>
           <Link href="/history" asChild>
@@ -95,7 +95,7 @@ export default function HomeScreen() {
           <View
             style={[
               styles.statusDot,
-              { backgroundColor: isConnected ? '#4ade80' : '#f87171' },
+              { backgroundColor: isConnected ? '#836EF9' : '#f87171' },
             ]}
           />
           <Text style={styles.connectionText}>
@@ -354,8 +354,8 @@ const styles = StyleSheet.create({
     borderColor: '#3d3d54',
   },
   sessionCardActive: {
-    backgroundColor: '#1e3a29',
-    borderColor: '#4ade80',
+    backgroundColor: '#2a1e4a',
+    borderColor: '#836EF9',
   },
   sessionHeader: {
     flexDirection: 'row',
@@ -377,7 +377,7 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   sessionLimit: {
-    color: '#4ade80',
+    color: '#836EF9',
     fontSize: 14,
     fontWeight: '600',
   },
@@ -434,7 +434,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   gasTankBalance: {
-    color: '#4ade80',
+    color: '#836EF9',
     fontSize: 20,
     fontWeight: 'bold',
     marginRight: 8,

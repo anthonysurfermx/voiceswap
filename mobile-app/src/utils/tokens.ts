@@ -1,37 +1,30 @@
 /**
- * Token configuration for Unichain
+ * Token configuration for Monad
  */
 
-// Unichain Mainnet tokens
+// Monad Mainnet tokens
 export const TOKENS_MAINNET = {
-  WETH: '0x4200000000000000000000000000000000000006',
-  USDC: '0x078D782b760474a361dDA0AF3839290b0EF57AD6',
+  WMON: '0x3bd359C1119dA7Da1D913D1C4D2B7c461115433A',
+  USDC: '0x754704Bc059F8C67012fEd69BC8A327a5aafb603',
 } as const;
 
-// Unichain Sepolia (testnet) tokens
-export const TOKENS_TESTNET = {
-  WETH: '0x4200000000000000000000000000000000000006',
-  USDC: '0x31d0220469e10c4E71834a79b1f276d740d3768F',
-} as const;
-
-// Current network tokens (change based on environment)
-export const TOKENS = TOKENS_TESTNET;
+// Current network tokens
+export const TOKENS = TOKENS_MAINNET;
 
 // Token metadata
 export const TOKEN_INFO: Record<string, { symbol: string; decimals: number; name: string }> = {
-  [TOKENS.WETH]: { symbol: 'WETH', decimals: 18, name: 'Wrapped Ether' },
+  [TOKENS.WMON]: { symbol: 'WMON', decimals: 18, name: 'Wrapped Monad' },
   [TOKENS.USDC]: { symbol: 'USDC', decimals: 6, name: 'USD Coin' },
 };
 
 // Voice command aliases -> token addresses
 export const TOKEN_ALIASES: Record<string, string> = {
-  // ETH variants
-  eth: TOKENS.WETH,
-  ether: TOKENS.WETH,
-  ethereum: TOKENS.WETH,
-  weth: TOKENS.WETH,
-  'wrapped ether': TOKENS.WETH,
-  'wrapped eth': TOKENS.WETH,
+  // MON variants
+  mon: TOKENS.WMON,
+  monad: TOKENS.WMON,
+  wmon: TOKENS.WMON,
+  'wrapped monad': TOKENS.WMON,
+  'wrapped mon': TOKENS.WMON,
 
   // USDC variants
   usdc: TOKENS.USDC,

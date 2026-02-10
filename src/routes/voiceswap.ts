@@ -41,6 +41,9 @@ import {
   getMerchantPaymentByTxHash,
   updatePaymentConcept,
   getMerchantStats,
+  getUserPayments,
+  setAddressLabel,
+  resolveAddressLabels,
 } from '../services/database.js';
 import { getPriceInfo, getEthPrice } from '../services/priceOracle.js';
 
@@ -255,15 +258,20 @@ router.post('/prepare', async (req, res) => {
  * will send to the user's wallet for signing via WalletConnect.
  * This ensures the user controls their own funds.
  *
+ * When the user has enough USDC: returns a single transfer step.
+ * When the user needs a swap (has MON/WMON but not USDC):
+ *   returns multiple steps: [wrap?] → [approve?] → swap → transfer
+ *
  * Body:
  * - userAddress: User's wallet address
  * - merchantWallet: Merchant's wallet address
  * - amount: Amount in USDC
  *
  * Returns:
- * - transaction: { to, value, data } ready to be signed
- * - tokenAddress: USDC contract address
- * - needsApproval: If token approval is needed first
+ * - steps: Array of transaction steps to execute sequentially
+ * - transaction: Single tx (backward compat, first/only step)
+ * - needsSwap: Whether a swap is required
+ * - swapInfo: Details about the swap if needed
  */
 router.post('/prepare-tx', async (req, res) => {
   try {
@@ -293,41 +301,190 @@ router.post('/prepare-tx', async (req, res) => {
     // Convert amount to USDC units (6 decimals)
     const amountInUnits = ethers.utils.parseUnits(amount.toString(), 6);
 
-    // For MVP: Only support direct USDC transfers
-    // Users deposit USDC directly, no swap needed
-    if (!swapInfo.hasEnoughUSDC) {
+    const erc20Iface = new ethers.utils.Interface([
+      'function transfer(address to, uint256 amount) returns (bool)',
+      'function approve(address spender, uint256 amount) returns (bool)',
+      'function allowance(address owner, address spender) view returns (uint256)',
+    ]);
+
+    const recipientShort = `${merchantWallet.slice(0, 6)}...${merchantWallet.slice(-4)}`;
+
+    // ---- PATH A: Direct USDC transfer (no swap needed) ----
+    if (swapInfo.hasEnoughUSDC) {
+      const transferData = erc20Iface.encodeFunctionData('transfer', [merchantWallet, amountInUnits]);
+
+      const transferStep = {
+        type: 'transfer',
+        tx: {
+          to: SUPPORTED_TOKENS.USDC,
+          value: '0x0',
+          data: transferData,
+          from: userAddress,
+          chainId: 143,
+        },
+        description: `Send ${amount} USDC to ${recipientShort}`,
+      };
+
+      return res.json({
+        success: true,
+        data: {
+          steps: [transferStep],
+          needsSwap: false,
+          // Backward compatibility
+          transaction: transferStep.tx,
+          tokenAddress: SUPPORTED_TOKENS.USDC,
+          tokenSymbol: 'USDC',
+          amount: amount,
+          recipient: merchantWallet,
+          recipientShort,
+          message: `Transfer ${amount} USDC to ${recipientShort}`,
+          explorerBaseUrl: 'https://monadscan.com/tx/',
+        },
+      });
+    }
+
+    // ---- PATH B: Swap MON/WMON → USDC, then transfer ----
+    if (!swapInfo.swapFrom) {
       return res.status(400).json({
         success: false,
-        error: 'Insufficient USDC balance. Please deposit USDC to your wallet.',
+        error: 'Insufficient funds. You need MON, WMON, or USDC to make a payment.',
         currentBalance: balances.totalUSDC,
         requiredAmount: amount,
       });
     }
 
-    // Build ERC20 transfer calldata
-    // transfer(address to, uint256 amount)
-    const iface = new ethers.utils.Interface([
-      'function transfer(address to, uint256 amount) returns (bool)',
-    ]);
-    const transferData = iface.encodeFunctionData('transfer', [merchantWallet, amountInUnits]);
+    console.log(`[VoiceSwap] Swap needed: ${swapInfo.swapFromSymbol} → USDC`);
 
-    // Return transaction data for WalletConnect
+    const steps: Array<{
+      type: string;
+      tx: { to: string; value: string; data: string; from: string; chainId: number };
+      description: string;
+    }> = [];
+
+    const uniswap = getUniswapService();
+    const WMON_ADDRESS = SUPPORTED_TOKENS.WMON || '0x3bd359C1119dA7Da1D913D1C4D2B7c461115433A';
+    const ROUTER_ADDRESS = '0xfe31f71c1b106eac32f1a19239c9a9a72ddfb900';
+
+    // Get quote: how much WMON needed to get `amount` USDC
+    // We quote WMON → USDC. Since getQuote takes amountIn (WMON),
+    // we need to estimate. We'll get a quote for a reasonable amount
+    // and calculate the ratio, then add a buffer.
+    const testQuote = await uniswap.getQuote(WMON_ADDRESS, SUPPORTED_TOKENS.USDC, '1');
+    const usdcPerWmon = parseFloat(testQuote.tokenOut.amount);
+
+    if (usdcPerWmon <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Unable to get swap quote. WMON/USDC pool may have insufficient liquidity.',
+      });
+    }
+
+    // Calculate WMON needed with 2% buffer for slippage
+    const wmonNeeded = (parseFloat(amount) / usdcPerWmon) * 1.02;
+    const wmonNeededStr = wmonNeeded.toFixed(18);
+    const wmonNeededWei = ethers.utils.parseEther(wmonNeededStr);
+
+    console.log(`[VoiceSwap] Quote: 1 WMON = ${usdcPerWmon} USDC, need ~${wmonNeeded.toFixed(4)} WMON for ${amount} USDC`);
+
+    // Step 1 (conditional): Wrap MON → WMON
+    if (swapInfo.swapFrom === 'NATIVE_MON') {
+      const wmonIface = new ethers.utils.Interface(['function deposit() payable']);
+      const wrapData = wmonIface.encodeFunctionData('deposit', []);
+
+      steps.push({
+        type: 'wrap',
+        tx: {
+          to: WMON_ADDRESS,
+          value: ethers.utils.hexValue(wmonNeededWei),
+          data: wrapData,
+          from: userAddress,
+          chainId: 143,
+        },
+        description: `Wrap ${wmonNeeded.toFixed(4)} MON to WMON`,
+      });
+    }
+
+    // Step 2 (conditional): Approve WMON for Uniswap Router
+    const wmonContract = new ethers.Contract(WMON_ADDRESS, [
+      'function allowance(address owner, address spender) view returns (uint256)',
+    ], new ethers.providers.JsonRpcProvider(NETWORK_CONFIG.rpcUrl));
+
+    const currentAllowance = await wmonContract.allowance(userAddress, ROUTER_ADDRESS);
+    if (currentAllowance.lt(wmonNeededWei)) {
+      const approveData = erc20Iface.encodeFunctionData('approve', [
+        ROUTER_ADDRESS,
+        ethers.constants.MaxUint256, // Infinite approval (one-time)
+      ]);
+
+      steps.push({
+        type: 'approve',
+        tx: {
+          to: WMON_ADDRESS,
+          value: '0x0',
+          data: approveData,
+          from: userAddress,
+          chainId: 143,
+        },
+        description: 'Approve WMON for swap',
+      });
+    }
+
+    // Step 3: Swap WMON → USDC via Uniswap V3
+    const route = await uniswap.getRoute(
+      WMON_ADDRESS,
+      SUPPORTED_TOKENS.USDC,
+      wmonNeeded.toFixed(18),
+      userAddress, // USDC goes to user's wallet
+      1.0, // 1% slippage tolerance
+    );
+
+    steps.push({
+      type: 'swap',
+      tx: {
+        to: route.to!,
+        value: '0x0',
+        data: route.calldata!,
+        from: userAddress,
+        chainId: 143,
+      },
+      description: `Swap ${wmonNeeded.toFixed(4)} WMON → ${amount} USDC`,
+    });
+
+    // Step 4: Transfer USDC to merchant
+    const transferData = erc20Iface.encodeFunctionData('transfer', [merchantWallet, amountInUnits]);
+    steps.push({
+      type: 'transfer',
+      tx: {
+        to: SUPPORTED_TOKENS.USDC,
+        value: '0x0',
+        data: transferData,
+        from: userAddress,
+        chainId: 143,
+      },
+      description: `Send ${amount} USDC to ${recipientShort}`,
+    });
+
     res.json({
       success: true,
       data: {
-        transaction: {
-          to: SUPPORTED_TOKENS.USDC,  // USDC contract address
-          value: '0x0',               // No ETH value for ERC20 transfer
-          data: transferData,         // Encoded transfer call
-          from: userAddress,          // User's address
-          chainId: 143,               // Monad mainnet
+        steps,
+        needsSwap: true,
+        swapInfo: {
+          fromToken: swapInfo.swapFromSymbol,
+          toToken: 'USDC',
+          amountIn: wmonNeeded.toFixed(4),
+          estimatedOut: amount,
+          priceImpact: route.priceImpact,
+          slippage: '1.0',
         },
+        // Backward compatibility: first step's tx
+        transaction: steps[0].tx,
         tokenAddress: SUPPORTED_TOKENS.USDC,
         tokenSymbol: 'USDC',
         amount: amount,
         recipient: merchantWallet,
-        recipientShort: `${merchantWallet.slice(0, 6)}...${merchantWallet.slice(-4)}`,
-        message: `Transfer ${amount} USDC to ${merchantWallet.slice(0, 6)}...${merchantWallet.slice(-4)}`,
+        recipientShort,
+        message: `Swap ${swapInfo.swapFromSymbol} → USDC, then pay ${recipientShort}`,
         explorerBaseUrl: 'https://monadscan.com/tx/',
       },
     });
@@ -641,6 +798,11 @@ router.post('/generate-qr', (req, res) => {
       }
     }
 
+    // Save merchant label if name provided
+    if (merchantName) {
+      setAddressLabel(merchantWallet, merchantName).catch(() => {});
+    }
+
     // Generate QR data in multiple formats
     const qrData = generateMerchantQRData(merchantWallet, amount, merchantName);
     const webUrl = generatePaymentWebURL(merchantWallet, amount, merchantName);
@@ -748,7 +910,7 @@ router.get('/qr/:wallet', (req, res) => {
  */
 router.post('/merchant/payment', async (req, res) => {
   try {
-    const { merchantWallet, txHash, fromAddress, amount, concept, blockNumber } = req.body;
+    const { merchantWallet, txHash, fromAddress, amount, concept, blockNumber, merchantName } = req.body;
 
     if (!merchantWallet || !txHash || !fromAddress || !amount || blockNumber === undefined) {
       return res.status(400).json({
@@ -772,6 +934,11 @@ router.post('/merchant/payment', async (req, res) => {
       concept,
       blockNumber,
     });
+
+    // Save merchant name label if provided
+    if (merchantName) {
+      setAddressLabel(merchantWallet, merchantName).catch(() => {});
+    }
 
     console.log(`[VoiceSwap] Saved merchant payment: ${amount} USDC, concept: ${concept || 'none'}`);
 
@@ -915,8 +1082,168 @@ router.get('/merchant/stats/:wallet', async (req, res) => {
 });
 
 /**
+ * GET /voiceswap/user/payments/:address
+ * Get payment history for a user (payer) address
+ *
+ * Query params:
+ * - limit: Number of results (default 50)
+ * - offset: Pagination offset (default 0)
+ */
+router.get('/user/payments/:address', async (req, res) => {
+  try {
+    const { address } = req.params;
+    const limit = parseInt(req.query.limit as string) || 50;
+    const offset = parseInt(req.query.offset as string) || 0;
+
+    if (!isValidAddress(address)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid wallet address',
+      });
+    }
+
+    const payments = await getUserPayments(address, { limit, offset });
+
+    // Resolve merchant names for all unique merchant addresses
+    const merchantAddresses = [...new Set(payments.map(p => p.merchant_wallet))];
+    const labels = await resolveAddressLabels(merchantAddresses);
+
+    // Enrich payments with merchant labels
+    const enrichedPayments = payments.map(p => ({
+      ...p,
+      merchant_name: labels[p.merchant_wallet.toLowerCase()] || null,
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        payments: enrichedPayments,
+        pagination: {
+          limit,
+          offset,
+          count: payments.length,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('[VoiceSwap] Get user payments error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get payment history',
+    });
+  }
+});
+
+/**
+ * POST /voiceswap/resolve-names
+ * Resolve wallet addresses to human-readable labels
+ */
+router.post('/resolve-names', async (req, res) => {
+  try {
+    const { addresses } = req.body;
+
+    if (!Array.isArray(addresses) || addresses.length === 0) {
+      return res.status(400).json({ success: false, error: 'addresses must be a non-empty array' });
+    }
+
+    const labels = await resolveAddressLabels(addresses.slice(0, 100));
+    res.json({ success: true, data: { labels } });
+  } catch (error) {
+    console.error('[VoiceSwap] Resolve names error:', error);
+    res.status(500).json({ success: false, error: 'Failed to resolve names' });
+  }
+});
+
+/**
+ * POST /voiceswap/set-label
+ * Set a label for a wallet address
+ */
+router.post('/set-label', async (req, res) => {
+  try {
+    const { address, label } = req.body;
+    if (!address || !label) {
+      return res.status(400).json({ success: false, error: 'address and label required' });
+    }
+    if (!isValidAddress(address)) {
+      return res.status(400).json({ success: false, error: 'Invalid address' });
+    }
+    await setAddressLabel(address, label);
+    res.json({ success: true, data: { address: address.toLowerCase(), label } });
+  } catch (error) {
+    console.error('[VoiceSwap] Set label error:', error);
+    res.status(500).json({ success: false, error: 'Failed to set label' });
+  }
+});
+
+/**
+ * POST /voiceswap/gas/request
+ * Request a small MON gas airdrop for new users
+ * This is a simple "gas tank" pattern for hackathon demo
+ * Requires GAS_SPONSOR_KEY env var (private key of funded wallet)
+ */
+router.post('/gas/request', async (req, res) => {
+  try {
+    const { userAddress } = req.body;
+
+    if (!userAddress || !isValidAddress(userAddress)) {
+      return res.status(400).json({ success: false, error: 'Invalid userAddress' });
+    }
+
+    const sponsorKey = process.env.GAS_SPONSOR_KEY;
+    if (!sponsorKey) {
+      return res.status(503).json({
+        success: false,
+        error: 'Gas sponsorship not configured',
+      });
+    }
+
+    // Check user's current MON balance
+    const provider = new ethers.providers.JsonRpcProvider(NETWORK_CONFIG.rpcUrl);
+    const balance = await provider.getBalance(userAddress);
+    const minGas = ethers.utils.parseEther('0.001'); // 0.001 MON minimum
+    const airdropAmount = ethers.utils.parseEther('0.01'); // Send 0.01 MON (~enough for 100+ txs)
+
+    if (balance.gte(minGas)) {
+      return res.json({
+        success: true,
+        data: {
+          status: 'sufficient',
+          balance: ethers.utils.formatEther(balance),
+          message: 'User already has enough MON for gas',
+        },
+      });
+    }
+
+    // Send gas airdrop
+    const sponsor = new ethers.Wallet(sponsorKey, provider);
+    const tx = await sponsor.sendTransaction({
+      to: userAddress,
+      value: airdropAmount,
+    });
+
+    console.log(`[GasSponsor] Sent 0.01 MON to ${userAddress}: ${tx.hash}`);
+
+    res.json({
+      success: true,
+      data: {
+        status: 'funded',
+        txHash: tx.hash,
+        amount: '0.01',
+        message: 'Gas funded! You can now make payments.',
+      },
+    });
+  } catch (error) {
+    console.error('[GasSponsor] Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to sponsor gas',
+    });
+  }
+});
+
+/**
  * GET /voiceswap/merchant/transactions/:wallet
- * Get real blockchain transactions for a merchant wallet from Blockscout
+ * Get real blockchain transactions for a merchant wallet from Monadscan (Etherscan-compatible API)
  */
 router.get('/merchant/transactions/:wallet', async (req, res) => {
   try {
@@ -930,34 +1257,58 @@ router.get('/merchant/transactions/:wallet', async (req, res) => {
       });
     }
 
-    // Fetch token transfers from Blockscout API
-    const blockscoutUrl = `https://monad.socialscan.io/api/v2/addresses/${wallet}/token-transfers`;
-    const response = await fetch(blockscoutUrl);
-
-    if (!response.ok) {
-      throw new Error(`Blockscout API error: ${response.status}`);
+    const apiKey = process.env.MONADSCAN_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({
+        success: false,
+        error: 'Monadscan API key not configured',
+      });
     }
 
-    const data = await response.json() as { items?: any[] };
+    // Monad USDC contract address
+    const usdcAddress = '0x754704Bc059F8C67012fEd69BC8A327a5aafb603';
+
+    // Fetch token transfers from Monadscan (Etherscan-compatible API)
+    const page = Math.floor(Number(offset) / Number(limit)) + 1;
+    const monadscanUrl = `https://api.monadscan.com/api?module=account&action=tokentx&address=${wallet}&contractaddress=${usdcAddress}&page=${page}&offset=${limit}&sort=desc&apikey=${apiKey}`;
+    const response = await fetch(monadscanUrl);
+
+    if (!response.ok) {
+      throw new Error(`Monadscan API error: ${response.status}`);
+    }
+
+    const data = await response.json() as { status: string; message: string; result: any[] | string };
+
+    if (data.status !== '1' || !Array.isArray(data.result)) {
+      // status "0" with "No transactions found" is not an error
+      const noTxs = typeof data.result === 'string' && data.result.includes('No transactions found');
+      if (noTxs) {
+        return res.json({
+          success: true,
+          data: {
+            transactions: [],
+            stats: { totalPayments: 0, totalAmount: '0.00', uniquePayers: 0 },
+            pagination: { limit: Number(limit), offset: Number(offset), count: 0 },
+          },
+        });
+      }
+      throw new Error(`Monadscan API: ${data.message} - ${data.result}`);
+    }
 
     // Filter and format incoming USDC transfers
-    const usdcAddress = '0x078D782b760474a361dDA0AF3839290b0EF57AD6'.toLowerCase();
-    const transactions = (data.items || [])
+    const transactions = (data.result as any[])
       .filter((tx: any) => {
         // Only incoming transfers to this wallet
-        const isIncoming = tx.to?.hash?.toLowerCase() === wallet.toLowerCase();
-        // Only USDC transfers
-        const isUsdc = tx.token?.address_hash?.toLowerCase() === usdcAddress;
-        return isIncoming && isUsdc;
+        return tx.to?.toLowerCase() === wallet.toLowerCase();
       })
-      .slice(Number(offset), Number(offset) + Number(limit))
       .map((tx: any) => ({
-        txHash: tx.transaction_hash,
-        fromAddress: tx.from?.hash || 'Unknown',
-        amount: (Number(tx.total?.value || 0) / 1e6).toFixed(2), // USDC has 6 decimals
-        timestamp: tx.timestamp,
-        token: tx.token?.symbol || 'USDC',
-        blockNumber: tx.block_number,
+        txHash: tx.hash,
+        fromAddress: tx.from || 'Unknown',
+        amount: (Number(tx.value || 0) / 1e6).toFixed(2), // USDC has 6 decimals
+        timestamp: new Date(Number(tx.timeStamp) * 1000).toISOString(),
+        token: tx.tokenSymbol || 'USDC',
+        blockNumber: Number(tx.blockNumber),
+        explorerUrl: `https://monadscan.com/tx/${tx.hash}`,
       }));
 
     // Calculate stats

@@ -20,6 +20,7 @@
 		1A0000130000000000000001 /* AudioManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000390000000000000001 /* AudioManager.swift */; };
 		1A0000140000000000000001 /* GeminiSessionViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00003A0000000000000001 /* GeminiSessionViewModel.swift */; };
 		1A0000150000000000000001 /* VoiceSwapSystemPrompt.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00003B0000000000000001 /* VoiceSwapSystemPrompt.swift */; };
+		1A0000160000000000000001 /* SecuritySettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00003C0000000000000002 /* SecuritySettings.swift */; };
 		A515AF1A2EED338A00AC5AD7 /* ReownAppKit in Frameworks */ = {isa = PBXBuildFile; productRef = A515AF192EED338A00AC5AD7 /* ReownAppKit */; };
 		A515AF1C2EED338A00AC5AD7 /* ReownAppKitUI in Frameworks */ = {isa = PBXBuildFile; productRef = A515AF1B2EED338A00AC5AD7 /* ReownAppKitUI */; };
 		A515AF1E2EED338A00AC5AD7 /* ReownRouter in Frameworks */ = {isa = PBXBuildFile; productRef = A515AF1D2EED338A00AC5AD7 /* ReownRouter */; };
@@ -47,6 +48,7 @@
 		1A0000390000000000000001 /* AudioManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioManager.swift; sourceTree = "<group>"; };
 		1A00003A0000000000000001 /* GeminiSessionViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiSessionViewModel.swift; sourceTree = "<group>"; };
 		1A00003B0000000000000001 /* VoiceSwapSystemPrompt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSwapSystemPrompt.swift; sourceTree = "<group>"; };
+		1A00003C0000000000000002 /* SecuritySettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecuritySettings.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -114,6 +116,7 @@
 				1A0000390000000000000001 /* AudioManager.swift */,
 				1A00003A0000000000000001 /* GeminiSessionViewModel.swift */,
 				1A00003B0000000000000001 /* VoiceSwapSystemPrompt.swift */,
+				1A00003C0000000000000002 /* SecuritySettings.swift */,
 			);
 			path = Gemini;
 			sourceTree = "<group>";
@@ -241,6 +244,7 @@
 				1A0000130000000000000001 /* AudioManager.swift in Sources */,
 				1A0000140000000000000001 /* GeminiSessionViewModel.swift in Sources */,
 				1A0000150000000000000001 /* VoiceSwapSystemPrompt.swift in Sources */,
+				1A0000160000000000000001 /* SecuritySettings.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

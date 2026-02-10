@@ -47,11 +47,11 @@ app.get('/pay/:wallet', (req, res) => {
       <title>VoiceSwap Payment</title>
       <meta http-equiv="refresh" content="0;url=${appUrl}">
       <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; padding: 50px; background: #1a1a2e; color: white; }
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; padding: 50px; background: #1a1a1a; color: white; }
         .container { max-width: 400px; margin: 0 auto; }
-        h1 { font-size: 24px; }
-        p { color: #888; }
-        a { color: #4a9eff; }
+        h1 { font-size: 24px; color: #836EF9; }
+        p { color: #999; }
+        a { color: #836EF9; }
       </style>
     </head>
     <body>

@@ -48,7 +48,7 @@ export default function SettingsScreen() {
             autoCorrect={false}
           />
           <Text style={styles.hint}>
-            This address will receive swapped tokens and pay for x402 fees
+            This address will receive swapped tokens
           </Text>
         </View>
 
@@ -67,7 +67,7 @@ export default function SettingsScreen() {
             keyboardType="url"
           />
           <Text style={styles.hint}>
-            URL of the x402 Swap Executor backend
+            URL of the VoiceSwap backend
           </Text>
         </View>
 
@@ -75,41 +75,17 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Network Info</Text>
           <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Swap Network:</Text>
-            <Text style={styles.infoValue}>Unichain</Text>
+            <Text style={styles.infoLabel}>Network:</Text>
+            <Text style={styles.infoValue}>Monad</Text>
+          </View>
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>Chain ID:</Text>
+            <Text style={styles.infoValue}>143</Text>
           </View>
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Protocol:</Text>
-            <Text style={styles.infoValue}>Uniswap V4</Text>
+            <Text style={styles.infoValue}>Uniswap V3</Text>
           </View>
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Payment Network:</Text>
-            <Text style={styles.infoValue}>Base (x402)</Text>
-          </View>
-        </View>
-
-        {/* Pricing Info */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>x402 Pricing</Text>
-          <View style={styles.priceRow}>
-            <Text style={styles.priceEndpoint}>/quote</Text>
-            <Text style={styles.priceAmount}>$0.001</Text>
-          </View>
-          <View style={styles.priceRow}>
-            <Text style={styles.priceEndpoint}>/route</Text>
-            <Text style={styles.priceAmount}>$0.005</Text>
-          </View>
-          <View style={styles.priceRow}>
-            <Text style={styles.priceEndpoint}>/execute</Text>
-            <Text style={styles.priceAmount}>$0.02</Text>
-          </View>
-          <View style={styles.priceRow}>
-            <Text style={styles.priceEndpoint}>/status</Text>
-            <Text style={styles.priceAmount}>$0.001</Text>
-          </View>
-          <Text style={styles.hint}>
-            Total cost per swap: ~$0.027 in USDC
-          </Text>
         </View>
 
         {/* Save Button */}
@@ -120,8 +96,8 @@ export default function SettingsScreen() {
         {/* About */}
         <View style={styles.about}>
           <Text style={styles.aboutText}>VoiceSwap v1.0.0</Text>
-          <Text style={styles.aboutText}>Built for x402 Hackathon</Text>
-          <Text style={styles.aboutText}>Powered by Uniswap V4 on Unichain</Text>
+          <Text style={styles.aboutText}>Built for Moltiverse Hackathon</Text>
+          <Text style={styles.aboutText}>Powered by Uniswap V3 on Monad</Text>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -189,7 +165,7 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
   },
   priceAmount: {
-    color: '#4ade80',
+    color: '#836EF9',
     fontSize: 14,
     fontWeight: '600',
   },
