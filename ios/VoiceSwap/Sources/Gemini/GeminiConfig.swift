@@ -1,8 +1,15 @@
 import Foundation
 
 enum GeminiConfig {
-    /// Bundled API key — used directly, no user input needed
-    private static let bundledKey = "***REMOVED_GEMINI_KEY***"
+    /// Load API key from Secrets.plist (not tracked in git)
+    private static let bundledKey: String = {
+        guard let path = Bundle.main.path(forResource: "Secrets", ofType: "plist"),
+              let dict = NSDictionary(contentsOfFile: path),
+              let key = dict["GEMINI_API_KEY"] as? String else {
+            return ""
+        }
+        return key
+    }()
 
     static var apiKey: String {
         get {
@@ -10,7 +17,7 @@ enum GeminiConfig {
             if let saved = UserDefaults.standard.string(forKey: "gemini_api_key"), !saved.isEmpty {
                 return saved
             }
-            // 2. Use bundled key
+            // 2. Use bundled key from Secrets.plist
             return bundledKey
         }
         set { UserDefaults.standard.set(newValue, forKey: "gemini_api_key") }

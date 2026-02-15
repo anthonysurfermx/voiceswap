@@ -57,3 +57,6 @@ ios/VoiceSwap/.swiftpm/
 
 # SQLite DB
 voiceswap.db
+
+# Secrets (API keys)
+Secrets.plist
