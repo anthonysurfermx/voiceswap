@@ -6,6 +6,7 @@
 
 import { Router } from 'express';
 import { ethers } from 'ethers';
+import { generateJwt } from '@coinbase/cdp-sdk/auth';
 
 // Helper function to validate Ethereum addresses
 // Uses regex as primary method (more reliable in serverless environments)
@@ -44,6 +45,10 @@ import {
   getUserPayments,
   setAddressLabel,
   resolveAddressLabels,
+  savePaymentReceipt,
+  getReceiptByTxHash,
+  getReceiptByHash,
+  getPayerReceipts,
 } from '../services/database.js';
 import { getPriceInfo, getEthPrice } from '../services/priceOracle.js';
 
@@ -57,7 +62,7 @@ router.get('/info', (_req, res) => {
   res.json({
     service: 'VoiceSwap',
     description: 'Voice-activated crypto payments for Meta Ray-Ban glasses',
-    version: '1.0.0',
+    version: '3.0.0',
     network: NETWORK_CONFIG,
     supportedTokens: {
       input: ['MON', 'WMON', 'USDC'],
@@ -386,71 +391,84 @@ router.post('/prepare-tx', async (req, res) => {
 
     console.log(`[VoiceSwap] Quote: 1 WMON = ${usdcPerWmon} USDC, need ~${wmonNeeded.toFixed(4)} WMON for ${amount} USDC`);
 
-    // Step 1 (conditional): Wrap MON → WMON
+    // Optimized swap paths: native MON uses payable router (auto-wraps), skipping wrap+approve
+    // Before: wrap(tx1) → approve(tx2) → swap(tx3) → transfer(tx4) = 4 txs
+    // After:  swap with native value(tx1) → transfer(tx2) = 2 txs
+
+    let routePriceImpact = '0';
+
     if (swapInfo.swapFrom === 'NATIVE_MON') {
-      const wmonIface = new ethers.utils.Interface(['function deposit() payable']);
-      const wrapData = wmonIface.encodeFunctionData('deposit', []);
+      // Native MON path: send MON as value to SwapRouter02 (auto-wraps internally)
+      // No separate wrap or approve needed — 1 swap tx instead of 3
+      const route = await uniswap.getRoute(
+        WMON_ADDRESS,
+        SUPPORTED_TOKENS.USDC,
+        wmonNeeded.toFixed(18),
+        userAddress,
+        1.0,
+      );
+      routePriceImpact = route.priceImpact || '0';
 
       steps.push({
-        type: 'wrap',
+        type: 'swap',
         tx: {
-          to: WMON_ADDRESS,
-          value: ethers.utils.hexValue(wmonNeededWei),
-          data: wrapData,
+          to: route.to!,
+          value: ethers.utils.hexValue(wmonNeededWei), // Native MON — router wraps automatically
+          data: route.calldata!,
           from: userAddress,
           chainId: 143,
         },
-        description: `Wrap ${wmonNeeded.toFixed(4)} MON to WMON`,
+        description: `Swap ${wmonNeeded.toFixed(4)} MON → ${amount} USDC`,
       });
-    }
+    } else {
+      // WMON path: check approval, then swap (2 txs max instead of 3)
+      const wmonContract = new ethers.Contract(WMON_ADDRESS, [
+        'function allowance(address owner, address spender) view returns (uint256)',
+      ], new ethers.providers.JsonRpcProvider(NETWORK_CONFIG.rpcUrl));
 
-    // Step 2 (conditional): Approve WMON for Uniswap Router
-    const wmonContract = new ethers.Contract(WMON_ADDRESS, [
-      'function allowance(address owner, address spender) view returns (uint256)',
-    ], new ethers.providers.JsonRpcProvider(NETWORK_CONFIG.rpcUrl));
+      const currentAllowance = await wmonContract.allowance(userAddress, ROUTER_ADDRESS);
+      if (currentAllowance.lt(wmonNeededWei)) {
+        const approveData = erc20Iface.encodeFunctionData('approve', [
+          ROUTER_ADDRESS,
+          ethers.constants.MaxUint256,
+        ]);
 
-    const currentAllowance = await wmonContract.allowance(userAddress, ROUTER_ADDRESS);
-    if (currentAllowance.lt(wmonNeededWei)) {
-      const approveData = erc20Iface.encodeFunctionData('approve', [
-        ROUTER_ADDRESS,
-        ethers.constants.MaxUint256, // Infinite approval (one-time)
-      ]);
+        steps.push({
+          type: 'approve',
+          tx: {
+            to: WMON_ADDRESS,
+            value: '0x0',
+            data: approveData,
+            from: userAddress,
+            chainId: 143,
+          },
+          description: 'Approve WMON for swap',
+        });
+      }
+
+      const route = await uniswap.getRoute(
+        WMON_ADDRESS,
+        SUPPORTED_TOKENS.USDC,
+        wmonNeeded.toFixed(18),
+        userAddress,
+        1.0,
+      );
+      routePriceImpact = route.priceImpact || '0';
 
       steps.push({
-        type: 'approve',
+        type: 'swap',
         tx: {
-          to: WMON_ADDRESS,
+          to: route.to!,
           value: '0x0',
-          data: approveData,
+          data: route.calldata!,
           from: userAddress,
           chainId: 143,
         },
-        description: 'Approve WMON for swap',
+        description: `Swap ${wmonNeeded.toFixed(4)} WMON → ${amount} USDC`,
       });
     }
 
-    // Step 3: Swap WMON → USDC via Uniswap V3
-    const route = await uniswap.getRoute(
-      WMON_ADDRESS,
-      SUPPORTED_TOKENS.USDC,
-      wmonNeeded.toFixed(18),
-      userAddress, // USDC goes to user's wallet
-      1.0, // 1% slippage tolerance
-    );
-
-    steps.push({
-      type: 'swap',
-      tx: {
-        to: route.to!,
-        value: '0x0',
-        data: route.calldata!,
-        from: userAddress,
-        chainId: 143,
-      },
-      description: `Swap ${wmonNeeded.toFixed(4)} WMON → ${amount} USDC`,
-    });
-
-    // Step 4: Transfer USDC to merchant
+    // Final step: Transfer USDC to merchant
     const transferData = erc20Iface.encodeFunctionData('transfer', [merchantWallet, amountInUnits]);
     steps.push({
       type: 'transfer',
@@ -464,6 +482,8 @@ router.post('/prepare-tx', async (req, res) => {
       description: `Send ${amount} USDC to ${recipientShort}`,
     });
 
+    console.log(`[VoiceSwap] Optimized: ${steps.length} steps (was up to 4)`);
+
     res.json({
       success: true,
       data: {
@@ -474,7 +494,7 @@ router.post('/prepare-tx', async (req, res) => {
           toToken: 'USDC',
           amountIn: wmonNeeded.toFixed(4),
           estimatedOut: amount,
-          priceImpact: route.priceImpact,
+          priceImpact: routePriceImpact,
           slippage: '1.0',
         },
         // Backward compatibility: first step's tx
@@ -912,10 +932,10 @@ router.post('/merchant/payment', async (req, res) => {
   try {
     const { merchantWallet, txHash, fromAddress, amount, concept, blockNumber, merchantName } = req.body;
 
-    if (!merchantWallet || !txHash || !fromAddress || !amount || blockNumber === undefined) {
+    if (!merchantWallet || !txHash || !fromAddress || !amount) {
       return res.status(400).json({
         success: false,
-        error: 'Missing required fields: merchantWallet, txHash, fromAddress, amount, blockNumber',
+        error: 'Missing required fields: merchantWallet, txHash, fromAddress, amount',
       });
     }
 
@@ -932,7 +952,7 @@ router.post('/merchant/payment', async (req, res) => {
       fromAddress,
       amount: amount.toString(),
       concept,
-      blockNumber,
+      blockNumber: blockNumber || 0,
     });
 
     // Save merchant name label if provided
@@ -1175,6 +1195,10 @@ router.post('/set-label', async (req, res) => {
   }
 });
 
+// In-memory rate limit for gas faucet: 1 airdrop per address per 24h
+const gasAirdropLog = new Map<string, number>();
+const GAS_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
+
 /**
  * POST /voiceswap/gas/request
  * Request a small MON gas airdrop for new users
@@ -1187,6 +1211,17 @@ router.post('/gas/request', async (req, res) => {
 
     if (!userAddress || !isValidAddress(userAddress)) {
       return res.status(400).json({ success: false, error: 'Invalid userAddress' });
+    }
+
+    // Rate limit: 1 airdrop per address per 24h
+    const normalizedAddr = userAddress.toLowerCase();
+    const lastAirdrop = gasAirdropLog.get(normalizedAddr);
+    if (lastAirdrop && Date.now() - lastAirdrop < GAS_COOLDOWN_MS) {
+      const hoursLeft = Math.ceil((GAS_COOLDOWN_MS - (Date.now() - lastAirdrop)) / (60 * 60 * 1000));
+      return res.status(429).json({
+        success: false,
+        error: `Rate limited. Try again in ~${hoursLeft} hour${hoursLeft === 1 ? '' : 's'}.`,
+      });
     }
 
     const sponsorKey = process.env.GAS_SPONSOR_KEY;
@@ -1223,6 +1258,9 @@ router.post('/gas/request', async (req, res) => {
 
     console.log(`[GasSponsor] Sent 0.01 MON to ${userAddress}: ${tx.hash}`);
 
+    // Record successful airdrop for rate limiting
+    gasAirdropLog.set(normalizedAddr, Date.now());
+
     res.json({
       success: true,
       data: {
@@ -1243,7 +1281,8 @@ router.post('/gas/request', async (req, res) => {
 
 /**
  * GET /voiceswap/merchant/transactions/:wallet
- * Get real blockchain transactions for a merchant wallet from Monadscan (Etherscan-compatible API)
+ * Get merchant payment history from database (saved by iOS app after each payment)
+ * Falls back to Monadscan API if available for additional on-chain discovery
  */
 router.get('/merchant/transactions/:wallet', async (req, res) => {
   try {
@@ -1257,63 +1296,135 @@ router.get('/merchant/transactions/:wallet', async (req, res) => {
       });
     }
 
-    const apiKey = process.env.MONADSCAN_API_KEY;
-    if (!apiKey) {
-      return res.status(503).json({
-        success: false,
-        error: 'Monadscan API key not configured',
-      });
-    }
+    // Primary source: database (saved by iOS app after each confirmed payment)
+    const payments = await getMerchantPayments(wallet, {
+      limit: Number(limit),
+      offset: Number(offset),
+    });
 
-    // Monad USDC contract address
-    const usdcAddress = '0x754704Bc059F8C67012fEd69BC8A327a5aafb603';
+    let transactions = payments.map((p: any) => ({
+      txHash: p.tx_hash,
+      fromAddress: p.from_address || 'Unknown',
+      amount: p.amount,
+      timestamp: p.created_at || new Date().toISOString(),
+      token: 'USDC',
+      blockNumber: p.block_number || 0,
+      concept: p.concept || undefined,
+      explorerUrl: `https://monadscan.com/tx/${p.tx_hash}`,
+    }));
 
-    // Fetch token transfers from Monadscan (Etherscan-compatible API)
-    const page = Math.floor(Number(offset) / Number(limit)) + 1;
-    const monadscanUrl = `https://api.monadscan.com/api?module=account&action=tokentx&address=${wallet}&contractaddress=${usdcAddress}&page=${page}&offset=${limit}&sort=desc&apikey=${apiKey}`;
-    const response = await fetch(monadscanUrl);
+    // Fallback: fetch USDC transfers on-chain if DB is empty
+    if (transactions.length === 0) {
+      try {
+        const rpcUrl = process.env.MONAD_RPC_URL || 'https://rpc.monad.xyz';
+        const USDC_ADDRESS = '0x754704Bc059F8C67012fEd69BC8A327a5aafb603';
+        const TRANSFER_TOPIC = ethers.utils.id('Transfer(address,address,uint256)');
+        const recipientPadded = ethers.utils.hexZeroPad(wallet.toLowerCase(), 32);
+        const monadscanKey = process.env.MONADSCAN_API_KEY;
 
-    if (!response.ok) {
-      throw new Error(`Monadscan API error: ${response.status}`);
-    }
+        let allLogs: any[] = [];
 
-    const data = await response.json() as { status: string; message: string; result: any[] | string };
+        if (monadscanKey) {
+          // Preferred: Etherscan V2 multichain API (Monadscan migrated here)
+          try {
+            const url = `https://api.etherscan.io/v2/api?chainid=143&module=account&action=tokentx&address=${wallet}&contractaddress=${USDC_ADDRESS}&startblock=0&endblock=99999999&sort=desc&page=1&offset=${limit}&apikey=${monadscanKey}`;
+            const resp = await fetch(url);
+            const data = await resp.json() as { status: string; result: any[] };
+            if (data.status === '1' && Array.isArray(data.result)) {
+              const onChainTxs = data.result
+                .filter((tx: any) => tx.to?.toLowerCase() === wallet.toLowerCase())
+                .map((tx: any) => ({
+                  txHash: tx.hash,
+                  fromAddress: ethers.utils.getAddress(tx.from),
+                  amount: parseFloat(ethers.utils.formatUnits(tx.value || '0', parseInt(tx.tokenDecimal) || 6)).toFixed(2),
+                  timestamp: parseInt(tx.timeStamp) * 1000,
+                  token: tx.tokenSymbol || 'USDC',
+                  blockNumber: parseInt(tx.blockNumber),
+                  concept: undefined,
+                  explorerUrl: `https://monadscan.com/tx/${tx.hash}`,
+                }));
+              transactions = onChainTxs;
+              console.log(`[VoiceSwap] Etherscan V2: ${onChainTxs.length} USDC transfers for ${wallet}`);
+            }
+          } catch (scanErr) {
+            console.error('[VoiceSwap] Etherscan V2 API failed, falling back to RPC:', scanErr);
+          }
+        }
 
-    if (data.status !== '1' || !Array.isArray(data.result)) {
-      // status "0" with "No transactions found" is not an error
-      const noTxs = typeof data.result === 'string' && data.result.includes('No transactions found');
-      if (noTxs) {
-        return res.json({
-          success: true,
-          data: {
-            transactions: [],
-            stats: { totalPayments: 0, totalAmount: '0.00', uniquePayers: 0 },
-            pagination: { limit: Number(limit), offset: Number(offset), count: 0 },
-          },
-        });
+        // RPC fallback: batch eth_getLogs in chunks of 100 blocks (Monad RPC limit)
+        if (transactions.length === 0) {
+          const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+          const latestBlock = await provider.getBlockNumber();
+          // Scan last 50,000 blocks in chunks of 100 (500 parallel requests)
+          const CHUNK_SIZE = 100;
+          const TOTAL_RANGE = 50000;
+          const chunks: { from: number; to: number }[] = [];
+
+          for (let i = 0; i < TOTAL_RANGE; i += CHUNK_SIZE) {
+            const from = Math.max(0, latestBlock - TOTAL_RANGE + i);
+            const to = Math.min(latestBlock, from + CHUNK_SIZE - 1);
+            chunks.push({ from, to });
+          }
+
+          // Run in batches of 50 concurrent requests to avoid overwhelming RPC
+          const BATCH_SIZE = 50;
+          for (let b = 0; b < chunks.length; b += BATCH_SIZE) {
+            const batch = chunks.slice(b, b + BATCH_SIZE);
+            const results = await Promise.allSettled(
+              batch.map(({ from, to }) =>
+                provider.getLogs({
+                  address: USDC_ADDRESS,
+                  topics: [TRANSFER_TOPIC, null, recipientPadded],
+                  fromBlock: from,
+                  toBlock: to,
+                })
+              )
+            );
+            for (const r of results) {
+              if (r.status === 'fulfilled' && r.value.length > 0) {
+                allLogs.push(...r.value);
+              }
+            }
+            // Stop early if we found enough
+            if (allLogs.length >= Number(limit)) break;
+          }
+
+          if (allLogs.length > 0) {
+            // Sort by block descending, take latest
+            allLogs.sort((a, b) => b.blockNumber - a.blockNumber);
+            const uniqueLogs = allLogs.filter((log, i, arr) =>
+              arr.findIndex(l => l.transactionHash === log.transactionHash) === i
+            );
+
+            const onChainTxs = uniqueLogs.slice(0, Number(limit)).map((log) => {
+              const from = ethers.utils.getAddress('0x' + (log.topics[1] || '').slice(26));
+              const rawAmount = ethers.BigNumber.from(log.data);
+              const amount = ethers.utils.formatUnits(rawAmount, 6);
+              return {
+                txHash: log.transactionHash,
+                fromAddress: from,
+                amount: parseFloat(amount).toFixed(2),
+                timestamp: Date.now(), // approximate — no block timestamp lookup to stay fast
+                token: 'USDC',
+                blockNumber: log.blockNumber,
+                concept: undefined,
+                explorerUrl: `https://monadscan.com/tx/${log.transactionHash}`,
+              };
+            });
+
+            transactions = onChainTxs;
+            console.log(`[VoiceSwap] RPC batch: ${onChainTxs.length} USDC transfers for ${wallet} (scanned ${TOTAL_RANGE} blocks)`);
+          }
+        }
+      } catch (chainErr) {
+        console.error('[VoiceSwap] On-chain fallback failed:', chainErr);
+        // Continue with empty transactions — don't fail the whole request
       }
-      throw new Error(`Monadscan API: ${data.message} - ${data.result}`);
     }
-
-    // Filter and format incoming USDC transfers
-    const transactions = (data.result as any[])
-      .filter((tx: any) => {
-        // Only incoming transfers to this wallet
-        return tx.to?.toLowerCase() === wallet.toLowerCase();
-      })
-      .map((tx: any) => ({
-        txHash: tx.hash,
-        fromAddress: tx.from || 'Unknown',
-        amount: (Number(tx.value || 0) / 1e6).toFixed(2), // USDC has 6 decimals
-        timestamp: new Date(Number(tx.timeStamp) * 1000).toISOString(),
-        token: tx.tokenSymbol || 'USDC',
-        blockNumber: Number(tx.blockNumber),
-        explorerUrl: `https://monadscan.com/tx/${tx.hash}`,
-      }));
 
     // Calculate stats
-    const totalAmount = transactions.reduce((sum: number, tx: any) => sum + parseFloat(tx.amount), 0);
-    const uniquePayers = new Set(transactions.map((tx: any) => tx.fromAddress.toLowerCase())).size;
+    const totalAmount = transactions.reduce((sum: number, tx: any) => sum + parseFloat(tx.amount || '0'), 0);
+    const uniquePayers = new Set(transactions.map((tx: any) => (tx.fromAddress || '').toLowerCase())).size;
 
     res.json({
       success: true,
@@ -1332,10 +1443,418 @@ router.get('/merchant/transactions/:wallet', async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('[VoiceSwap] Get blockchain transactions error:', error);
+    console.error('[VoiceSwap] Get merchant transactions error:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to get transactions from blockchain',
+      error: 'Failed to get transactions',
+    });
+  }
+});
+
+// ============================================
+// Payment Receipts (On-Chain Proof of Purchase)
+// ============================================
+
+/**
+ * POST /voiceswap/receipt
+ * Generate a signed payment receipt (cryptographic proof of purchase)
+ *
+ * The receipt is a server-signed attestation that a payment occurred.
+ * It contains: payer, merchant, amount, concept, txHash, timestamp.
+ * The receipt hash is a keccak256 of the structured data, signed by the server.
+ *
+ * Body:
+ * - txHash: Transaction hash of the confirmed payment
+ * - payerAddress: Payer's wallet address
+ * - merchantWallet: Merchant's wallet address
+ * - amount: Amount in USDC
+ * - concept: What was purchased (optional)
+ */
+router.post('/receipt', async (req, res) => {
+  try {
+    const { txHash, payerAddress, merchantWallet, amount, concept } = req.body;
+
+    if (!txHash || !payerAddress || !merchantWallet || !amount) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: txHash, payerAddress, merchantWallet, amount',
+      });
+    }
+
+    if (!isValidAddress(payerAddress) || !isValidAddress(merchantWallet)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid wallet address format',
+      });
+    }
+
+    // Check if receipt already exists
+    const existing = await getReceiptByTxHash(txHash);
+    if (existing) {
+      return res.json({
+        success: true,
+        data: {
+          receiptHash: existing.receipt_hash,
+          txHash: existing.tx_hash,
+          timestamp: existing.timestamp,
+          signature: existing.signature,
+          verifyUrl: `https://voiceswap.cc/receipt/${existing.receipt_hash}`,
+          message: 'Receipt already exists',
+        },
+      });
+    }
+
+    const sponsorKey = process.env.GAS_SPONSOR_KEY;
+    if (!sponsorKey) {
+      return res.status(503).json({
+        success: false,
+        error: 'Receipt signing not configured',
+      });
+    }
+
+    const timestamp = Math.floor(Date.now() / 1000);
+
+    // Build receipt data structure (EIP-712 style)
+    const receiptData = ethers.utils.defaultAbiCoder.encode(
+      ['address', 'address', 'string', 'string', 'bytes32', 'uint256', 'uint256'],
+      [
+        payerAddress,
+        merchantWallet,
+        amount,
+        concept || '',
+        txHash,
+        timestamp,
+        143, // chainId (Monad)
+      ]
+    );
+
+    const receiptHash = ethers.utils.keccak256(receiptData);
+
+    // Sign the receipt hash with the server's key
+    const signer = new ethers.Wallet(sponsorKey);
+    const signature = await signer.signMessage(ethers.utils.arrayify(receiptHash));
+
+    // Get block number from tx if possible
+    let blockNumber: number | undefined;
+    try {
+      const provider = new ethers.providers.JsonRpcProvider(NETWORK_CONFIG.rpcUrl);
+      const receipt = await provider.getTransactionReceipt(txHash);
+      if (receipt) {
+        blockNumber = receipt.blockNumber;
+      }
+    } catch {
+      // Non-critical — receipt works without block number
+    }
+
+    // Save to database
+    await savePaymentReceipt({
+      txHash,
+      receiptHash,
+      payerAddress,
+      merchantWallet,
+      amount,
+      concept,
+      blockNumber,
+      timestamp,
+      signature,
+    });
+
+    console.log(`[VoiceSwap] Receipt generated: ${receiptHash.slice(0, 16)}... for tx ${txHash.slice(0, 16)}...`);
+
+    res.json({
+      success: true,
+      data: {
+        receiptHash,
+        txHash,
+        payer: payerAddress,
+        merchant: merchantWallet,
+        amount,
+        concept: concept || null,
+        chainId: 143,
+        blockNumber: blockNumber || null,
+        timestamp,
+        signature,
+        signer: signer.address,
+        verifyUrl: `https://voiceswap.cc/receipt/${receiptHash}`,
+      },
+    });
+  } catch (error) {
+    console.error('[VoiceSwap] Receipt generation error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to generate receipt',
+    });
+  }
+});
+
+/**
+ * GET /voiceswap/receipt/:hash
+ * Verify and retrieve a payment receipt by its hash
+ */
+router.get('/receipt/:hash', async (req, res) => {
+  try {
+    const { hash } = req.params;
+
+    // Try by receipt hash first, then by tx hash
+    let receipt = await getReceiptByHash(hash);
+    if (!receipt) {
+      receipt = await getReceiptByTxHash(hash);
+    }
+
+    if (!receipt) {
+      return res.status(404).json({
+        success: false,
+        error: 'Receipt not found',
+      });
+    }
+
+    // Verify signature
+    const receiptData = ethers.utils.defaultAbiCoder.encode(
+      ['address', 'address', 'string', 'string', 'bytes32', 'uint256', 'uint256'],
+      [
+        receipt.payer_address,
+        receipt.merchant_wallet,
+        receipt.amount,
+        receipt.concept || '',
+        receipt.tx_hash,
+        receipt.timestamp,
+        receipt.chain_id,
+      ]
+    );
+
+    const expectedHash = ethers.utils.keccak256(receiptData);
+    const recoveredAddress = ethers.utils.verifyMessage(
+      ethers.utils.arrayify(expectedHash),
+      receipt.signature
+    );
+
+    res.json({
+      success: true,
+      data: {
+        receiptHash: receipt.receipt_hash,
+        txHash: receipt.tx_hash,
+        payer: receipt.payer_address,
+        merchant: receipt.merchant_wallet,
+        amount: receipt.amount,
+        concept: receipt.concept,
+        chainId: receipt.chain_id,
+        blockNumber: receipt.block_number,
+        timestamp: receipt.timestamp,
+        signature: receipt.signature,
+        signer: recoveredAddress,
+        verified: expectedHash === receipt.receipt_hash,
+        explorerUrl: `https://monadscan.com/tx/${receipt.tx_hash}`,
+      },
+    });
+  } catch (error) {
+    console.error('[VoiceSwap] Receipt verification error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to verify receipt',
+    });
+  }
+});
+
+/**
+ * GET /voiceswap/receipts/:address
+ * Get all receipts for a payer address
+ */
+router.get('/receipts/:address', async (req, res) => {
+  try {
+    const { address } = req.params;
+    const limit = parseInt(req.query.limit as string) || 50;
+
+    if (!isValidAddress(address)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid wallet address',
+      });
+    }
+
+    const receipts = await getPayerReceipts(address, limit);
+
+    res.json({
+      success: true,
+      data: {
+        receipts: receipts.map(r => ({
+          receiptHash: r.receipt_hash,
+          txHash: r.tx_hash,
+          merchant: r.merchant_wallet,
+          amount: r.amount,
+          concept: r.concept,
+          timestamp: r.timestamp,
+          verifyUrl: `https://voiceswap.cc/receipt/${r.receipt_hash}`,
+        })),
+        count: receipts.length,
+      },
+    });
+  } catch (error) {
+    console.error('[VoiceSwap] Get receipts error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get receipts',
+    });
+  }
+});
+
+// ============================================
+// Coinbase Onramp Session Token
+// ============================================
+
+/**
+ * POST /voiceswap/onramp/session-token
+ * Generate a Coinbase Onramp session token for secure initialization.
+ *
+ * As of July 31 2025, Coinbase Onramp requires a server-generated
+ * sessionToken instead of the deprecated appId URL parameter.
+ * The session token embeds the destination wallet address(es) and
+ * supported assets, so the client only needs to pass the token in the URL.
+ *
+ * Flow:
+ *   1. Client calls this endpoint with wallet address + desired assets/blockchains
+ *   2. Server generates a CDP JWT using the API key credentials
+ *   3. Server calls POST https://api.developer.coinbase.com/onramp/v1/token
+ *   4. Returns the one-time-use session token (expires in 5 minutes)
+ *
+ * Required env vars:
+ *   CDP_API_KEY_ID     - CDP API Key ID (UUID)
+ *   CDP_API_KEY_SECRET - CDP API Key Secret (EC PEM or Ed25519 base64)
+ *
+ * Body:
+ *   - address:      Destination wallet address (required)
+ *   - blockchains:  Array of blockchain identifiers, e.g. ["monad", "base"] (optional, defaults to ["monad"])
+ *   - assets:       Array of asset tickers, e.g. ["USDC", "ETH"] (optional, defaults to ["USDC"])
+ *
+ * Returns:
+ *   - token:      One-time-use session token for Coinbase Onramp URL
+ *   - onrampUrl:  Ready-to-use Coinbase Onramp URL with the session token
+ */
+router.post('/onramp/session-token', async (req, res) => {
+  try {
+    const { address, blockchains, assets } = req.body;
+
+    // --- Validate input ---
+    if (!address || typeof address !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing or invalid "address" in request body',
+      });
+    }
+
+    if (!isValidAddress(address)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid wallet address format',
+      });
+    }
+
+    // --- Check CDP credentials ---
+    const cdpApiKeyId = process.env.CDP_API_KEY_ID;
+    const cdpApiKeySecret = process.env.CDP_API_KEY_SECRET;
+
+    if (!cdpApiKeyId || !cdpApiKeySecret) {
+      console.error('[Onramp] Missing CDP_API_KEY_ID or CDP_API_KEY_SECRET env vars');
+      return res.status(503).json({
+        success: false,
+        error: 'Coinbase Onramp not configured. CDP API credentials are missing.',
+      });
+    }
+
+    // --- Resolve the private key (handle escaped newlines from env) ---
+    const resolvedSecret = cdpApiKeySecret.replace(/\\n/g, '\n');
+
+    // --- Build the request payload ---
+    const targetBlockchains = Array.isArray(blockchains) && blockchains.length > 0
+      ? blockchains
+      : ['monad'];
+
+    const targetAssets = Array.isArray(assets) && assets.length > 0
+      ? assets
+      : ['USDC'];
+
+    const tokenRequestBody = {
+      addresses: [
+        {
+          address,
+          blockchains: targetBlockchains,
+        },
+      ],
+      assets: targetAssets,
+    };
+
+    // Optionally include the client's real IP for Coinbase quote restrictions.
+    // Extract from the TCP socket, NOT from X-Forwarded-For (spoofable).
+    const clientIp = req.socket.remoteAddress;
+    if (clientIp && !clientIp.startsWith('::') && clientIp !== '127.0.0.1') {
+      (tokenRequestBody as any).clientIp = clientIp;
+    }
+
+    // --- Step 1: Generate CDP JWT ---
+    const REQUEST_HOST = 'api.developer.coinbase.com';
+    const REQUEST_PATH = '/onramp/v1/token';
+
+    console.log('[Onramp] Generating CDP JWT for session token request...');
+
+    const jwt = await generateJwt({
+      apiKeyId: cdpApiKeyId,
+      apiKeySecret: resolvedSecret,
+      requestMethod: 'POST',
+      requestHost: REQUEST_HOST,
+      requestPath: REQUEST_PATH,
+      expiresIn: 120,
+    });
+
+    // --- Step 2: Call Coinbase Onramp token API ---
+    console.log('[Onramp] Requesting session token from Coinbase...');
+
+    const tokenResponse = await fetch(`https://${REQUEST_HOST}${REQUEST_PATH}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${jwt}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(tokenRequestBody),
+    });
+
+    if (!tokenResponse.ok) {
+      const errorText = await tokenResponse.text();
+      console.error(`[Onramp] Coinbase API error (${tokenResponse.status}):`, errorText);
+      return res.status(tokenResponse.status >= 500 ? 502 : 400).json({
+        success: false,
+        error: `Coinbase Onramp API error: ${tokenResponse.status}`,
+        details: errorText,
+      });
+    }
+
+    const tokenData = await tokenResponse.json() as { token: string; channel_id?: string };
+
+    if (!tokenData.token) {
+      console.error('[Onramp] No token in Coinbase response:', tokenData);
+      return res.status(502).json({
+        success: false,
+        error: 'Coinbase Onramp API returned an empty token',
+      });
+    }
+
+    console.log(`[Onramp] Session token generated for ${address.slice(0, 10)}...`);
+
+    // --- Step 3: Build the ready-to-use Onramp URL ---
+    const onrampUrl = `https://pay.coinbase.com/buy/select-asset?sessionToken=${tokenData.token}`;
+
+    res.json({
+      success: true,
+      data: {
+        token: tokenData.token,
+        onrampUrl,
+        expiresInSeconds: 300, // 5 minutes
+        note: 'Token is single-use and expires in 5 minutes.',
+      },
+    });
+  } catch (error) {
+    console.error('[Onramp] Session token generation error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to generate Coinbase Onramp session token',
     });
   }
 });

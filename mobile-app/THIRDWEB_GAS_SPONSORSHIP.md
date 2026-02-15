@@ -23,7 +23,7 @@ Gas Sponsorship permite que tu app pague los gas fees de los usuarios, eliminand
 ### 1.2 Crear Paymaster
 
 1. Click en **Create Paymaster**
-2. Selecciona **Unichain Sepolia** (Chain ID: 1301)
+2. Selecciona **Monad Sepolia** (Chain ID: 1301)
 3. Nombra tu paymaster: `voiceswap-sepolia-paymaster`
 4. Click **Create**
 
@@ -36,8 +36,8 @@ El paymaster necesita fondos para patrocinar gas:
 3. Para mainnet: Calcular basado en volumen esperado
 
 **Estimación de costos:**
-- Unichain Sepolia: ~0.0005 ETH por swap
-- Unichain Mainnet: ~0.001-0.002 ETH por swap
+- Monad Sepolia: ~0.0005 ETH por swap
+- Monad Mainnet: ~0.001-0.002 ETH por swap
 - 100 usuarios × 5 swaps = 500 swaps
 - Costo estimado en mainnet: ~0.5-1 ETH
 
@@ -62,10 +62,10 @@ Solo patrocina transacciones hacia contratos específicos:
 
 1. Ve a **Rules → Contract Whitelist**
 2. Click **Add Contract**
-3. Añade estos contratos de Uniswap V4:
+3. Añade estos contratos de Uniswap V3:
 
 ```
-# Universal Router (Uniswap V4)
+# Universal Router (Uniswap V3)
 0xef740bf23acae26f6492b10de645d6b98dc8eaf3
 
 # Pool Manager (opcional, para swaps directos)
@@ -78,8 +78,8 @@ Solo patrocina transacciones hacia contratos específicos:
 
 1. Ve a **Rules → Allowed Chains**
 2. Selecciona solo:
-   - ✅ Unichain Sepolia (1301) - testnet
-   - ✅ Unichain (130) - mainnet cuando lances
+   - ✅ Monad Sepolia (1301) - testnet
+   - ✅ Monad (130) - mainnet cuando lances
 
 ### 2.4 Rate Limiting (Opcional pero recomendado)
 
@@ -101,7 +101,7 @@ El archivo `src/config/thirdweb.ts` ya está configurado:
 
 ```typescript
 export const accountAbstractionConfig = {
-  chain: currentChain, // Unichain Sepolia
+  chain: currentChain, // Monad Sepolia
   sponsorGas: true,    // ✅ Habilitado
 };
 ```
@@ -199,7 +199,7 @@ if (swapAmountUSD > 100) {
 ## Checklist de Producción
 
 ### Pre-Launch
-- [ ] Paymaster creado en Unichain Sepolia (testnet)
+- [ ] Paymaster creado en Monad Sepolia (testnet)
 - [ ] Fondos depositados (0.05 ETH mínimo)
 - [ ] Contract whitelist configurado
 - [ ] Rate limits configurados
@@ -208,7 +208,7 @@ if (swapAmountUSD > 100) {
 - [ ] Testing end-to-end con wallet real
 
 ### Launch (Mainnet)
-- [ ] Crear nuevo paymaster en Unichain Mainnet (Chain ID: 130)
+- [ ] Crear nuevo paymaster en Monad Mainnet (Chain ID: 130)
 - [ ] Depositar fondos en mainnet (1-2 ETH para empezar)
 - [ ] Actualizar contract whitelist con direcciones de mainnet
 - [ ] Ajustar spend limits según proyección de usuarios
@@ -271,7 +271,7 @@ try {
 
 - [Thirdweb Gas Sponsorship Docs](https://portal.thirdweb.com/connect/account-abstraction/guides/react)
 - [Sponsorship Rules](https://portal.thirdweb.com/connect/account-abstraction/sponsorship-rules)
-- [Unichain Block Explorer](https://sepolia.uniscan.xyz)
+- [Monad Block Explorer](https://sepolia.uniscan.xyz)
 
 ---
 

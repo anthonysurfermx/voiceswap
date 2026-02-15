@@ -1,6 +1,6 @@
 # VoiceSwap - Voice-Activated DeFi Swaps
 
-> Connect Meta Ray-Ban glasses to execute Uniswap V4 swaps on Unichain using voice commands
+> Connect Meta Ray-Ban glasses to execute Uniswap V3 swaps on Monad using voice commands
 
 Built for the x402 Hackathon (December 2025 - January 2026)
 
@@ -34,7 +34,7 @@ Built for the x402 Hackathon (December 2025 - January 2026)
 ┌─────────────────────────────────────────────────────────────────┐
 │                    x402 Swap Executor Backend                    │
 │                                                                  │
-│   /quote ──▶ /route ──▶ /execute ──▶ Uniswap V4 on Unichain    │
+│   /quote ──▶ /route ──▶ /execute ──▶ Uniswap V3 on Monad    │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -43,7 +43,7 @@ Built for the x402 Hackathon (December 2025 - January 2026)
 
 - 🎙️ Voice-activated token swaps
 - 👓 Meta Ray-Ban glasses integration
-- ⚡ Uniswap V4 on Unichain (fastest L2)
+- ⚡ Uniswap V3 on Monad (fastest L2)
 - 💳 x402 micropayments (~$0.027 per swap)
 - 🔊 Audio confirmation through glasses
 
@@ -164,13 +164,13 @@ The app includes mock mode for development:
 
 ## Token Support
 
-### Unichain Mainnet
+### Monad Mainnet
 | Token | Address |
 |-------|---------|
 | WETH | `0x4200000000000000000000000000000000000006` |
 | USDC | `0x078D782b760474a361dDA0AF3839290b0EF57AD6` |
 
-### Unichain Sepolia (Testnet)
+### Monad Sepolia (Testnet)
 | Token | Address |
 |-------|---------|
 | WETH | `0x4200000000000000000000000000000000000006` |
@@ -191,7 +191,7 @@ The app includes mock mode for development:
 - **State**: Zustand
 - **Speech**: expo-speech + @react-native-voice/voice
 - **Blockchain**: ethers.js
-- **Backend**: x402 Swap Executor (Uniswap V4)
+- **Backend**: x402 Swap Executor (Uniswap V3)
 
 ## Building for Production
 
@@ -210,8 +210,8 @@ eas build --platform android
 
 - [Meta Wearables SDK](https://wearables.developer.meta.com/docs/develop)
 - [x402 Protocol](https://x402.org)
-- [Uniswap V4 Docs](https://docs.uniswap.org)
-- [Unichain Docs](https://docs.unichain.org)
+- [Uniswap V3 Docs](https://docs.uniswap.org)
+- [Monad Docs](https://docs.monad.org)
 - [Expo Documentation](https://docs.expo.dev)
 
 ## License

@@ -26,8 +26,8 @@ cat .env
 Should contain:
 ```env
 # Network Configuration
-NETWORK=unichain
-UNICHAIN_RPC_URL=https://mainnet.unichain.org
+NETWORK=monad
+MONAD_RPC_URL=https://mainnet.monad.org
 
 # Thirdweb Configuration
 THIRDWEB_SECRET_KEY=***REMOVED_THIRDWEB_SECRET***
@@ -58,7 +58,7 @@ npm run dev
 Expected output:
 ```
 Server running on http://localhost:4021
-Network: unichain
+Network: monad
 Chain ID: 130
 Thirdweb API: Configured ✓
 ```
@@ -77,8 +77,8 @@ Expected response:
   "status": "ok",
   "service": "x402-swap-executor",
   "version": "2.2.0",
-  "network": "unichain",
-  "protocol": "Uniswap V4 + Uniswap X",
+  "network": "monad",
+  "protocol": "Uniswap V3 + Uniswap X",
   "features": {
     "accountAbstraction": true,
     "gasSponsorship": true,
@@ -94,7 +94,7 @@ Expected response:
 curl "http://localhost:4021/quote?tokenIn=0x4200000000000000000000000000000000000006&tokenOut=0x078D782b760474a361dDA0AF3839290b0EF57AD6&amountIn=0.1"
 ```
 
-**Token Addresses (Unichain Mainnet):**
+**Token Addresses (Monad Mainnet):**
 - WETH: `0x4200000000000000000000000000000000000006`
 - USDC: `0x078D782b760474a361dDA0AF3839290b0EF57AD6`
 
@@ -121,7 +121,7 @@ Expected response:
     "route": [...],
     "estimatedGas": "...",
     "timestamp": ...,
-    "routingType": "v4"
+    "routingType": "v3"
   }
 }
 ```
@@ -180,7 +180,7 @@ Expected response:
     "status": "queued",
     "queueId": "...",
     "smartAccountAddress": "0x2749A654FeE5CEc3a8644a27E7498693d0132759",
-    "routingType": "v4_engine",
+    "routingType": "v3_engine",
     "message": "Transaction queued with gas sponsorship"
   }
 }
@@ -193,33 +193,33 @@ Expected response:
 
 ### Error: "Failed to get quote"
 **Fix:**
-- Verify `NETWORK=unichain` and `UNICHAIN_RPC_URL=https://mainnet.unichain.org`
-- Check that token addresses are correct for Unichain mainnet
+- Verify `NETWORK=monad` and `MONAD_RPC_URL=https://mainnet.monad.org`
+- Check that token addresses are correct for Monad mainnet
 
 ### Error: "Gas sponsorship failed"
 **Fix:** You need to configure gas sponsorship in Thirdweb dashboard first (see Step 8)
 
 ### Error: "Backend wallet has insufficient balance"
-**Fix:** Fund the backend wallet with ETH on Unichain mainnet
+**Fix:** Fund the backend wallet with ETH on Monad mainnet
 
 ## Step 8: Configure Gas Sponsorship (Required for Execute)
 
 1. Go to [Thirdweb Dashboard](https://thirdweb.com/dashboard)
 2. Navigate to Settings → Sponsorship
-3. Enable gas sponsorship for Chain ID **130** (Unichain Mainnet)
+3. Enable gas sponsorship for Chain ID **130** (Monad Mainnet)
 4. Add Universal Router to whitelist: `0xef740bf23acae26f6492b10de645d6b98dc8eaf3`
 5. Fund the paymaster with at least 0.05 ETH
 
 ## Step 9: Fund Backend Wallet
 
-Your backend wallet needs ETH on Unichain Mainnet:
+Your backend wallet needs ETH on Monad Mainnet:
 
 **Wallet:** `0x2749A654FeE5CEc3a8644a27E7498693d0132759`
 
 Options:
-- Bridge from Ethereum mainnet via [Unichain Bridge](https://bridge.unichain.org)
-- Transfer from another wallet on Unichain
-- Buy ETH on an exchange that supports Unichain
+- Bridge from Ethereum mainnet via [Monad Bridge](https://bridge.monad.org)
+- Transfer from another wallet on Monad
+- Buy ETH on an exchange that supports Monad
 
 Minimum recommended: **0.1 ETH**
 

@@ -31,7 +31,7 @@
 # 1. Features → Account Abstraction
 # 2. Toggle "Smart Backend Wallets" ON
 # 3. Depositar fondos:
-#    - Chain: Unichain Sepolia (1301)
+#    - Chain: Monad Sepolia (1301)
 #    - Amount: 0.05 ETH
 # 4. Configurar whitelist:
 #    - Add contract: 0xef740bf23acae26f6492b10de645d6b98dc8eaf3
@@ -150,7 +150,7 @@ railway init
 railway variables set THIRDWEB_ENGINE_URL=https://...
 railway variables set THIRDWEB_ENGINE_ACCESS_TOKEN=thirdweb_xxx
 railway variables set BACKEND_WALLET_ADDRESS=0x...
-railway variables set NETWORK=unichain-sepolia
+railway variables set NETWORK=monad-sepolia
 
 # 5. Deploy
 railway up
@@ -201,7 +201,7 @@ curl https://your-engine-url.thirdweb.com/health
 #    Engine dashboard → Backend Wallets → Balance
 
 # 2. Get testnet ETH:
-#    https://faucet.unichain.org
+#    https://faucet.monad.org
 ```
 
 ---
@@ -243,8 +243,8 @@ Ahora que tienes el setup básico funcionando:
 
 - [Engine Dashboard](https://thirdweb.com/dashboard/engine)
 - [Railway Dashboard](https://railway.app/dashboard)
-- [Unichain Faucet](https://faucet.unichain.org)
-- [Unichain Explorer](https://sepolia.uniscan.xyz)
+- [Monad Faucet](https://faucet.monad.org)
+- [Monad Explorer](https://sepolia.uniscan.xyz)
 
 ---
 

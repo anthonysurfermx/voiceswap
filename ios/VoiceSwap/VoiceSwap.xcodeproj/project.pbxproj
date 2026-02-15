@@ -21,6 +21,9 @@
 		1A0000140000000000000001 /* GeminiSessionViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00003A0000000000000001 /* GeminiSessionViewModel.swift */; };
 		1A0000150000000000000001 /* VoiceSwapSystemPrompt.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00003B0000000000000001 /* VoiceSwapSystemPrompt.swift */; };
 		1A0000160000000000000001 /* SecuritySettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00003C0000000000000002 /* SecuritySettings.swift */; };
+		B10000010000000000000001 /* VoiceSwapWallet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000020000000000000001 /* VoiceSwapWallet.swift */; };
+		B10000030000000000000001 /* WalletSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000040000000000000001 /* WalletSetupView.swift */; };
+		B10000050000000000000001 /* secp256k1 in Frameworks */ = {isa = PBXBuildFile; productRef = B10000060000000000000001 /* secp256k1 */; };
 		A515AF1A2EED338A00AC5AD7 /* ReownAppKit in Frameworks */ = {isa = PBXBuildFile; productRef = A515AF192EED338A00AC5AD7 /* ReownAppKit */; };
 		A515AF1C2EED338A00AC5AD7 /* ReownAppKitUI in Frameworks */ = {isa = PBXBuildFile; productRef = A515AF1B2EED338A00AC5AD7 /* ReownAppKitUI */; };
 		A515AF1E2EED338A00AC5AD7 /* ReownRouter in Frameworks */ = {isa = PBXBuildFile; productRef = A515AF1D2EED338A00AC5AD7 /* ReownRouter */; };
@@ -49,6 +52,8 @@
 		1A00003A0000000000000001 /* GeminiSessionViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiSessionViewModel.swift; sourceTree = "<group>"; };
 		1A00003B0000000000000001 /* VoiceSwapSystemPrompt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSwapSystemPrompt.swift; sourceTree = "<group>"; };
 		1A00003C0000000000000002 /* SecuritySettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecuritySettings.swift; sourceTree = "<group>"; };
+		B10000020000000000000001 /* VoiceSwapWallet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSwapWallet.swift; sourceTree = "<group>"; };
+		B10000040000000000000001 /* WalletSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletSetupView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -64,6 +69,7 @@
 				A515AF1C2EED338A00AC5AD7 /* ReownAppKitUI in Frameworks */,
 				A515AF202EED338A00AC5AD7 /* ReownWalletKit in Frameworks */,
 				A515AF1E2EED338A00AC5AD7 /* ReownRouter in Frameworks */,
+				B10000050000000000000001 /* secp256k1 in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -125,6 +131,7 @@
 			isa = PBXGroup;
 			children = (
 				1A0000040000000000000001 /* VoiceSwapMainView.swift */,
+				B10000040000000000000001 /* WalletSetupView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -144,6 +151,7 @@
 			children = (
 				1A00000F0000000000000001 /* WalletConnectManager.swift */,
 				C0D0153B2F0000000000001 /* VoiceSwapCryptoProvider.swift */,
+				B10000020000000000000001 /* VoiceSwapWallet.swift */,
 			);
 			path = Wallet;
 			sourceTree = "<group>";
@@ -173,6 +181,7 @@
 				A54F4D512EEDEAAE00B63C69 /* MWDATCamera */,
 				A54F4D532EEDEAAE00B63C69 /* MWDATCore */,
 				A54F4D552EEDEAAE00B63C69 /* MWDATMockDevice */,
+				B10000060000000000000001 /* secp256k1 */,
 			);
 			productName = VoiceSwap;
 			productReference = 1A0000100000000000000001 /* VoiceSwap.app */;
@@ -206,6 +215,7 @@
 			packageReferences = (
 				A515AF182EED31A300AC5AD7 /* XCRemoteSwiftPackageReference "reown-swift" */,
 				C0D015372F0000000000001 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */,
+				B10000070000000000000001 /* XCRemoteSwiftPackageReference "secp256k1.swift" */,
 			);
 			productRefGroup = 1A0000320000000000000001 /* Products */;
 			projectDirPath = "";
@@ -245,6 +255,8 @@
 				1A0000140000000000000001 /* GeminiSessionViewModel.swift in Sources */,
 				1A0000150000000000000001 /* VoiceSwapSystemPrompt.swift in Sources */,
 				1A0000160000000000000001 /* SecuritySettings.swift in Sources */,
+				B10000010000000000000001 /* VoiceSwapWallet.swift in Sources */,
+				B10000030000000000000001 /* WalletSetupView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -495,6 +507,14 @@
 				version = 0.4.0;
 			};
 		};
+		B10000070000000000000001 /* XCRemoteSwiftPackageReference "secp256k1.swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/GigaBitcoin/secp256k1.swift";
+			requirement = {
+				kind = exactVersion;
+				version = 0.18.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -537,6 +557,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = C0D015372F0000000000001 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
 			productName = MWDATMockDevice;
+		};
+		B10000060000000000000001 /* secp256k1 */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B10000070000000000000001 /* XCRemoteSwiftPackageReference "secp256k1.swift" */;
+			productName = secp256k1;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

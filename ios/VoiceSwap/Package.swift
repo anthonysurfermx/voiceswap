@@ -18,6 +18,8 @@ let package = Package(
     dependencies: [
         // Meta Wearables Device Access Toolkit
         .package(url: "https://github.com/facebook/meta-wearables-dat-ios.git", exact: "0.4.0"),
+        // secp256k1 for local Ethereum transaction signing
+        .package(url: "https://github.com/GigaBitcoin/secp256k1.swift.git", exact: "0.18.0"),
     ],
     targets: [
         .target(
@@ -25,6 +27,7 @@ let package = Package(
             dependencies: [
                 .product(name: "MWDATCore", package: "meta-wearables-dat-ios"),
                 .product(name: "MWDATCamera", package: "meta-wearables-dat-ios"),
+                .product(name: "secp256k1", package: "secp256k1.swift"),
             ],
             path: "Sources",
             resources: [

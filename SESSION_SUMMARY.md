@@ -46,7 +46,7 @@
 
 ```bash
 Server running at: http://localhost:4021
-Network: unichain
+Network: monad
 Features:
   - accountAbstraction: true
   - gasSponsorship: true
@@ -81,7 +81,7 @@ Features:
 **Error:** `invalid address` en `quoteExactInputSingle`
 **Causa:** El quoter ABI estaba mal definido y la poolKey se estaba pre-codificando como bytes en vez de pasar el struct directamente.
 **Solución:**
-- Actualizado V4_QUOTER_ABI para definir correctamente el parámetro poolKey como tuple
+- Actualizado V3_QUOTER_ABI para definir correctamente el parámetro poolKey como tuple
 - Removida la pre-codificación y pasando el poolKey como objeto struct directamente
 - Todos los endpoints `/quote`, `/route`, `/execute` ahora funcionan correctamente
 
@@ -138,8 +138,8 @@ THIRDWEB_CLIENT_ID=d180849f... ✅
 BACKEND_WALLET_ADDRESS=0x2749... ✅
 
 # Network
-NETWORK=unichain ✅
-UNICHAIN_RPC_URL=https://mainnet.unichain.org ✅
+NETWORK=monad ✅
+MONAD_RPC_URL=https://mainnet.monad.org ✅
 
 # x402
 X402_STRICT_MODE=false (dev mode) ✅
@@ -151,7 +151,7 @@ PAYMENT_RECEIVER_ADDRESS=0x2749... ✅
 ```env
 EXPO_PUBLIC_THIRDWEB_CLIENT_ID=d180849f... ✅
 EXPO_PUBLIC_BACKEND_URL=http://localhost:4021 ✅
-EXPO_PUBLIC_NETWORK=unichain-sepolia ✅
+EXPO_PUBLIC_NETWORK=monad-sepolia ✅
 ```
 
 ---
@@ -175,12 +175,12 @@ EXPO_PUBLIC_NETWORK=unichain-sepolia ✅
 ### Inmediato (Siguiente)
 4. **Configurar Gas Sponsorship**
    - Thirdweb Dashboard → Sponsorship
-   - Chain ID: 130 (Unichain Mainnet)
+   - Chain ID: 130 (Monad Mainnet)
    - Whitelist: `0xef740bf23acae26f6492b10de645d6b98dc8eaf3`
    - Depositar 0.05 ETH
 
 5. **Fondear Wallets**
-   - Backend wallet: 0.1 ETH en Unichain Mainnet
+   - Backend wallet: 0.1 ETH en Monad Mainnet
    - Payment receiver: 0.01 ETH en Arbitrum Sepolia
 
 6. **Deploy a Producción**
@@ -275,7 +275,7 @@ npm run android         # Android emulator
 
 - [Thirdweb Dashboard](https://thirdweb.com/dashboard)
 - [Thirdweb x402 Docs](https://portal.thirdweb.com/x402)
-- [Unichain Explorer](https://unichain.org/explorer)
+- [Monad Explorer](https://monad.org/explorer)
 - [Arbitrum Sepolia Faucet](https://faucet.quicknode.com/arbitrum/sepolia)
 - [Railway Dashboard](https://railway.app/dashboard)
 

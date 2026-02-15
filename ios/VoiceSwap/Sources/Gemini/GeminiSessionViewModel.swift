@@ -1,28 +1,20 @@
 import Foundation
 import Combine
 import UIKit
+import AVFoundation
 
 // MARK: - Tool Declarations
 
 private enum VoiceSwapTools {
 
     static func allDeclarations() -> [[String: Any]] {
-        [scanQR, getBalance, preparePayment, confirmPayment, cancelPayment, setPaymentAmount, setPurchaseConcept]
+        // prepare_payment is auto-called by set_payment_amount — no need to expose to Gemini
+        [scanQR, setPaymentAmount, confirmPayment, cancelPayment]
     }
 
     static let scanQR: [String: Any] = [
         "name": "scan_qr",
         "description": "Start scanning for a payment QR code using the glasses camera. The camera will automatically detect QR codes and parse payment information.",
-        "parameters": [
-            "type": "object",
-            "properties": [:] as [String: Any],
-            "required": [] as [String]
-        ] as [String: Any]
-    ]
-
-    static let getBalance: [String: Any] = [
-        "name": "get_balance",
-        "description": "Get the user's current wallet balance including USDC, MON, and other tokens on Monad.",
         "parameters": [
             "type": "object",
             "properties": [:] as [String: Any],
@@ -55,7 +47,7 @@ private enum VoiceSwapTools {
 
     static let confirmPayment: [String: Any] = [
         "name": "confirm_payment",
-        "description": "Execute the previously prepared payment. This opens the user's wallet for transaction signing. Only call this after the user has explicitly confirmed they want to pay.",
+        "description": "Execute the previously prepared payment. Only call this after the user has explicitly confirmed they want to pay.",
         "parameters": [
             "type": "object",
             "properties": [:] as [String: Any],
@@ -75,7 +67,7 @@ private enum VoiceSwapTools {
 
     static let setPaymentAmount: [String: Any] = [
         "name": "set_payment_amount",
-        "description": "Set the amount for a pending payment when the QR code did not include an amount. You MUST call this tool when the user tells you the amount. After this returns, you MUST call prepare_payment next.",
+        "description": "Set the payment amount. The payment is auto-prepared after this. If result is ready_to_confirm, ask the user to confirm.",
         "parameters": [
             "type": "object",
             "properties": [
@@ -88,20 +80,6 @@ private enum VoiceSwapTools {
         ] as [String: Any]
     ]
 
-    static let setPurchaseConcept: [String: Any] = [
-        "name": "set_purchase_concept",
-        "description": "Record what the user is buying (e.g. 'coffee', 'lunch', 'groceries'). Call this when the user tells you what they are purchasing, before scanning the QR code.",
-        "parameters": [
-            "type": "object",
-            "properties": [
-                "concept": [
-                    "type": "string",
-                    "description": "Short description of what the user is buying (e.g., 'coffee', 'lunch', 'tacos')"
-                ] as [String: Any]
-            ] as [String: Any],
-            "required": ["concept"]
-        ] as [String: Any]
-    ]
 }
 
 // MARK: - GeminiSessionViewModel
@@ -116,6 +94,9 @@ class GeminiSessionViewModel: ObservableObject {
     @Published private(set) var isAISpeaking: Bool = false
     @Published private(set) var sessionError: String?
 
+    /// True when user explicitly started voice session (vs just pre-connected)
+    private var userStartedSession: Bool = false
+
     // MARK: Services
 
     let geminiService = GeminiLiveService()
@@ -125,13 +106,28 @@ class GeminiSessionViewModel: ObservableObject {
 
     weak var paymentViewModel: VoiceSwapViewModel?
 
-    // MARK: Video Throttle
-
-    private var lastVideoSendTime: Date = .distantPast
-
     // MARK: In-flight Tool Calls
 
     private var inFlightTasks: [String: Task<Void, Never>] = [:]
+
+    // MARK: scan_qr dedup
+
+    private var scanQRTask: Task<Void, Never>?
+
+    // MARK: Voice payment context (survives UI cancel/reset)
+
+    private var voiceMerchantWallet: String?
+    private var voiceMerchantName: String?
+    private var voiceAmount: String?
+
+    // MARK: QR Response Fallback
+
+    private var qrResponseFallbackTask: Task<Void, Never>?
+    private var fallbackSynthesizer: AVSpeechSynthesizer?
+
+    // MARK: Error Management
+
+    private var errorDismissTask: Task<Void, Never>?
 
     // MARK: Cancellables
 
@@ -158,23 +154,61 @@ class GeminiSessionViewModel: ObservableObject {
 
     // MARK: - Session Lifecycle
 
-    func startSession(audioMode: AudioMode) {
-        guard GeminiConfig.isConfigured else {
-            sessionError = "Enter your Gemini API key in Settings"
-            return
-        }
+    /// Pre-establish WebSocket so voice activation is instant.
+    /// Called when wallet connects or view appears. Does NOT start audio.
+    func preconnect() {
+        guard GeminiConfig.isConfigured else { return }
+        guard !isSessionActive else { return }
+        guard geminiService.connectionState == .disconnected else { return }
 
-        sessionError = nil
-        audioManager.audioMode = audioMode
+        NSLog("[GeminiSession] Pre-connecting to Gemini...")
 
-        // Configure Gemini
         geminiService.systemPrompt = VoiceSwapSystemPrompt.build(
             walletAddress: paymentViewModel?.walletAddress,
             balance: paymentViewModel?.walletBalance
         )
         geminiService.toolDeclarations = VoiceSwapTools.allDeclarations()
 
-        // Connect
+        Task {
+            let connected = await geminiService.connect()
+            if connected {
+                NSLog("[GeminiSession] Pre-connect succeeded — awaiting user tap for audio")
+            } else {
+                NSLog("[GeminiSession] Pre-connect failed (will retry on button tap)")
+            }
+        }
+    }
+
+    func startSession(audioMode: AudioMode) {
+        guard GeminiConfig.isConfigured else {
+            sessionError = "Gemini API key not configured"
+            return
+        }
+
+        sessionError = nil
+        audioManager.audioMode = audioMode
+        userStartedSession = true
+
+        // If already pre-connected, just start audio capture instantly
+        if geminiService.connectionState == .ready {
+            NSLog("[GeminiSession] Already connected — starting audio immediately")
+            isSessionActive = true
+            do {
+                try audioManager.startCapture()
+                isListening = true
+            } catch {
+                sessionError = "Microphone error: \(error.localizedDescription)"
+            }
+            return
+        }
+
+        // Full connect flow
+        geminiService.systemPrompt = VoiceSwapSystemPrompt.build(
+            walletAddress: paymentViewModel?.walletAddress,
+            balance: paymentViewModel?.walletBalance
+        )
+        geminiService.toolDeclarations = VoiceSwapTools.allDeclarations()
+
         Task {
             let connected = await geminiService.connect()
             if !connected {
@@ -184,29 +218,50 @@ class GeminiSessionViewModel: ObservableObject {
     }
 
     func stopSession() {
+        NSLog("[GeminiSession] stopSession() called — active: %d, listening: %d",
+              isSessionActive ? 1 : 0, isListening ? 1 : 0)
+
         // Cancel all in-flight tool calls
         for (_, task) in inFlightTasks {
             task.cancel()
         }
         inFlightTasks.removeAll()
+        scanQRTask?.cancel()
+        scanQRTask = nil
+        errorDismissTask?.cancel()
+        qrResponseFallbackTask?.cancel()
+        qrResponseFallbackTask = nil
+        fallbackSynthesizer?.stopSpeaking(at: .immediate)
+        fallbackSynthesizer = nil
+
+        // Clear voice payment context
+        voiceMerchantWallet = nil
+        voiceMerchantName = nil
+        voiceAmount = nil
 
         audioManager.cleanup()
         geminiService.disconnect()
         isSessionActive = false
         isListening = false
+        userStartedSession = false
     }
 
-    // MARK: - Video Frame Forwarding
+    /// Clear the error banner (called from UI auto-dismiss or recovery)
+    func clearError() {
+        sessionError = nil
+    }
 
-    func processVideoFrame(_ image: UIImage) {
-        guard isSessionActive, geminiService.connectionState == .ready else { return }
-
-        let now = Date()
-        guard now.timeIntervalSince(lastVideoSendTime) >= GeminiConfig.videoFrameInterval else { return }
-        lastVideoSendTime = now
-
-        guard let jpegData = image.jpegData(compressionQuality: GeminiConfig.videoJPEGQuality) else { return }
-        geminiService.sendVideoFrame(jpegData: jpegData)
+    /// Auto-dismiss transient errors after 5 seconds if session is still alive
+    private func scheduleErrorDismiss() {
+        errorDismissTask?.cancel()
+        errorDismissTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard !Task.isCancelled else { return }
+            if self.sessionError != nil && self.isSessionActive {
+                NSLog("[GeminiSession] Auto-dismissing transient error")
+                self.sessionError = nil
+            }
+        }
     }
 
     // MARK: - QR Notification to Gemini
@@ -214,35 +269,66 @@ class GeminiSessionViewModel: ObservableObject {
     func notifyQRDetected(merchantWallet: String, merchantName: String?, amount: String?) {
         guard isSessionActive else { return }
 
-        // Send context as a text message so Gemini knows about the QR detection
-        var context = "A QR code was detected. Merchant wallet: \(merchantWallet)."
-        if let name = merchantName {
-            context += " Merchant: \(name)."
-        }
+        // Cancel any pending scan_qr polling task
+        scanQRTask?.cancel()
+        scanQRTask = nil
+
+        // Save voice payment context (survives UI cancel/reset)
+        voiceMerchantWallet = merchantWallet
+        voiceMerchantName = merchantName
+        voiceAmount = amount
+
+        // Mute audio input so Gemini processes this text immediately
+        // (audio stream competes with clientContent — muting gives it priority)
+        audioManager.isMutedForEcho = true
+
+        // Ultra-short message for fast processing
+        let context: String
         if let amount = amount {
-            context += " Amount: \(amount) USDC."
+            // QR has amount — auto-prepare payment and tell Gemini to confirm
+            if let vm = paymentViewModel {
+                vm.currentMerchantWallet = merchantWallet
+                vm.currentMerchantName = merchantName
+                vm.currentAmount = amount
+                Task {
+                    await vm.preparePayment()
+                }
+            }
+            context = "QR scanned. Wallet: \(merchantWallet). Amount: \(amount) USDC. Say: Pay \(amount) dollars. Confirm?"
         } else {
-            context += " No amount specified — ask the user how much to pay."
+            context = "QR scanned. Wallet: \(merchantWallet). Ask how much."
         }
 
-        // Send as a realtime input text (context injection)
-        let json: [String: Any] = [
-            "clientContent": [
-                "turns": [
-                    [
-                        "role": "user",
-                        "parts": [["text": context]]
-                    ]
-                ],
-                "turnComplete": true
-            ]
-        ]
+        NSLog("[GeminiSession] Notifying Gemini of QR detection: %@", merchantWallet)
+        geminiService.sendClientContent(context)
 
-        // Use the send queue via the service
-        if let data = try? JSONSerialization.data(withJSONObject: json),
-           let text = String(data: data, encoding: .utf8) {
-            // Access websocket through the service
-            geminiService.sendToolResponse(callId: "qr_context", name: "system", result: ["context": context])
+        // Unmute after brief delay to let Gemini process the text turn
+        Task {
+            try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+            self.audioManager.isMutedForEcho = false
+        }
+
+        // Fallback: if Gemini doesn't respond within 2s, speak "How much?" locally
+        // This guarantees the user hears a prompt even if Gemini is slow
+        if amount == nil {
+            qrResponseFallbackTask?.cancel()
+            qrResponseFallbackTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 1_500_000_000) // 1.5s
+                guard !Task.isCancelled else { return }
+                // If Gemini hasn't started speaking yet, use local TTS
+                if !self.isAISpeaking {
+                    let lang = Locale.current.language.languageCode?.identifier ?? "en"
+                    let prompt = lang == "es" ? "¿Cuánto?" : "How much?"
+                    NSLog("[GeminiSession] Gemini slow — speaking '%@' locally", prompt)
+                    let utterance = AVSpeechUtterance(string: prompt)
+                    utterance.rate = 0.55 // slightly faster than default (0.5)
+                    utterance.voice = AVSpeechSynthesisVoice(language: lang == "es" ? "es-MX" : "en-US")
+                    let synthesizer = AVSpeechSynthesizer()
+                    synthesizer.speak(utterance)
+                    // Keep reference so ARC doesn't deallocate mid-speech
+                    self.fallbackSynthesizer = synthesizer
+                }
+            }
         }
     }
 
@@ -261,50 +347,97 @@ class GeminiSessionViewModel: ObservableObject {
         // scan_qr is handled separately — respond immediately, then start camera async
         // This prevents Gemini from cancelling the tool call while the camera is starting
         if toolCall.name == "scan_qr" {
-            // Don't re-scan if we already have a QR or are past scanning
-            if case .enteringAmount = vm.flowState {
-                NSLog("[Gemini] scan_qr ignored — already entering amount")
-                geminiService.sendToolResponse(callId: toolCall.id, name: toolCall.name, result: ["status": "already_scanned", "message": "QR already detected, waiting for amount"])
+            // GUARD: If we already have a merchant wallet from a previous scan, don't scan again.
+            // This is the main fix for Gemini calling scan_qr 25+ times after QR was detected.
+            if vm.currentMerchantWallet != nil {
+                NSLog("[Gemini] scan_qr ignored — merchant already set: %@", vm.currentMerchantWallet ?? "")
+                geminiService.sendToolResponse(callId: toolCall.id, name: toolCall.name, result: [
+                    "status": "already_scanned",
+                    "merchant_wallet": vm.currentMerchantWallet ?? ""
+                ])
                 return
             }
-            if case .awaitingConfirmation = vm.flowState {
-                NSLog("[Gemini] scan_qr ignored — already awaiting confirmation")
-                geminiService.sendToolResponse(callId: toolCall.id, name: toolCall.name, result: ["status": "already_scanned", "message": "Payment ready for confirmation"])
+
+            // GUARD: Don't re-scan if flow is past idle/listening/scanningQR
+            switch vm.flowState {
+            case .idle, .listening, .cancelled, .failed:
+                break // OK to scan
+            case .scanningQR:
+                // Already scanning — don't start another
+                NSLog("[Gemini] scan_qr ignored — already scanning")
+                geminiService.sendToolResponse(callId: toolCall.id, name: toolCall.name, result: ["status": "scanning", "message": "Already scanning for QR code."])
+                return
+            default:
+                // Any other state (processing, enteringAmount, awaitingConfirmation, executing, etc.)
+                NSLog("[Gemini] scan_qr ignored — flow in state: %@", "\(vm.flowState)")
+                geminiService.sendToolResponse(callId: toolCall.id, name: toolCall.name, result: ["status": "already_scanned", "message": "Payment flow already in progress."])
                 return
             }
+
+            // GUARD: Don't start if camera already streaming
             if vm.glassesManager.isStreaming {
                 NSLog("[Gemini] scan_qr ignored — camera already streaming")
                 geminiService.sendToolResponse(callId: toolCall.id, name: toolCall.name, result: ["status": "scanning", "message": "Already scanning for QR"])
                 return
             }
 
+            // Cancel any previous scan_qr task (prevents multiple 10s polling loops)
+            scanQRTask?.cancel()
+
+            // Mute mic during scanning — no user input needed, reduces noise for Gemini
+            audioManager.isMutedForEcho = true
+            // Restart keepalive since no audio will flow during muted scanning
+            geminiService.restartKeepalive()
+            NSLog("[GeminiSession] Mic muted for QR scanning (keepalive active)")
+
             // Respond immediately so Gemini doesn't cancel
             vm.flowState = .scanningQR
             vm.glassesManager.triggerHaptic(.short)
-            geminiService.sendToolResponse(callId: toolCall.id, name: toolCall.name, result: ["status": "scanning", "message": "QR scanning started. Tell the user to point at the QR code."])
+            geminiService.sendToolResponse(callId: toolCall.id, name: toolCall.name, result: ["status": "scanning", "message": "Camera activated. WAIT for QR result — do NOT say Done yet. You will receive a separate message with the QR data."])
 
-            // Start camera with timeout — if camera fails or takes too long, notify Gemini
-            Task { @MainActor in
+            // Start camera — glasses can take 5-8s to begin streaming
+            scanQRTask = Task { @MainActor in
                 NSLog("[Gemini] scan_qr: starting camera stream...")
                 await vm.glassesManager.startCameraStream()
 
-                // Check if camera actually started after a brief delay
-                try? await Task.sleep(nanoseconds: 3_000_000_000) // 3 seconds
+                // Poll for camera start with 10s total timeout
+                var elapsed: UInt64 = 0
+                let pollInterval: UInt64 = 500_000_000 // 0.5s
+                let timeout: UInt64 = 10_000_000_000   // 10s
 
-                // If still in scanningQR state but camera isn't streaming, something went wrong
+                while elapsed < timeout && !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: pollInterval)
+                    elapsed += pollInterval
+
+                    if vm.glassesManager.isStreaming {
+                        NSLog("[Gemini] scan_qr: camera streaming after %.1fs", Double(elapsed) / 1_000_000_000)
+                        return
+                    }
+                    // Flow moved past scanning — QR detected while waiting
+                    if case .scanningQR = vm.flowState {} else {
+                        NSLog("[Gemini] scan_qr: flow advanced — camera check done")
+                        return
+                    }
+                    // Merchant set by QR callback while we were polling
+                    if vm.currentMerchantWallet != nil {
+                        NSLog("[Gemini] scan_qr: QR detected during poll — done")
+                        return
+                    }
+                }
+
+                guard !Task.isCancelled else { return }
+
+                // Timeout — camera didn't start in 10s
                 if case .scanningQR = vm.flowState, !vm.glassesManager.isStreaming {
-                    NSLog("[Gemini] scan_qr: camera failed to start after 3s — notifying Gemini")
-                    // Inject context so Gemini knows the camera failed
+                    NSLog("[Gemini] scan_qr: camera failed to start after 10s — notifying Gemini")
                     self.geminiService.sendToolResponse(
                         callId: "camera_error",
                         name: "system",
                         result: [
                             "event": "camera_error",
-                            "message": "Camera failed to start. The user can still use the phone camera — tell them to point their phone at the QR code instead. Or they can enter the merchant wallet address manually."
+                            "message": "Camera failed to start. Tell the user to use the phone camera instead, or enter the wallet address manually."
                         ]
                     )
-                } else {
-                    NSLog("[Gemini] scan_qr: camera streaming OK or QR already detected")
                 }
             }
             return
@@ -317,19 +450,15 @@ class GeminiSessionViewModel: ObservableObject {
             let toolStart = Date()
 
             switch toolCall.name {
-            case "get_balance":
-                await vm.refreshBalances()
-                let tokens = vm.tokenBalances.map { ["symbol": $0.symbol, "balance": $0.balance] }
-                result = [
-                    "balance_usd": vm.walletBalance,
-                    "mon_balance": vm.monBalance,
-                    "tokens": tokens
-                ] as [String: Any]
-
             case "prepare_payment":
                 let wallet = toolCall.args["merchant_wallet"] as? String ?? ""
                 let amount = toolCall.args["amount"] as? String ?? ""
                 let merchantName = toolCall.args["merchant_name"] as? String
+
+                // Save voice context (survives UI cancel)
+                self.voiceMerchantWallet = wallet
+                self.voiceMerchantName = merchantName
+                self.voiceAmount = amount
 
                 vm.currentMerchantWallet = wallet
                 vm.currentMerchantName = merchantName
@@ -340,12 +469,10 @@ class GeminiSessionViewModel: ObservableObject {
                     var readyResult: [String: Any] = [
                         "status": "ready",
                         "amount": amount,
-                        "merchant": merchantName ?? wallet,
-                        "needs_swap": vm.needsSwap,
+                        "merchant": merchantName ?? String(wallet.prefix(10))
                     ]
-                    if vm.needsSwap, let swapFrom = vm.swapFromToken {
-                        readyResult["swap_from"] = swapFrom
-                        readyResult["message"] = "Will swap \(swapFrom) to USDC before paying. User will need to approve multiple transactions."
+                    if !vm.securitySettings.isMerchantApproved(wallet) {
+                        readyResult["merchant_warning"] = "New merchant"
                     }
                     result = readyResult
                 } else if case .failed(let error) = vm.flowState {
@@ -355,18 +482,51 @@ class GeminiSessionViewModel: ObservableObject {
                 }
 
             case "confirm_payment":
-                // Guard: confirm_payment requires prepare_payment to have been called first
-                guard case .awaitingConfirmation = vm.flowState else {
-                    NSLog("[Gemini] confirm_payment rejected — not in awaitingConfirmation state (current: \(vm.flowState))")
-                    result = [
-                        "status": "error",
-                        "error": "Cannot confirm — you must call prepare_payment first. Current state: \(vm.flowState)"
-                    ]
-                    break
+                // Mute mic during transaction execution — no user input needed
+                self.audioManager.isMutedForEcho = true
+                self.geminiService.restartKeepalive()
+                NSLog("[GeminiSession] Mic muted for payment execution (keepalive active)")
+
+                // In voice mode, flowState can get reset by UI interactions or timing.
+                // We maintain a separate voice context that survives UI cancels.
+                if case .awaitingConfirmation = vm.flowState {
+                    // Good — proceed normally
+                } else {
+                    // Restore payment context from voice state if UI cleared it
+                    let wallet = vm.currentMerchantWallet ?? self.voiceMerchantWallet
+                    let amount = vm.currentAmount ?? self.voiceAmount
+                    if let wallet = wallet, let amount = amount {
+                        NSLog("[Gemini] confirm_payment: recovering — re-preparing (flowState was: %@)", "\(vm.flowState)")
+                        vm.currentMerchantWallet = wallet
+                        vm.currentMerchantName = vm.currentMerchantName ?? self.voiceMerchantName
+                        vm.currentAmount = amount
+                        await vm.preparePayment()
+                        guard case .awaitingConfirmation = vm.flowState else {
+                            NSLog("[Gemini] confirm_payment: re-prepare failed (flowState: %@)", "\(vm.flowState)")
+                            result = ["status": "error", "error": "Payment preparation failed. Try again."]
+                            break
+                        }
+                    } else {
+                        NSLog("[Gemini] confirm_payment rejected — no payment context (current: %@)", "\(vm.flowState)")
+                        result = [
+                            "status": "error",
+                            "error": "No payment prepared. Call prepare_payment first."
+                        ]
+                        break
+                    }
                 }
 
                 await vm.confirmPayment()
+
+                // Unmute after transaction completes — back to conversation
+                self.audioManager.isMutedForEcho = false
+                NSLog("[GeminiSession] Mic unmuted after payment execution")
+
                 if case .success(let txHash) = vm.flowState {
+                    // Clear voice context on success
+                    self.voiceMerchantWallet = nil
+                    self.voiceMerchantName = nil
+                    self.voiceAmount = nil
                     result = ["status": "success", "tx_hash": txHash]
                 } else if case .failed(let error) = vm.flowState {
                     result = ["status": "failed", "error": error]
@@ -378,22 +538,49 @@ class GeminiSessionViewModel: ObservableObject {
 
             case "cancel_payment":
                 vm.cancelPayment()
+                // Clear voice context when Gemini explicitly cancels
+                self.voiceMerchantWallet = nil
+                self.voiceMerchantName = nil
+                self.voiceAmount = nil
+                self.audioManager.isMutedForEcho = false
                 result = ["status": "cancelled"]
 
             case "set_payment_amount":
                 let amount = toolCall.args["amount"] as? String ?? ""
-                await vm.setPaymentAmount(amount)
-                if case .awaitingConfirmation = vm.flowState {
-                    result = ["status": "ready", "amount": amount]
-                } else {
-                    result = ["status": "amount_set", "amount": amount, "next_step": "Now call prepare_payment with the merchant_wallet and this amount"]
+                self.voiceAmount = amount
+
+                // Mute mic during payment preparation — no user input needed
+                self.audioManager.isMutedForEcho = true
+                self.geminiService.restartKeepalive()
+                NSLog("[GeminiSession] Mic muted for payment preparation (keepalive active)")
+
+                // Ensure merchant wallet is set before calling setPaymentAmount
+                // (setPaymentAmount already calls preparePayment internally — no need to call it again)
+                if let wallet = vm.currentMerchantWallet ?? self.voiceMerchantWallet {
+                    vm.currentMerchantWallet = wallet
+                    vm.currentMerchantName = vm.currentMerchantName ?? self.voiceMerchantName
                 }
 
-            case "set_purchase_concept":
-                let concept = toolCall.args["concept"] as? String ?? ""
-                vm.currentPurchaseConcept = concept
-                NSLog("[Gemini] Purchase concept set: %@", concept)
-                result = ["status": "recorded", "concept": concept]
+                await vm.setPaymentAmount(amount)
+
+                if case .awaitingConfirmation = vm.flowState {
+                    // Unmute — Gemini needs to hear nothing, just call confirm_payment next
+                    self.audioManager.isMutedForEcho = false
+                    NSLog("[GeminiSession] Payment prepared — awaiting confirm_payment call")
+
+                    let wallet = vm.currentMerchantWallet ?? self.voiceMerchantWallet ?? ""
+                    result = [
+                        "status": "ready_to_confirm",
+                        "amount": amount,
+                        "merchant": vm.currentMerchantName ?? String(wallet.prefix(10))
+                    ]
+                } else if case .failed(let error) = vm.flowState {
+                    self.audioManager.isMutedForEcho = false
+                    result = ["status": "failed", "error": error]
+                } else {
+                    self.audioManager.isMutedForEcho = false
+                    result = ["status": "amount_set", "amount": amount]
+                }
 
             default:
                 result = ["error": "Unknown tool: \(toolCall.name)"]
@@ -426,27 +613,75 @@ extension GeminiSessionViewModel: GeminiLiveServiceDelegate {
     func geminiDidChangeState(_ state: GeminiConnectionState) {
         switch state {
         case .ready:
-            isSessionActive = true
             sessionError = nil
-            NSLog("[GeminiSession] Active — starting audio capture")
-            do {
-                try audioManager.startCapture()
-                isListening = true
-            } catch {
-                sessionError = "Microphone error: \(error.localizedDescription)"
-                NSLog("[GeminiSession] Audio capture error: %@", error.localizedDescription)
+
+            if geminiService.isReconnecting {
+                // Reconnection — audio already capturing
+                isSessionActive = true
+                NSLog("[GeminiSession] Session resumed — audio already active")
+
+                // Re-inject payment context so Gemini knows where we left off
+                if let wallet = voiceMerchantWallet {
+                    let amount = voiceAmount ?? "unknown"
+                    if let vm = paymentViewModel, case .awaitingConfirmation = vm.flowState {
+                        let context = "Payment ready. \(amount) USDC to \(wallet). Ask user to confirm."
+                        NSLog("[GeminiSession] Re-injecting payment context after reconnect")
+                        geminiService.sendClientContent(context)
+                    }
+                }
+            } else if !userStartedSession {
+                // Pre-connect only — don't start audio until user taps button
+                NSLog("[GeminiSession] Pre-connected — waiting for user to start voice")
+            } else if isListening {
+                // Already listening (e.g. after transient error recovery)
+                isSessionActive = true
+                NSLog("[GeminiSession] Ready — audio already active")
+            } else {
+                // User tapped button → start audio
+                isSessionActive = true
+                NSLog("[GeminiSession] Active — starting audio capture")
+                do {
+                    try audioManager.startCapture()
+                    isListening = true
+                } catch {
+                    sessionError = "Microphone error: \(error.localizedDescription)"
+                    NSLog("[GeminiSession] Audio capture error: %@", error.localizedDescription)
+                }
             }
 
         case .error(let msg):
             sessionError = msg
+            // Don't tear down session on transient errors — keep audio alive
+            // Session teardown only happens on .disconnected
+            NSLog("[GeminiSession] Error: %@ (keeping session alive for recovery)", msg)
+            scheduleErrorDismiss()
+
+        case .connecting:
+            // During reconnection, keep audio alive
+            if geminiService.isReconnecting {
+                NSLog("[GeminiSession] Reconnecting — keeping audio active")
+            }
+
+        case .disconnected:
+            // During reconnection, don't tear down
+            if geminiService.isReconnecting {
+                NSLog("[GeminiSession] Temporary disconnect for resumption")
+                return
+            }
+
+            let wasActive = isSessionActive
             isSessionActive = false
             isListening = false
             audioManager.stopCapture()
 
-        case .disconnected:
-            isSessionActive = false
-            isListening = false
-            audioManager.stopCapture()
+            // If session was NOT user-started (preconnect only), silently re-preconnect
+            if !wasActive && !userStartedSession {
+                NSLog("[GeminiSession] Preconnect lost — will re-preconnect in 2s")
+                Task {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    self.preconnect()
+                }
+            }
 
         default:
             break
@@ -454,6 +689,12 @@ extension GeminiSessionViewModel: GeminiLiveServiceDelegate {
     }
 
     func geminiDidReceiveAudio(_ pcmData: Data) {
+        // Gemini responded — cancel local TTS fallback
+        qrResponseFallbackTask?.cancel()
+        qrResponseFallbackTask = nil
+        fallbackSynthesizer?.stopSpeaking(at: .immediate)
+        fallbackSynthesizer = nil
+
         // Echo gate for phone mode
         if audioManager.audioMode == .phone {
             audioManager.isMutedForEcho = true

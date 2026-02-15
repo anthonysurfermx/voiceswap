@@ -17,7 +17,7 @@ npm run dev
 Deberías ver:
 ```
 Server running on http://localhost:4021
-Network: unichain
+Network: monad
 Chain ID: 130
 ```
 
@@ -52,7 +52,7 @@ Si ves esto, ¡todo funciona! ✅:
 1. Ve a: https://thirdweb.com/dashboard
 2. Inicia sesión con tus credenciales
 3. Settings → Sponsorship (o "Gas Sponsorship")
-4. Enable para **Chain ID: 130** (Unichain Mainnet)
+4. Enable para **Chain ID: 130** (Monad Mainnet)
 5. En "Sponsored Contracts", añade:
    ```
    0xef740bf23acae26f6492b10de645d6b98dc8eaf3
@@ -65,20 +65,20 @@ Si ves esto, ¡todo funciona! ✅:
 
 Necesitas fondear 2 wallets diferentes para 2 propósitos:
 
-### 3A. Backend Wallet - Unichain (para swaps)
+### 3A. Backend Wallet - Monad (para swaps)
 
 **Address:** `0x2749A654FeE5CEc3a8644a27E7498693d0132759`
-**Network:** Unichain Mainnet
-**Propósito:** Ejecutar swaps en Uniswap V4
+**Network:** Monad Mainnet
+**Propósito:** Ejecutar swaps en Uniswap V3
 
 **Cómo obtener ETH:**
-1. Ve a: https://bridge.unichain.org
+1. Ve a: https://bridge.monad.org
 2. Conecta tu wallet
-3. Bridge al menos **0.1 ETH** a Unichain Mainnet
+3. Bridge al menos **0.1 ETH** a Monad Mainnet
 
 **Verificar:**
 ```bash
-https://unichain.org/explorer/address/0x2749A654FeE5CEc3a8644a27E7498693d0132759
+https://monad.org/explorer/address/0x2749A654FeE5CEc3a8644a27E7498693d0132759
 ```
 
 ### 3B. Payment Receiver - Arbitrum (para x402 pagos)
@@ -147,7 +147,7 @@ railway init
 # Nombre: voiceswap-backend
 
 # Configurar variables de entorno
-railway variables set NETWORK=unichain
+railway variables set NETWORK=monad
 railway variables set THIRDWEB_SECRET_KEY=***REMOVED_THIRDWEB_SECRET***
 railway variables set THIRDWEB_CLIENT_ID=***REMOVED_THIRDWEB_CLIENT_ID***
 railway variables set BACKEND_WALLET_ADDRESS=0x2749A654FeE5CEc3a8644a27E7498693d0132759
@@ -209,7 +209,7 @@ Marca cada paso cuando lo completes:
 - [ ] Paymaster tiene al menos 0.05 ETH
 
 ### Backend Wallet
-- [ ] Wallet tiene al menos 0.1 ETH en Unichain Mainnet
+- [ ] Wallet tiene al menos 0.1 ETH en Monad Mainnet
 - [ ] Balance verificado en explorer
 
 ### Production Deployment
@@ -246,9 +246,9 @@ Marca cada paso cuando lo completes:
 
 ### Wallet sin ETH
 **Opciones:**
-- Bridge desde Ethereum: https://bridge.unichain.org
-- Pedir a un amigo con ETH en Unichain
-- Comprar en exchange con soporte Unichain
+- Bridge desde Ethereum: https://bridge.monad.org
+- Pedir a un amigo con ETH en Monad
+- Comprar en exchange con soporte Monad
 
 ---
 

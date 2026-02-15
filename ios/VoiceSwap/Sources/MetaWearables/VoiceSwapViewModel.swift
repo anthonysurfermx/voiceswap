@@ -88,6 +88,12 @@ public class VoiceSwapViewModel: ObservableObject {
     // Gemini Live session reference
     private(set) var geminiSession: GeminiSessionViewModel?
 
+    // Auto-refresh balance timer
+    private var balanceTimer: Timer?
+
+    // Gas request tracking — only request once per session
+    private var gasRequested = false
+
     // MARK: - Initialization
 
     public init() {
@@ -133,17 +139,40 @@ public class VoiceSwapViewModel: ObservableObject {
     /// Set the user's wallet address
     public func setWalletAddress(_ address: String) {
         walletAddress = address
+        gasRequested = false  // Reset gas flag for new address
         glassesManager.configure(walletAddress: address)
 
-        // Fetch initial balances
+        // Fetch initial balances and start auto-refresh
         Task {
             await refreshBalances()
         }
+        startBalanceAutoRefresh()
+    }
+
+    /// Start auto-refreshing balance every 60 seconds
+    private var isRefreshingBalance = false
+    private func startBalanceAutoRefresh() {
+        balanceTimer?.invalidate()
+        balanceTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, !self.isRefreshingBalance else { return }
+                await self.refreshBalances()
+            }
+        }
+    }
+
+    /// Stop auto-refresh (e.g., when wallet is deleted)
+    public func stopBalanceAutoRefresh() {
+        balanceTimer?.invalidate()
+        balanceTimer = nil
     }
 
     /// Refresh wallet balances
     public func refreshBalances() async {
         guard !walletAddress.isEmpty else { return }
+        guard !isRefreshingBalance else { return }
+        isRefreshingBalance = true
+        defer { isRefreshingBalance = false }
 
         do {
             let response = try await apiClient.getWalletBalances(address: walletAddress)
@@ -206,9 +235,10 @@ public class VoiceSwapViewModel: ObservableObject {
         }
     }
 
-    /// Request gas sponsorship for users with no MON
+    /// Request gas sponsorship for users with no MON (once per session)
     private func requestGasIfNeeded() async {
-        guard !walletAddress.isEmpty else { return }
+        guard !walletAddress.isEmpty, !gasRequested else { return }
+        gasRequested = true
         do {
             let response = try await apiClient.requestGas(userAddress: walletAddress)
             if let data = response.data {
@@ -258,6 +288,7 @@ public class VoiceSwapViewModel: ObservableObject {
 
     /// Stop Gemini Live voice session
     public func stopListening() {
+        NSLog("[ViewModel] stopListening() called — flowState: %@", String(describing: flowState))
         geminiSession?.stopSession()
         if flowState == .listening {
             flowState = .idle
@@ -377,12 +408,16 @@ public class VoiceSwapViewModel: ObservableObject {
                 if data.ready {
                     flowState = .awaitingConfirmation(amount: amountDisplay, merchant: merchantDisplay)
 
-                    // Speak prompt
-                    glassesManager.speak(data.voicePrompt, language: "en-US")
+                    // Only speak locally when Gemini is NOT handling voice
+                    if geminiSession?.isSessionActive != true {
+                        glassesManager.speak(data.voicePrompt, language: "en-US")
+                    }
                     glassesManager.triggerHaptic(.double)
                 } else {
                     flowState = .failed(error: "Insufficient funds")
-                    glassesManager.speak(data.voicePrompt, language: "en-US")
+                    if geminiSession?.isSessionActive != true {
+                        glassesManager.speak(data.voicePrompt, language: "en-US")
+                    }
                 }
             }
         } catch {
@@ -419,9 +454,16 @@ public class VoiceSwapViewModel: ObservableObject {
             return
 
         case .newMerchantNeedsApproval(let address):
-            pendingNewMerchantAddress = address
-            showNewMerchantAlert = true
-            return
+            // Voice mode: Gemini already warned "New merchant" and user said "yes" by voice.
+            // Auto-approve without UI alert — user can't see/touch screen with glasses.
+            if geminiSession?.isSessionActive == true {
+                NSLog("[Security] Voice-confirmed new merchant — auto-approving: %@", address)
+                securitySettings.approveMerchant(address)
+            } else {
+                pendingNewMerchantAddress = address
+                showNewMerchantAlert = true
+                return
+            }
 
         case .faceIDRequired:
             let passed = await securitySettings.authenticateWithBiometrics()
@@ -436,11 +478,22 @@ public class VoiceSwapViewModel: ObservableObject {
         }
 
         flowState = .executing
-        glassesManager.speak("Opening your wallet for approval", language: "en-US")
+
+        // Determine signing method: local VoiceSwap Wallet (instant) vs WalletConnect (MetaMask)
+        let useLocalWallet = VoiceSwapWallet.shared.isCreated
+            && walletAddress == VoiceSwapWallet.shared.address
+
+        if geminiSession?.isSessionActive != true {
+            if useLocalWallet {
+                glassesManager.speak("Processing payment", language: "en-US")
+            } else {
+                glassesManager.speak("Opening your wallet for approval", language: "en-US")
+            }
+        }
 
         do {
             // Step 1: Get transaction data from backend
-            print("[ViewModel] Preparing transaction...")
+            print("[ViewModel] Preparing transaction... (local wallet: \(useLocalWallet))")
             let prepareResponse = try await apiClient.prepareTransaction(
                 userAddress: walletAddress,
                 merchantWallet: merchantWallet,
@@ -460,6 +513,15 @@ public class VoiceSwapViewModel: ObservableObject {
             let walletManager = WalletConnectManager.shared
             var finalTxHash: String = ""
 
+            /// Signs and sends a single transaction using the appropriate wallet
+            func sendTx(to: String, value: String, data: String?) async throws -> String {
+                if useLocalWallet {
+                    return try await VoiceSwapWallet.shared.sendTransaction(to: to, value: value, data: data)
+                } else {
+                    return try await walletManager.sendTransaction(to: to, value: value, data: data)
+                }
+            }
+
             // Check if we have multi-step transaction (swap flow)
             if let steps = txData.steps, steps.count > 1 {
                 // Multi-step: wrap? → approve? → swap → transfer
@@ -467,7 +529,11 @@ public class VoiceSwapViewModel: ObservableObject {
                 print("[ViewModel] Multi-step payment: \(totalSteps) steps")
 
                 if txData.needsSwap == true {
-                    glassesManager.speak("Swapping tokens first. Please approve \(totalSteps) transactions in your wallet.", language: "en-US")
+                    if useLocalWallet {
+                        glassesManager.speak("Swapping tokens. This will take a moment.", language: "en-US")
+                    } else {
+                        glassesManager.speak("Swapping tokens first. Please approve \(totalSteps) transactions in your wallet.", language: "en-US")
+                    }
                 }
 
                 for (index, step) in steps.enumerated() {
@@ -477,7 +543,7 @@ public class VoiceSwapViewModel: ObservableObject {
 
                     glassesManager.triggerHaptic(.double)
 
-                    let stepTxHash = try await walletManager.sendTransaction(
+                    let stepTxHash = try await sendTx(
                         to: step.tx.to,
                         value: step.tx.value,
                         data: step.tx.data
@@ -494,6 +560,7 @@ public class VoiceSwapViewModel: ObservableObject {
                         glassesManager.speak("Transaction failed at step \(stepNum). Please try again.", language: "en-US")
                         glassesManager.triggerHaptic(.error)
                         clearPaymentContext()
+                        VoiceSwapWallet.shared.resetNonceTracking()
                         return
                     }
 
@@ -507,11 +574,13 @@ public class VoiceSwapViewModel: ObservableObject {
                 }
 
             } else {
-                // Single-step: direct USDC transfer (legacy path)
-                glassesManager.speak("Please approve the transaction in your wallet", language: "en-US")
+                // Single-step: direct USDC transfer
+                if !useLocalWallet {
+                    glassesManager.speak("Please approve the transaction in your wallet", language: "en-US")
+                }
                 glassesManager.triggerHaptic(.double)
 
-                finalTxHash = try await walletManager.sendTransaction(
+                finalTxHash = try await sendTx(
                     to: txData.transaction.to,
                     value: txData.transaction.value,
                     data: txData.transaction.data
@@ -519,29 +588,41 @@ public class VoiceSwapViewModel: ObservableObject {
 
                 print("[ViewModel] Transaction sent: \(finalTxHash)")
 
-                // Wait for blockchain confirmation
-                flowState = .confirming(txHash: finalTxHash)
-                glassesManager.speak("Transaction sent. Waiting for confirmation.", language: "en-US")
+                // During Gemini voice session: skip confirmation polling for speed
+                // The tx is already broadcast — Monad confirms in <1s anyway
+                if geminiSession?.isSessionActive == true {
+                    NSLog("[ViewModel] Voice mode — skipping confirmation poll for speed")
+                } else {
+                    // Non-voice mode: wait for blockchain confirmation
+                    flowState = .confirming(txHash: finalTxHash)
+                    if useLocalWallet {
+                        glassesManager.speak("Confirming on Monad.", language: "en-US")
+                    } else {
+                        glassesManager.speak("Transaction sent. Waiting for confirmation.", language: "en-US")
+                    }
 
-                let confirmed = try await waitForTransactionConfirmation(txHash: finalTxHash)
+                    let confirmed = try await waitForTransactionConfirmation(txHash: finalTxHash)
 
-                if !confirmed {
-                    print("[ViewModel] ❌ Transaction failed: \(finalTxHash)")
-                    flowState = .failed(error: "Transaction failed on-chain")
-                    glassesManager.speak("Transaction failed. Please try again.", language: "en-US")
-                    glassesManager.triggerHaptic(.error)
-                    clearPaymentContext()
-                    try? await Task.sleep(nanoseconds: 2_000_000_000)
-                    await refreshBalances()
-                    return
+                    if !confirmed {
+                        print("[ViewModel] Transaction failed: \(finalTxHash)")
+                        flowState = .failed(error: "Transaction failed on-chain")
+                        glassesManager.speak("Transaction failed. Please try again.", language: "en-US")
+                        glassesManager.triggerHaptic(.error)
+                        clearPaymentContext()
+                        try? await Task.sleep(nanoseconds: 2_000_000_000)
+                        await refreshBalances()
+                        return
+                    }
                 }
             }
 
             // Payment successful
-            print("[ViewModel] ✅ Payment confirmed: \(finalTxHash)")
+            print("[ViewModel] Payment confirmed: \(finalTxHash)")
             flowState = .success(txHash: finalTxHash)
             let explorerUrl = "\(txData.explorerBaseUrl)\(finalTxHash)"
-            glassesManager.speak("Payment successful! \(txData.amount) USDC sent to \(txData.recipientShort)", language: "en-US")
+            if geminiSession?.isSessionActive != true {
+                glassesManager.speak("Payment successful! \(txData.amount) USDC sent to \(txData.recipientShort)", language: "en-US")
+            }
             glassesManager.triggerHaptic(.success)
             print("[ViewModel] Explorer: \(explorerUrl)")
 
@@ -562,12 +643,34 @@ public class VoiceSwapViewModel: ObservableObject {
                 }
             }
 
-            // Clear payment context
-            clearPaymentContext()
+            // Generate signed receipt (proof of purchase)
+            Task {
+                do {
+                    let receiptResponse = try await apiClient.requestReceipt(
+                        txHash: finalTxHash,
+                        payerAddress: walletAddress,
+                        merchantWallet: merchantWallet,
+                        amount: amount,
+                        concept: currentPurchaseConcept
+                    )
+                    if let receipt = receiptResponse.data {
+                        print("[ViewModel] Receipt generated: \(receipt.receiptHash.prefix(16))...")
+                        print("[ViewModel] Verify: \(receipt.verifyUrl)")
+                    }
+                } catch {
+                    print("[ViewModel] Receipt generation failed (non-critical): \(error)")
+                }
+            }
 
-            // Refresh balances after a short delay
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            await refreshBalances()
+            // Clear payment context and nonce tracking
+            clearPaymentContext()
+            VoiceSwapWallet.shared.resetNonceTracking()
+
+            // Refresh balances in background (don't block success flow)
+            Task {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                await self.refreshBalances()
+            }
 
         } catch WalletError.userRejected {
             print("[ViewModel] User rejected transaction")
@@ -575,6 +678,7 @@ public class VoiceSwapViewModel: ObservableObject {
             glassesManager.speak("Transaction cancelled", language: "en-US")
             glassesManager.triggerHaptic(.short)
             clearPaymentContext()
+            VoiceSwapWallet.shared.resetNonceTracking()
 
         } catch WalletError.notConnected {
             print("[ViewModel] Wallet not connected")
@@ -606,6 +710,7 @@ public class VoiceSwapViewModel: ObservableObject {
             flowState = .failed(error: error.localizedDescription)
             glassesManager.speak("Payment failed. Please try again.", language: "en-US")
             glassesManager.triggerHaptic(.error)
+            VoiceSwapWallet.shared.resetNonceTracking()
         }
     }
 
@@ -757,8 +862,14 @@ extension VoiceSwapViewModel: MetaGlassesDelegate {
     nonisolated public func glassesDidDisconnect() {
         Task { @MainActor in
             isConnectedToGlasses = false
-            geminiSession?.stopSession()
-            flowState = .idle
+            // Don't kill Gemini session on Bluetooth audio route changes —
+            // AVAudioSession reconfiguration temporarily drops A2DP/HFP.
+            // Only reset flow if not in an active Gemini session.
+            if geminiSession?.isSessionActive != true {
+                flowState = .idle
+            } else {
+                NSLog("[ViewModel] Glasses HFP dropped but Gemini session active — keeping session alive")
+            }
         }
     }
 
@@ -769,14 +880,35 @@ extension VoiceSwapViewModel: MetaGlassesDelegate {
 
     nonisolated public func glassesDidScanQR(_ result: QRScanResult) {
         Task { @MainActor in
-            await handleQRScan(result.rawData)
+            // When Gemini session is active, route QR through voice flow (not keyboard UI)
+            if geminiSession?.isSessionActive == true {
+                let trimmedData = result.rawData.trimmingCharacters(in: .whitespacesAndNewlines)
+                let wallet = result.merchantWallet ?? trimmedData
+                NSLog("[ViewModel] QR detected (Gemini active) — routing to voice flow: %@", wallet)
 
-            // Notify Gemini about the QR detection so it can speak about it
-            geminiSession?.notifyQRDetected(
-                merchantWallet: result.merchantWallet ?? result.rawData,
-                merchantName: result.merchantName,
-                amount: result.amount
-            )
+                // Store merchant info for Gemini tool calls
+                currentMerchantWallet = wallet
+                currentMerchantName = result.merchantName
+                currentAmount = result.amount
+
+                // Update flowState so camera poll in scan_qr exits early
+                flowState = .processing
+
+                // Stop camera since we got the QR
+                glassesManager.stopQRScanning()
+                glassesManager.triggerHaptic(.success)
+
+                // Notify Gemini — it will ask for amount by voice
+                geminiSession?.notifyQRDetected(
+                    merchantWallet: wallet,
+                    merchantName: result.merchantName,
+                    amount: result.amount
+                )
+                return
+            }
+
+            // Fallback: old keyboard-based flow when Gemini is not active
+            await handleQRScan(result.rawData)
         }
     }
 

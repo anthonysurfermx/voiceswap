@@ -42,7 +42,7 @@ Thirdweb Engine es una **API backend lista para producción** que maneja:
 └─────────────────────────────────────┘
               ↓
 ┌─────────────────────────────────────┐
-│  Uniswap V4 (Unichain)              │
+│  Uniswap V3 (Monad)              │
 └─────────────────────────────────────┘
 ```
 
@@ -89,7 +89,7 @@ BACKEND_WALLET_ADDRESS=0xTuBackendWallet
 1. En Engine dashboard, ve a **Features → Account Abstraction**
 2. Activa **Smart Backend Wallets**
 3. Configura Paymaster:
-   - **Chain**: Unichain Sepolia (1301)
+   - **Chain**: Monad Sepolia (1301)
    - **Paymaster Address**: (Thirdweb te da uno por defecto)
 4. Deposita fondos al paymaster (0.05 ETH para testing)
 
@@ -119,7 +119,7 @@ export async function getOrCreateSmartAccount(userAddress: string) {
   try {
     // Check if user already has a smart account
     const accounts = await engine.account.getAll({
-      chain: 'unichain-sepolia',
+      chain: 'monad-sepolia',
       admin: userAddress,
     });
 
@@ -129,7 +129,7 @@ export async function getOrCreateSmartAccount(userAddress: string) {
 
     // Create new smart account
     const result = await engine.account.create({
-      chain: 'unichain-sepolia',
+      chain: 'monad-sepolia',
       admin: userAddress,
       // Engine automatically uses Smart Backend Wallet
     });
@@ -156,7 +156,7 @@ export async function executeSwapViaEngine(params: {
 
   // Execute transaction with gas sponsorship
   const result = await engine.transaction.write({
-    chain: 'unichain-sepolia',
+    chain: 'monad-sepolia',
     contractAddress: params.tokenOut, // Universal Router address
     functionName: 'execute', // Your swap function
     args: [/* calldata args */],

@@ -33,7 +33,7 @@ enum CryptoProviderError: Error {
 
 /// Pure Swift Keccak-256 implementation
 /// Based on the Keccak specification (FIPS 202)
-private func keccak256Hash(_ data: Data) -> Data {
+func keccak256Hash(_ data: Data) -> Data {
     var state = [UInt64](repeating: 0, count: 25)
     let rateInBytes = 136 // (1600 - 256 * 2) / 8
     var inputData = [UInt8](data)
@@ -113,7 +113,7 @@ private func keccakF1600(_ state: inout [UInt64]) {
         for x in 0..<5 {
             for y in 0..<5 {
                 let index = x + y * 5
-                b[y + ((2 * x + 3 * y) % 5) * 5] = rotateLeft(state[index], by: rotationOffsets[y][x])
+                b[y + ((2 * x + 3 * y) % 5) * 5] = rotateLeft(state[index], by: rotationOffsets[x][y])
             }
         }
 

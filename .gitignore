@@ -44,3 +44,16 @@ mobile-app/android/
 # Expo EAS
 .eas/
 .vercel
+
+# Swift build artifacts
+ios/VoiceSwap/.build/
+ios/VoiceSwap/.swiftpm/
+
+# Xcode user state
+*.xcuserstate
+
+# Claude Code
+.claude/
+
+# SQLite DB
+voiceswap.db

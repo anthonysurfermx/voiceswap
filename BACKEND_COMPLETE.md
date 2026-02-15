@@ -15,7 +15,7 @@ Backend Core: **100% completo** ✅
 ```bash
 ✅ GET  /health   - Health check con features de AA
 ✅ GET  /tokens   - Lista de tokens soportados
-✅ GET  /quote    - Cotización de swap (Uniswap V4)
+✅ GET  /quote    - Cotización de swap (Uniswap V3)
 ✅ POST /route    - Ruta optimizada con calldata
 ✅ POST /execute  - Ejecución con Thirdweb Engine + Gas Sponsorship
 ✅ GET  /status   - Estado de transacciones
@@ -25,7 +25,7 @@ Backend Core: **100% completo** ✅
 
 - ✅ **Thirdweb Account Abstraction** - Swaps gasless
 - ✅ **x402 Micropayments** - Monetización de API
-- ✅ **Uniswap V4** - DEX en Unichain
+- ✅ **Uniswap V3** - DEX en Monad
 - ✅ **Thirdweb Engine** - Ejecución de transacciones
 - ✅ **Express Server** - API REST robusta
 
@@ -48,9 +48,9 @@ code=INVALID_ARGUMENT, version=address/5.8.0)
 
 **Solución aplicada:**
 
-1. **Actualizado V4_QUOTER_ABI** ([src/services/uniswap.ts:6-8](src/services/uniswap.ts#L6-L8))
+1. **Actualizado V3_QUOTER_ABI** ([src/services/uniswap.ts:6-8](src/services/uniswap.ts#L6-L8))
    ```typescript
-   const V4_QUOTER_ABI = [
+   const V3_QUOTER_ABI = [
      'function quoteExactInputSingle((tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) poolKey, bool zeroForOne, uint128 exactAmount, bytes hookData)) external returns (uint256 amountOut, uint256 gasEstimate)',
    ];
    ```
@@ -129,7 +129,7 @@ curl -X POST http://localhost:4021/route \
     "value": "0",
     "to": "0xef740bf23acae26f6492b10de645d6b98dc8eaf3",
     "deadline": 1765493527,
-    "routingType": "v4"
+    "routingType": "v3"
   }
 }
 ```
@@ -149,7 +149,7 @@ curl -X POST http://localhost:4021/execute \
     "status": "queued",
     "queueId": "tx-1765491738342",
     "smartAccountAddress": "0x2749A654FeE5CEc3a8644a27E7498693d0132759",
-    "routingType": "v4_engine",
+    "routingType": "v3_engine",
     "message": "Transaction queued with gas sponsorship"
   }
 }
@@ -193,7 +193,7 @@ Esto probará automáticamente todos los endpoints:
 
 ### Pendientes (7/19):
 13. ⏳ Configure Gas Sponsorship (Thirdweb Dashboard)
-14. ⏳ Fund backend wallet (0.1 ETH en Unichain)
+14. ⏳ Fund backend wallet (0.1 ETH en Monad)
 15. ⏳ Fund payment receiver (0.01 ETH en Arbitrum Sepolia)
 16. ⏳ Deploy to production (Railway/Render)
 17. ⏳ Integrate OpenAI API
@@ -209,19 +209,19 @@ Esto probará automáticamente todos los endpoints:
 Ve a Thirdweb Dashboard:
 1. https://thirdweb.com/dashboard
 2. Settings → Sponsorship
-3. Enable para Chain ID: **130** (Unichain Mainnet)
+3. Enable para Chain ID: **130** (Monad Mainnet)
 4. Whitelist contract: `0xef740bf23acae26f6492b10de645d6b98dc8eaf3`
 5. Depositar **0.05 ETH** al paymaster
 
 ### 2. Fondear Backend Wallet (15 min)
 
 **Wallet:** `0x2749A654FeE5CEc3a8644a27E7498693d0132759`
-**Network:** Unichain Mainnet
+**Network:** Monad Mainnet
 **Cantidad:** 0.1 ETH
 
 **Cómo:**
-- Bridge: https://bridge.unichain.org
-- Verificar: https://unichain.org/explorer/address/0x2749A654FeE5CEc3a8644a27E7498693d0132759
+- Bridge: https://bridge.monad.org
+- Verificar: https://monad.org/explorer/address/0x2749A654FeE5CEc3a8644a27E7498693d0132759
 
 ### 3. Fondear Payment Receiver (10 min)
 
@@ -240,7 +240,7 @@ Railway setup:
 npm install -g @railway/cli
 railway login
 railway init
-railway variables set NETWORK=unichain
+railway variables set NETWORK=monad
 railway variables set THIRDWEB_SECRET_KEY=lR5bfHC...
 railway variables set X402_STRICT_MODE=true
 railway variables set NODE_ENV=production

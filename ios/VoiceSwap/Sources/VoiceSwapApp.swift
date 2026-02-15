@@ -51,6 +51,9 @@ struct VoiceSwapApp: App {
     }
 
     private func setupApp() {
+        // Restore VoiceSwap Wallet from Keychain (if previously created)
+        VoiceSwapWallet.shared.restore()
+
         // Request necessary permissions
         requestPermissions()
 
@@ -60,6 +63,9 @@ struct VoiceSwapApp: App {
         // Configure app
         print("[VoiceSwap] App started")
         print("[VoiceSwap] Network: Monad Mainnet (Chain ID: 143)")
+        if VoiceSwapWallet.shared.isCreated {
+            print("[VoiceSwap] VoiceSwap Wallet: \(VoiceSwapWallet.shared.address)")
+        }
     }
 
     private func requestPermissions() {

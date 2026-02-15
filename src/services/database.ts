@@ -72,6 +72,26 @@ export async function initDatabase(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_merchant_tx_hash ON merchant_payments(tx_hash);
     CREATE INDEX IF NOT EXISTS idx_merchant_block ON merchant_payments(block_number);
 
+    -- Payment receipts (on-chain proof of purchase)
+    CREATE TABLE IF NOT EXISTS payment_receipts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tx_hash TEXT UNIQUE NOT NULL,
+      receipt_hash TEXT UNIQUE NOT NULL,
+      payer_address TEXT NOT NULL,
+      merchant_wallet TEXT NOT NULL,
+      amount TEXT NOT NULL,
+      concept TEXT,
+      chain_id INTEGER NOT NULL DEFAULT 143,
+      block_number INTEGER,
+      timestamp INTEGER NOT NULL,
+      signature TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_receipt_tx ON payment_receipts(tx_hash);
+    CREATE INDEX IF NOT EXISTS idx_receipt_payer ON payment_receipts(payer_address);
+    CREATE INDEX IF NOT EXISTS idx_receipt_merchant ON payment_receipts(merchant_wallet);
+
     -- Address labels for human-readable names
     CREATE TABLE IF NOT EXISTS address_labels (
       address TEXT PRIMARY KEY NOT NULL,
@@ -271,7 +291,7 @@ export async function saveMerchantPayment(data: {
   fromAddress: string;
   amount: string;
   concept?: string;
-  blockNumber: number;
+  blockNumber?: number;
 }): Promise<void> {
   const db = getDb();
   const now = Date.now();
@@ -286,7 +306,7 @@ export async function saveMerchantPayment(data: {
       data.fromAddress.toLowerCase(),
       data.amount,
       data.concept || null,
-      data.blockNumber,
+      data.blockNumber || 0,
       now,
     ]
   );
@@ -449,6 +469,99 @@ export async function resolveAddressLabels(addresses: string[]): Promise<Record<
     result[row.address] = row.label;
   }
   return result;
+}
+
+// ============================================
+// Payment Receipts
+// ============================================
+
+export interface PaymentReceipt {
+  id?: number;
+  tx_hash: string;
+  receipt_hash: string;
+  payer_address: string;
+  merchant_wallet: string;
+  amount: string;
+  concept: string | null;
+  chain_id: number;
+  block_number: number | null;
+  timestamp: number;
+  signature: string;
+  created_at: number;
+}
+
+/**
+ * Save a payment receipt
+ */
+export async function savePaymentReceipt(data: {
+  txHash: string;
+  receiptHash: string;
+  payerAddress: string;
+  merchantWallet: string;
+  amount: string;
+  concept?: string;
+  chainId?: number;
+  blockNumber?: number;
+  timestamp: number;
+  signature: string;
+}): Promise<void> {
+  const db = getDb();
+  await db.run(
+    `INSERT OR IGNORE INTO payment_receipts
+     (tx_hash, receipt_hash, payer_address, merchant_wallet, amount, concept, chain_id, block_number, timestamp, signature, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      data.txHash.toLowerCase(),
+      data.receiptHash,
+      data.payerAddress.toLowerCase(),
+      data.merchantWallet.toLowerCase(),
+      data.amount,
+      data.concept || null,
+      data.chainId || 143,
+      data.blockNumber || null,
+      data.timestamp,
+      data.signature,
+      Date.now(),
+    ]
+  );
+}
+
+/**
+ * Get receipt by tx hash
+ */
+export async function getReceiptByTxHash(txHash: string): Promise<PaymentReceipt | null> {
+  const db = getDb();
+  const result = await db.get(
+    'SELECT * FROM payment_receipts WHERE tx_hash = ?',
+    [txHash.toLowerCase()]
+  );
+  return result ?? null;
+}
+
+/**
+ * Get receipt by receipt hash
+ */
+export async function getReceiptByHash(receiptHash: string): Promise<PaymentReceipt | null> {
+  const db = getDb();
+  const result = await db.get(
+    'SELECT * FROM payment_receipts WHERE receipt_hash = ?',
+    [receiptHash]
+  );
+  return result ?? null;
+}
+
+/**
+ * Get all receipts for a payer
+ */
+export async function getPayerReceipts(
+  payerAddress: string,
+  limit: number = 50
+): Promise<PaymentReceipt[]> {
+  const db = getDb();
+  return await db.all(
+    'SELECT * FROM payment_receipts WHERE payer_address = ? ORDER BY timestamp DESC LIMIT ?',
+    [payerAddress.toLowerCase(), limit]
+  );
 }
 
 /**

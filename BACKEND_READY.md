@@ -27,7 +27,7 @@ El backend de VoiceSwap está completamente configurado y listo para pruebas. Aq
 
 **Backend .env** configurado con:
 ```env
-NETWORK=unichain
+NETWORK=monad
 THIRDWEB_SECRET_KEY=lR5bfHC... ✓
 THIRDWEB_CLIENT_ID=d180849f... ✓
 BACKEND_WALLET_ADDRESS=0x2749... ✓
@@ -63,8 +63,8 @@ Respuesta:
   "status": "ok",
   "service": "x402-swap-executor",
   "version": "2.2.0",
-  "network": "unichain",
-  "protocol": "Uniswap V4 + Uniswap X",
+  "network": "monad",
+  "protocol": "Uniswap V3 + Uniswap X",
   "features": {
     "accountAbstraction": true,
     "gasSponsorship": true,
@@ -111,7 +111,7 @@ Respuesta:
     "status": "queued",
     "queueId": "...",
     "smartAccountAddress": "0x...",
-    "routingType": "v4_engine",
+    "routingType": "v3_engine",
     "message": "Transaction queued with gas sponsorship"
   }
 }
@@ -146,7 +146,7 @@ curl http://localhost:4021/health
 
 1. Ve a [Thirdweb Dashboard](https://thirdweb.com/dashboard)
 2. Settings → Sponsorship
-3. Enable para Chain ID **130** (Unichain Mainnet)
+3. Enable para Chain ID **130** (Monad Mainnet)
 4. Añade a whitelist: `0xef740bf23acae26f6492b10de645d6b98dc8eaf3`
 5. Deposita al menos **0.05 ETH** al paymaster
 
@@ -154,7 +154,7 @@ curl http://localhost:4021/health
 
 **Wallet:** `0x2749A654FeE5CEc3a8644a27E7498693d0132759`
 
-Necesita ETH en **Unichain Mainnet** (Chain ID: 130) para:
+Necesita ETH en **Monad Mainnet** (Chain ID: 130) para:
 - Pagar gas si sponsorship falla
 - Crear smart accounts
 - Ejecutar transacciones
@@ -162,9 +162,9 @@ Necesita ETH en **Unichain Mainnet** (Chain ID: 130) para:
 **Mínimo recomendado:** 0.1 ETH
 
 **Opciones:**
-- Bridge desde Ethereum: [bridge.unichain.org](https://bridge.unichain.org)
-- Transferir desde otra wallet en Unichain
-- Comprar en exchange con soporte Unichain
+- Bridge desde Ethereum: [bridge.monad.org](https://bridge.monad.org)
+- Transferir desde otra wallet en Monad
+- Comprar en exchange con soporte Monad
 
 ### Paso 4: Deploy a Producción (30 min)
 
@@ -176,7 +176,7 @@ npm install -g @railway/cli
 railway login
 railway init
 railway variables set THIRDWEB_SECRET_KEY=...
-railway variables set NETWORK=unichain
+railway variables set NETWORK=monad
 railway up
 railway domain
 ```
@@ -286,8 +286,8 @@ EXPO_PUBLIC_BACKEND_URL=https://tu-app.railway.app
 
 - [Thirdweb Dashboard](https://thirdweb.com/dashboard)
 - [Thirdweb API Docs](https://portal.thirdweb.com/api-reference/transactions)
-- [Unichain Bridge](https://bridge.unichain.org)
-- [Unichain Explorer](https://unichain.org/explorer)
+- [Monad Bridge](https://bridge.monad.org)
+- [Monad Explorer](https://monad.org/explorer)
 - [Railway Dashboard](https://railway.app/dashboard)
 
 ---
@@ -328,7 +328,7 @@ Node.js no está disponible en este entorno. Necesitas ejecutar los comandos en 
 Verifica que `THIRDWEB_SECRET_KEY` en `.env` sea correcto.
 
 ### Error: "Chain ID mismatch"
-Asegúrate que `NETWORK=unichain` para mainnet o `NETWORK=unichain-sepolia` para testnet.
+Asegúrate que `NETWORK=monad` para mainnet o `NETWORK=monad-sepolia` para testnet.
 
 ### Error: "Gas sponsorship failed"
 Configura sponsorship en Thirdweb dashboard primero.
@@ -341,7 +341,7 @@ El backend está completamente configurado y listo para probar. Los próximos 3 
 
 1. **Probar localmente** - `npm run dev` + curl tests
 2. **Configurar gas sponsorship** - Thirdweb dashboard
-3. **Fondear wallet** - 0.1 ETH en Unichain
+3. **Fondear wallet** - 0.1 ETH en Monad
 
 Después de eso, ¡puedes hacer el deploy y empezar con la mobile app!
 

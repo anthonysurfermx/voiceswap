@@ -1,12 +1,12 @@
 # x402 Swap Executor
 
-> Swap-as-a-Service: x402-powered Uniswap V4 swap execution for AI agents on Unichain
+> Swap-as-a-Service: x402-powered Uniswap V3 swap execution for AI agents on Monad
 
 Built for the [x402 Hackathon](https://www.x402hackathon.com) (December 8, 2025 - January 5, 2026)
 
 ## What is this?
 
-x402 Swap Executor is a microservice that allows AI agents to execute token swaps on **Uniswap V4** on **Unichain** by paying micropayments via the [x402 protocol](https://x402.org). No API keys, no accounts, no subscriptions—just pay per request.
+x402 Swap Executor is a microservice that allows AI agents to execute token swaps on **Uniswap V3** on **Monad** by paying micropayments via the [x402 protocol](https://x402.org). No API keys, no accounts, no subscriptions—just pay per request.
 
 ### The Problem
 
@@ -25,10 +25,10 @@ This service abstracts all that complexity behind simple HTTP endpoints. Agents 
 - On-chain execution
 - Transaction status tracking
 
-### Why Unichain + Uniswap V4?
+### Why Monad + Uniswap V3?
 
-- **Unichain**: Uniswap's native L2 with 200ms block times, lowest fees, and MEV protection
-- **Uniswap V4**: Latest protocol with hooks, flash accounting, native ETH support, and improved gas efficiency
+- **Monad**: Uniswap's native L2 with 200ms block times, lowest fees, and MEV protection
+- **Uniswap V3**: Latest protocol with hooks, flash accounting, native ETH support, and improved gas efficiency
 
 ## Pricing
 
@@ -63,11 +63,11 @@ Edit `.env`:
 # Your wallet address to receive x402 payments
 PAYMENT_RECEIVER_ADDRESS=0xYourEthereumAddress
 
-# Network: unichain-sepolia (testnet) or unichain (mainnet)
-NETWORK=unichain-sepolia
+# Network: monad-sepolia (testnet) or monad (mainnet)
+NETWORK=monad-sepolia
 
 # RPC URL
-UNICHAIN_SEPOLIA_RPC_URL=https://sepolia.unichain.org
+MONAD_SEPOLIA_RPC_URL=https://sepolia.monad.org
 
 # Optional: For executing swaps
 RELAYER_PRIVATE_KEY=your_private_key
@@ -204,7 +204,7 @@ const result = await x402Fetch('https://swap-executor.example.com/execute', {
 │           x402 Swap Executor                 │
 ├─────────────────────────────────────────────┤
 │  x402 Middleware (verifies payments)        │
-│  ├── /quote    → V4 Quoter                  │
+│  ├── /quote    → V3 Quoter                  │
 │  ├── /route    → Universal Router           │
 │  ├── /execute  → Transaction Builder        │
 │  └── /status   → Chain Indexer              │
@@ -214,28 +214,28 @@ const result = await x402Fetch('https://swap-executor.example.com/execute', {
          │
          ▼
 ┌─────────────────┐
-│   Uniswap V4    │
-│   (Unichain)    │
+│   Uniswap V3    │
+│   (Monad)    │
 └─────────────────┘
 ```
 
 ## Supported Tokens
 
-### Unichain Mainnet (Chain ID: 130)
+### Monad Mainnet (Chain ID: 130)
 
 | Token | Address |
 |-------|---------|
 | WETH | `0x4200000000000000000000000000000000000006` |
 | USDC | `0x078D782b760474a361dDA0AF3839290b0EF57AD6` |
 
-### Unichain Sepolia (Chain ID: 1301)
+### Monad Sepolia (Chain ID: 1301)
 
 | Token | Address |
 |-------|---------|
 | WETH | `0x4200000000000000000000000000000000000006` |
 | USDC | `0x31d0220469e10c4E71834a79b1f276d740d3768F` |
 
-## Uniswap V4 Contracts on Unichain
+## Uniswap V3 Contracts on Monad
 
 | Contract | Mainnet Address |
 |----------|-----------------|
@@ -250,9 +250,9 @@ const result = await x402Fetch('https://swap-executor.example.com/execute', {
 - **Runtime**: Node.js 20+
 - **Framework**: Express.js
 - **x402**: `x402-express`, `@coinbase/x402`
-- **DEX**: Uniswap V4 SDK + Universal Router
+- **DEX**: Uniswap V3 SDK + Universal Router
 - **Blockchain**: ethers.js v5
-- **Network**: Unichain (L2)
+- **Network**: Monad (L2)
 - **Validation**: Zod
 - **Language**: TypeScript
 
@@ -261,8 +261,8 @@ const result = await x402Fetch('https://swap-executor.example.com/execute', {
 - [x] Basic quote endpoint
 - [x] Route calculation with calldata
 - [x] x402 payment integration
-- [x] Uniswap V4 migration
-- [x] Unichain deployment
+- [x] Uniswap V3 migration
+- [x] Monad deployment
 - [ ] Multi-hop routing
 - [ ] Multiple DEX aggregation
 - [ ] Account abstraction for gasless execution

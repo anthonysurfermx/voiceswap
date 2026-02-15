@@ -9,6 +9,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import { ethers } from 'ethers';
 import swapRoutes from '../src/routes/swap.js';
 import eventsRoutes from '../src/routes/events.js';
 import voiceswapRoutes from '../src/routes/voiceswap.js';
@@ -55,13 +56,13 @@ app.get('/.well-known/apple-app-site-association', (_req, res) => {
       apps: [],
       details: [
         {
-          appID: "TEAMID.com.voiceswap.app",
+          appID: "QZRTV6CMTT.com.voiceswap.app",
           paths: ["/pay/*", "/app/*", "/wc/*"]
         }
       ]
     },
     webcredentials: {
-      apps: ["TEAMID.com.voiceswap.app"]
+      apps: ["QZRTV6CMTT.com.voiceswap.app"]
     }
   });
 });
@@ -72,20 +73,44 @@ app.get('/app/*', (req, res) => {
   res.redirect(appUrl);
 });
 
+// HTML-escape to prevent XSS
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 // Payment deep link (for QR codes)
 app.get('/pay/:wallet', (req, res) => {
-  const { wallet } = req.params;
+  const wallet = req.params.wallet;
   const amount = req.query.amount as string;
   const name = req.query.name as string;
 
-  const appUrl = `voiceswap://pay?wallet=${wallet}${amount ? `&amount=${amount}` : ''}${name ? `&name=${name}` : ''}`;
+  // Validate wallet is a valid hex address
+  if (!/^0x[a-fA-F0-9]{40}$/.test(wallet)) {
+    return res.status(400).send('Invalid wallet address');
+  }
+
+  // Validate amount is a number if provided
+  if (amount && (isNaN(Number(amount)) || Number(amount) <= 0)) {
+    return res.status(400).send('Invalid amount');
+  }
+
+  const safeWallet = escapeHtml(wallet);
+  const safeAmount = amount ? escapeHtml(amount) : '';
+  const safeName = name ? escapeHtml(name) : '';
+
+  const appUrl = `voiceswap://pay?wallet=${encodeURIComponent(wallet)}${amount ? `&amount=${encodeURIComponent(amount)}` : ''}${safeName ? `&name=${encodeURIComponent(name)}` : ''}`;
 
   res.send(`
     <!DOCTYPE html>
     <html>
     <head>
       <title>VoiceSwap Payment</title>
-      <meta http-equiv="refresh" content="0;url=${appUrl}">
+      <meta http-equiv="refresh" content="0;url=${escapeHtml(appUrl)}">
       <meta name="viewport" content="width=device-width, initial-scale=1">
       <style>
         body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; padding: 50px; background: #1a1a1a; color: white; }
@@ -101,8 +126,8 @@ app.get('/pay/:wallet', (req, res) => {
         <h1>VOICESWAP</h1>
         <p>Opening VoiceSwap app...</p>
         <div class="card">
-          <p>Payment to: ${wallet.slice(0, 10)}...${wallet.slice(-8)}</p>
-          ${amount ? `<p><strong>$${amount} USDC</strong></p>` : ''}
+          <p>Payment to: ${safeWallet.slice(0, 10)}...${safeWallet.slice(-8)}</p>
+          ${safeAmount ? `<p><strong>$${safeAmount} USDC</strong></p>` : ''}
         </div>
         <p style="margin-top: 30px; font-size: 14px;">
           App not installed? <a href="https://apps.apple.com/app/voiceswap">Download here</a>
@@ -118,7 +143,7 @@ app.get('/', (_req, res) => {
   res.json({
     service: 'VoiceSwap API',
     description: 'Voice-activated crypto payments for Meta Ray-Ban glasses',
-    version: '1.0.0',
+    version: '3.0.0',
     network: NETWORK,
     chainId: CHAIN_ID,
     endpoints: {
@@ -128,18 +153,37 @@ app.get('/', (_req, res) => {
       '/voiceswap/execute': 'Execute payment',
       '/voiceswap/ai/parse': 'Parse voice command',
       '/voiceswap/ai/process': 'Process voice with context',
+      '/voiceswap/onramp/session-token': 'Generate Coinbase Onramp session token',
       '/health': 'Health check',
     },
   });
 });
 
-// Health check
-app.get('/health', (_req, res) => {
-  res.json({
-    status: 'ok',
+// Health check with RPC connectivity
+app.get('/health', async (_req, res) => {
+  const rpcUrl = process.env.MONAD_RPC_URL || 'https://rpc.monad.xyz';
+  let rpcStatus = 'unknown';
+  let blockNumber: number | null = null;
+
+  try {
+    const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+    blockNumber = await provider.getBlockNumber();
+    rpcStatus = 'connected';
+  } catch {
+    rpcStatus = 'error';
+  }
+
+  const healthy = rpcStatus === 'connected';
+  res.status(healthy ? 200 : 503).json({
+    status: healthy ? 'ok' : 'degraded',
     timestamp: Date.now(),
     network: NETWORK,
     chainId: CHAIN_ID,
+    rpc: {
+      status: rpcStatus,
+      blockNumber,
+    },
+    gasSponsorship: process.env.GAS_SPONSOR_KEY ? 'configured' : 'not_configured',
   });
 });
 

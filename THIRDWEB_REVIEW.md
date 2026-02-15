@@ -13,7 +13,7 @@
 - ✅ **Auto-connect** - Reconexión automática guardada en SecureStore
 - ✅ **Gas Sponsorship config** - `sponsorGas: true` en config
 - ✅ **Account Abstraction** - ERC-4337 configurado
-- ✅ **Chain definitions** - Unichain Mainnet (130) y Sepolia (1301)
+- ✅ **Chain definitions** - Monad Mainnet (143)
 
 ### 2. Backend Integration
 - ✅ **Thirdweb API Client** - Configurado en `thirdwebEngine.ts`

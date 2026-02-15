@@ -69,7 +69,7 @@ Usuario dice: "Swap 0.1 ETH to USDC"
          ↓
 Transaction preparada: {
   type: "sign_transaction",
-  chain_id: 130,
+  chain_id: 143,
   to: "0xef740bf...",
   data: "0x3593564c...",
   value: "0x..."
@@ -109,11 +109,11 @@ Thirdweb AI Chat API
 {
   actions: [{
     type: "sign_transaction",
-    chain_id: 130,
+    chain_id: 143,
     to: "0xef740bf23acae26f6492b10de645d6b98dc8eaf3",
     data: "0x3593564c000...",
     value: "0x0",
-    description: "Swap 0.1 ETH for USDC on Unichain"
+    description: "Swap 0.1 ETH for USDC on Monad"
   }]
 }
          ↓
@@ -146,7 +146,7 @@ Body:
     }
   ],
   "from": "0x2749A654FeE5CEc3a8644a27E7498693d0132759",
-  "chain_ids": [130], // Unichain
+  "chain_ids": [143], // Monad
   "tools": ["contract_call", "swap"]
 }
 ```
@@ -157,10 +157,10 @@ Body:
   "choices": [{
     "message": {
       "role": "assistant",
-      "content": "I've prepared a swap of 0.1 ETH to USDC on Unichain. Would you like to proceed?",
+      "content": "I've prepared a swap of 0.1 ETH to USDC on Monad. Would you like to proceed?",
       "actions": [{
         "type": "sign_transaction",
-        "chain_id": 130,
+        "chain_id": 143,
         "to": "0xef740bf23acae26f6492b10de645d6b98dc8eaf3",
         "data": "0x3593564c...",
         "value": "0x016345785d8a0000",
@@ -212,7 +212,7 @@ router.post('/voice-command', async (req, res) => {
       model: 'thirdweb-ai',
       messages: [{ role: 'user', content: transcript }],
       from: userAddress,
-      chain_ids: [130], // Unichain
+      chain_ids: [143], // Monad
       tools: ['swap'],
     }),
   });
@@ -328,7 +328,7 @@ curl https://ai.thirdweb.com/v1/chat/completions \
       "content": "Cambia 0.1 ETH a USDC"
     }],
     "from": "0x2749A654FeE5CEc3a8644a27E7498693d0132759",
-    "chain_ids": [130],
+    "chain_ids": [143],
     "tools": ["swap"]
   }'
 ```

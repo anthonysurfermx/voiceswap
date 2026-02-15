@@ -38,6 +38,10 @@ class AudioManager: ObservableObject {
 
     var isMutedForEcho: Bool = false
 
+    // MARK: Private — Route Change Recovery
+
+    private var routeChangeObserver: NSObjectProtocol?
+
     // MARK: Private — Chunk Accumulation
 
     private var accumulatedData = Data()
@@ -138,10 +142,19 @@ class AudioManager: ObservableObject {
         self.audioEngine = engine
         isCapturing = true
 
+        // Monitor audio route changes — Bluetooth can temporarily disconnect
+        // (e.g., when Meta StreamSession stops), killing the AVAudioEngine.
+        // We need to restart capture when the route comes back.
+        setupRouteChangeObserver()
+
         NSLog("[Audio] Capture started (mode: %@)", audioMode == .glasses ? "glasses" : "phone")
     }
 
     func stopCapture() {
+        if let observer = routeChangeObserver {
+            NotificationCenter.default.removeObserver(observer)
+            routeChangeObserver = nil
+        }
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine?.stop()
         audioEngine = nil
@@ -201,6 +214,132 @@ class AudioManager: ObservableObject {
 
         // Restart player node so it's ready for next audio
         playerNode?.play()
+    }
+
+    // MARK: - Audio Route Recovery
+
+    private func setupRouteChangeObserver() {
+        routeChangeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            Task { @MainActor in
+                self?.handleRouteChange(notification)
+            }
+        }
+    }
+
+    private func handleRouteChange(_ notification: Notification) {
+        guard isCapturing else { return }
+        guard let reasonValue = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else { return }
+
+        // When a Bluetooth device disconnects and reconnects (e.g., Meta StreamSession stop/start),
+        // AVAudioEngine's input tap can die silently. Check if engine is still running.
+        switch reason {
+        case .newDeviceAvailable, .oldDeviceUnavailable, .routeConfigurationChange:
+            guard let engine = audioEngine else { return }
+            if !engine.isRunning {
+                NSLog("[Audio] Engine stopped after route change (reason: %lu) — restarting capture", reasonValue)
+                restartCapture()
+            } else {
+                NSLog("[Audio] Route changed (reason: %lu) — engine still running", reasonValue)
+            }
+        default:
+            break
+        }
+    }
+
+    /// Restart audio capture after a route change killed the engine
+    private func restartCapture() {
+        guard isCapturing else { return }
+
+        // Tear down old engine
+        audioEngine?.inputNode.removeTap(onBus: 0)
+        audioEngine?.stop()
+        audioEngine = nil
+        audioConverter = nil
+
+        // Retry with increasing delays — Bluetooth route changes can take time to settle
+        Task { @MainActor in
+            let delays: [UInt64] = [500_000_000, 1_000_000_000, 2_000_000_000] // 0.5s, 1s, 2s
+
+            for (attempt, delay) in delays.enumerated() {
+                try? await Task.sleep(nanoseconds: delay)
+                guard self.isCapturing else { return }
+
+                do {
+                    // Reset audio session to pick up new route
+                    try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+                    try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+                    try self.configureAudioSession()
+
+                    let engine = AVAudioEngine()
+                    let inputNode = engine.inputNode
+                    let inputFormat = inputNode.outputFormat(forBus: 0)
+
+                    NSLog("[Audio] Restart attempt %d: %.0fHz, %d ch", attempt + 1, inputFormat.sampleRate, inputFormat.channelCount)
+
+                    let targetFormat = AVAudioFormat(
+                        commonFormat: .pcmFormatFloat32,
+                        sampleRate: GeminiConfig.inputAudioSampleRate,
+                        channels: GeminiConfig.audioChannels,
+                        interleaved: false
+                    )!
+
+                    let needsConversion = inputFormat.sampleRate != GeminiConfig.inputAudioSampleRate
+                        || inputFormat.channelCount != GeminiConfig.audioChannels
+                    if needsConversion {
+                        self.audioConverter = AVAudioConverter(from: inputFormat, to: targetFormat)
+                    }
+
+                    inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
+                        guard let self = self else { return }
+                        guard !self.isMutedForEcho else { return }
+
+                        let pcmData: Data
+                        if let converter = self.audioConverter {
+                            guard let converted = self.resample(buffer: buffer, converter: converter, targetFormat: targetFormat) else { return }
+                            pcmData = self.floatBufferToInt16Data(converted)
+                        } else {
+                            pcmData = self.floatBufferToInt16Data(buffer)
+                        }
+
+                        self.sendQueue.async {
+                            self.accumulatedData.append(pcmData)
+                            if self.accumulatedData.count >= self.minSendBytes {
+                                let chunk = Data(self.accumulatedData.prefix(self.minSendBytes))
+                                self.accumulatedData = Data(self.accumulatedData.dropFirst(self.minSendBytes))
+                                self.onAudioCaptured?(chunk)
+                            }
+                        }
+                    }
+
+                    engine.prepare()
+                    try engine.start()
+                    self.audioEngine = engine
+
+                    // Also restart playback engine
+                    self.playbackEngine?.stop()
+                    self.playbackEngine = nil
+                    self.playerNode = nil
+                    self.setupPlaybackEngine()
+
+                    NSLog("[Audio] Capture restarted successfully (attempt %d)", attempt + 1)
+                    return // Success — exit retry loop
+                } catch {
+                    NSLog("[Audio] Restart attempt %d failed: %@", attempt + 1, error.localizedDescription)
+                    // Clean up failed engine before retry
+                    self.audioEngine?.inputNode.removeTap(onBus: 0)
+                    self.audioEngine?.stop()
+                    self.audioEngine = nil
+                    self.audioConverter = nil
+                }
+            }
+
+            NSLog("[Audio] All restart attempts failed — audio capture stopped")
+        }
     }
 
     // MARK: - Cleanup

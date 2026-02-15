@@ -30,13 +30,13 @@ Después de revisar toda la documentación de Thirdweb, he identificado:
 
 ### 2. Mobile App Base ✅
 - [x] Thirdweb Client con Client ID
-- [x] Chain definitions (Unichain Mainnet + Sepolia)
+- [x] Chain definitions (Monad Mainnet)
 - [x] External wallet support (MetaMask, Coinbase, WalletConnect)
 - [x] Auto-reconnect logic
 - [x] Secure storage (SecureStore)
 
 ### 3. Swap Logic ✅
-- [x] Uniswap V4 integration
+- [x] Uniswap V3 integration
 - [x] Quote endpoint
 - [x] Route generation
 - [x] Execute endpoint
@@ -167,7 +167,7 @@ router.post('/voice-command', async (req, res) => {
       messages: [{ role: 'user', content: transcript }],
       context: {
         wallet_address: userAddress,
-        chain_ids: [130], // Unichain
+        chain_ids: [143], // Monad
       },
       auto_execute_transactions: false, // Preparar, no ejecutar
     }),
@@ -274,7 +274,7 @@ GET /v1/wallets/{address}/tokens     - ERC20 holdings con pricing
 // mobile-app/src/services/WalletService.ts
 async function getWalletBalance(address: string) {
   const response = await fetch(
-    `https://api.thirdweb.com/v1/wallets/${address}/balance?chainId=130`,
+    `https://api.thirdweb.com/v1/wallets/${address}/balance?chainId=143`,
     {
       headers: {
         'x-client-id': THIRDWEB_CLIENT_ID,
@@ -287,7 +287,7 @@ async function getWalletBalance(address: string) {
 
 async function getTokenList(address: string) {
   const response = await fetch(
-    `https://api.thirdweb.com/v1/wallets/${address}/tokens?chainId=130`,
+    `https://api.thirdweb.com/v1/wallets/${address}/tokens?chainId=143`,
     {
       headers: {
         'x-client-id': THIRDWEB_CLIENT_ID,
@@ -517,7 +517,7 @@ curl https://ai.thirdweb.com/v1/chat \
     }],
     "context": {
       "wallet_address": "0x2749A654FeE5CEc3a8644a27E7498693d0132759",
-      "chain_ids": [130]
+      "chain_ids": [143]
     }
   }'
 ```

@@ -22,6 +22,7 @@
   "author": "Anthony Chavez",
   "license": "MIT",
   "dependencies": {
+    "@coinbase/cdp-sdk": "^1.44.0",
     "@uniswap/sdk-core": "^6.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",

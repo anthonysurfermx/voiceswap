@@ -28,18 +28,18 @@ EXPO_PUBLIC_BACKEND_URL=http://localhost:4021
 
 # Network
 EXPO_PUBLIC_CHAIN_ID=1301
-EXPO_PUBLIC_NETWORK=unichain-sepolia
+EXPO_PUBLIC_NETWORK=monad-sepolia
 ```
 
 #### 3. Configurar Thirdweb Gas Sponsorship
 
 1. Ve a [thirdweb.com/dashboard](https://thirdweb.com/dashboard)
 2. Navega a **Account Abstraction → Paymasters**
-3. Activa Gas Sponsorship para Unichain Sepolia (Chain ID: 1301)
+3. Activa Gas Sponsorship para Monad Sepolia (Chain ID: 1301)
 4. Configura reglas de sponsorship:
    - **Global spend limit**: $100/mes (ajusta según necesidad)
-   - **Contract whitelist**: Añade dirección del Universal Router de Uniswap V4
-   - **Chain**: Unichain Sepolia (1301)
+   - **Contract whitelist**: Añade dirección del Universal Router de Uniswap V3
+   - **Chain**: Monad Sepolia (1301)
 
 **Dirección del Universal Router:**
 ```
@@ -92,8 +92,8 @@ railway up
 Configura variables de entorno en Railway:
 ```
 PAYMENT_RECEIVER_ADDRESS=0xTuDireccionAqui
-NETWORK=unichain-sepolia
-UNICHAIN_SEPOLIA_RPC_URL=https://sepolia.unichain.org
+NETWORK=monad-sepolia
+MONAD_SEPOLIA_RPC_URL=https://sepolia.monad.org
 RELAYER_PRIVATE_KEY=tu_private_key_para_ejecutar_swaps
 ```
 
@@ -110,17 +110,17 @@ Actualiza `.env` con la URL de producción:
 EXPO_PUBLIC_BACKEND_URL=https://tu-app.railway.app
 ```
 
-#### 6. Configurar Unichain Wallet
+#### 6. Configurar Monad Wallet
 
 1. Crea wallet en MetaMask
-2. Añade red Unichain Sepolia:
-   - **RPC URL**: https://sepolia.unichain.org
+2. Añade red Monad Sepolia:
+   - **RPC URL**: https://sepolia.monad.org
    - **Chain ID**: 1301
    - **Symbol**: ETH
    - **Explorer**: https://sepolia.uniscan.xyz
 
 3. Obtén fondos de testnet:
-   - ETH: [Unichain Sepolia Faucet](https://faucet.unichain.org)
+   - ETH: [Monad Sepolia Faucet](https://faucet.monad.org)
    - USDC de prueba: Usar bridge o mint contract
 
 4. Configura relayer wallet para backend con ETH para gas
@@ -223,7 +223,7 @@ npx expo run:ios
 
 - [Thirdweb React Native Docs](https://portal.thirdweb.com/react-native)
 - [Meta Wearables DAT SDK](https://github.com/facebook/meta-wearables-dat-ios)
-- [Uniswap V4 Docs](https://docs.uniswap.org/contracts/v4/overview)
+- [Uniswap V3 Docs](https://docs.uniswap.org/contracts/v3/overview)
 - [x402 Protocol](https://x402.org)
 
 ---

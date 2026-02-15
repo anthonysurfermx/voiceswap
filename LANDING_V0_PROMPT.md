@@ -59,7 +59,7 @@ SECTIONS TO INCLUDE:
 
    Feature 4: "Instant Execution"
    - Icon: Lightning bolt
-   - Description: "Powered by Uniswap V4 on Unichain for maximum speed"
+   - Description: "Powered by Uniswap V3 on Monad for maximum speed"
 
    Feature 5: "Secure Smart Wallets"
    - Icon: Shield with lock
@@ -83,7 +83,7 @@ SECTIONS TO INCLUDE:
    - Caption: "Check balances, history, and swap status instantly"
 
 5. TECHNICAL SPECS (Minimalist cards)
-   - "Built on Unichain" (Uniswap logo)
+   - "Built on Monad" (Uniswap logo)
    - "Powered by Thirdweb" (Thirdweb logo)
    - "ERC-4337 Account Abstraction"
    - "x402 Micropayments"
@@ -101,7 +101,7 @@ SECTIONS TO INCLUDE:
    A: "Yes, VoiceSwap is designed exclusively for Meta Ray-Ban smart glasses with built-in audio and camera."
 
    Q2: "What tokens can I swap?"
-   A: "Currently supports WETH, USDC, and all major tokens on Unichain. More chains coming soon."
+   A: "Currently supports WETH, USDC, and all major tokens on Monad. More chains coming soon."
 
    Q3: "How much does it cost?"
    A: "All gas fees are sponsored. We charge a small micropayment (x402) of $0.02 per swap."

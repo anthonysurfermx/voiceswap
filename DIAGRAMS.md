@@ -60,14 +60,14 @@
 │  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  │
 │  1. Crea UserOperation (ERC-4337)                            │
 │  2. Gas sponsorship automático                               │
-│  3. Envía a Unichain                                         │
+│  3. Envía a Monad                                         │
 └──────────────────────────────────────────────────────────────┘
                             │
                             ↓
 ┌──────────────────────────────────────────────────────────────┐
-│  ⛓️  UNICHAIN BLOCKCHAIN                                     │
+│  ⛓️  MONAD BLOCKCHAIN                                     │
 │  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  │
-│  Universal Router → Uniswap V4                               │
+│  Universal Router → Uniswap V3                               │
 │  Swap ejecutado                                              │
 │  Tx confirmada ✅                                            │
 └──────────────────────────────────────────────────────────────┘
@@ -100,7 +100,7 @@ voiceswap/
 │   │   └── voice.ts            ← /voice-command (TODO)
 │   │
 │   ├── services/
-│   │   ├── uniswap.ts          ← Uniswap V4 (quotes, routes, calldata)
+│   │   ├── uniswap.ts          ← Uniswap V3 (quotes, routes, calldata)
 │   │   ├── thirdwebEngine.ts   ← Account Abstraction, gas sponsorship
 │   │   ├── thirdwebAI.ts       ← AI Chat integration (TODO)
 │   │   └── translation.ts      ← ES→EN translation (TODO)
@@ -152,7 +152,7 @@ voiceswap/
 │ ┌──────────────────────┐ │
 │ │ 1. getQuote()        │ │
 │ │    ├─ findBestPool() │ │
-│ │    ├─ Quoter V4      │ │
+│ │    ├─ Quoter V3      │ │
 │ │    └─ priceImpact    │ │
 │ │                      │ │
 │ │ 2. encodeCalldata()  │ │
@@ -193,18 +193,18 @@ voiceswap/
 │ │    ↓                 │ │
 │ │ Bundler              │ │
 │ │    ↓                 │ │
-│ │ Submit to Unichain   │ │
+│ │ Submit to Monad   │ │
 │ └──────────────────────┘ │
 └──────┬───────────────────┘
        │
        │ txHash: "0xabc..."
        ↓
 ┌──────────────────────────┐
-│ Unichain Blockchain      │
+│ Monad Blockchain      │
 │ ┌──────────────────────┐ │
 │ │ Universal Router     │ │
 │ │    ↓                 │ │
-│ │ Uniswap V4 Pool      │ │
+│ │ Uniswap V3 Pool      │ │
 │ │    ↓                 │ │
 │ │ Swap executed ✅     │ │
 │ │    ↓                 │ │
@@ -240,7 +240,7 @@ voiceswap/
                 │              │              │
                 ↓              ↓              ↓
      ┌──────────────┐ ┌──────────────┐ ┌─────────────┐
-     │  Thirdweb    │ │  Unichain    │ │  OpenAI     │
+     │  Thirdweb    │ │  Monad    │ │  OpenAI     │
      │  APIs        │ │  RPC         │ │  (Optional) │
      └──────────────┘ └──────────────┘ └─────────────┘
           │                 │                 │
@@ -252,7 +252,7 @@ voiceswap/
 │  AI    │ │Engine  │ │Quote │ │ Send │ │Trans-│ │ Chat │
 │  Chat  │ │  API   │ │ Call │ │  Tx  │ │late  │ │ GPT-4│
 └────────┘ └────────┘ └──────┘ └──────┘ └──────┘ └──────┘
-           (Gas sponsor)  (V4)  (AA)     (ES→EN)
+           (Gas sponsor)  (V3)  (AA)     (ES→EN)
 ```
 
 ---
@@ -266,7 +266,7 @@ voiceswap/
 
 GET  /health
      └─ Status del servidor
-     └─ Features: AA, x402, V4
+     └─ Features: AA, x402, V3
      └─ FREE
 
 GET  /tokens

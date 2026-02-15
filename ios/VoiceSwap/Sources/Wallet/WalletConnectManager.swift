@@ -374,8 +374,16 @@ public class WalletConnectManager: ObservableObject {
     // MARK: - Public Methods
 
     /// Open wallet connection modal using AppKit
+    private var isPresentingAppKit = false
+
     public func connect() {
         print("[WalletConnect] connect() called, isAppKitConfigured: \(isAppKitConfigured)")
+
+        // Prevent re-entry while already presenting
+        guard !isPresentingAppKit else {
+            print("[WalletConnect] Already presenting AppKit, skipping")
+            return
+        }
 
         // Initialize lazily if not already done
         if !isAppKitConfigured {
@@ -386,24 +394,37 @@ public class WalletConnectManager: ObservableObject {
         connectionState = .connecting
 
         if isAppKitConfigured {
+            isPresentingAppKit = true
             print("[WalletConnect] Calling AppKit.present()...")
 
             // Get the root view controller to present from
             if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
                let rootVC = windowScene.windows.first?.rootViewController {
-                // Find the topmost presented controller
+                // Find the topmost presented controller that has its view in the window
                 var topVC = rootVC
                 while let presented = topVC.presentedViewController {
                     topVC = presented
                 }
-                print("[WalletConnect] Presenting from: \(type(of: topVC))")
-                AppKit.present(from: topVC)
+
+                // Verify the view is in the window hierarchy before presenting
+                if topVC.viewIfLoaded?.window != nil {
+                    print("[WalletConnect] Presenting from: \(type(of: topVC))")
+                    AppKit.present(from: topVC)
+                } else {
+                    print("[WalletConnect] Top VC not in window hierarchy, using root")
+                    AppKit.present(from: rootVC)
+                }
             } else {
                 // Fallback to default present
                 print("[WalletConnect] No root VC found, using default present")
                 AppKit.present()
             }
             print("[WalletConnect] AppKit.present() called")
+
+            // Reset guard after a delay
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                self?.isPresentingAppKit = false
+            }
         } else {
             print("[WalletConnect] AppKit not configured, showing fallback modal")
             // Fallback to manual input
@@ -534,8 +555,9 @@ public class WalletConnectManager: ObservableObject {
 
     // MARK: - Transaction Methods
 
-    /// Continuation for waiting on transaction response
+    /// Continuation for waiting on transaction response — only one tx at a time
     private var transactionContinuation: CheckedContinuation<String, Error>?
+    private var responseSubscription: AnyCancellable?
 
     /// Sign a personal message
     public func signMessage(_ message: String) async throws -> String {
@@ -615,9 +637,44 @@ public class WalletConnectManager: ObservableObject {
             print("[WalletConnect]   value: \(value)")
             print("[WalletConnect]   data: \(data?.prefix(20) ?? "0x")...")
 
+            // Cancel any in-flight transaction to avoid continuation leak
+            if let existing = self.transactionContinuation {
+                existing.resume(throwing: WalletError.transactionFailed("Superseded by new transaction"))
+                self.transactionContinuation = nil
+            }
+            self.responseSubscription?.cancel()
+            self.responseSubscription = nil
+
             // Use withCheckedThrowingContinuation to wait for response
             return try await withCheckedThrowingContinuation { continuation in
                 self.transactionContinuation = continuation
+
+                // Set up response listener BEFORE sending request
+                self.responseSubscription = AppKit.instance.sessionResponsePublisher
+                    .receive(on: DispatchQueue.main)
+                    .sink { [weak self] response in
+                        guard let self = self, let cont = self.transactionContinuation else { return }
+
+                        print("[WalletConnect] Received session response")
+
+                        switch response.result {
+                        case .response(let anyCodable):
+                            if let txHash = anyCodable.value as? String {
+                                print("[WalletConnect] Transaction hash: \(txHash)")
+                                cont.resume(returning: txHash)
+                            } else {
+                                let txHash = String(describing: anyCodable.value)
+                                cont.resume(returning: txHash)
+                            }
+                        case .error(let rpcError):
+                            print("[WalletConnect] Transaction rejected: \(rpcError.message)")
+                            cont.resume(throwing: WalletError.userRejected)
+                        }
+
+                        self.transactionContinuation = nil
+                        self.responseSubscription?.cancel()
+                        self.responseSubscription = nil
+                    }
 
                 Task {
                     do {
@@ -627,13 +684,12 @@ public class WalletConnectManager: ObservableObject {
                         print("[WalletConnect] Opening wallet for approval...")
                         try? await AppKit.instance.launchCurrentWallet()
 
-                        // Set up response listener
-                        self.setupTransactionResponseListener()
-
                     } catch {
                         print("[WalletConnect] Request failed: \(error)")
                         self.transactionContinuation?.resume(throwing: WalletError.transactionFailed(error.localizedDescription))
                         self.transactionContinuation = nil
+                        self.responseSubscription?.cancel()
+                        self.responseSubscription = nil
                     }
                 }
 
@@ -644,6 +700,8 @@ public class WalletConnectManager: ObservableObject {
                         print("[WalletConnect] Transaction timeout")
                         self.transactionContinuation?.resume(throwing: WalletError.transactionFailed("Transaction timed out. Please try again."))
                         self.transactionContinuation = nil
+                        self.responseSubscription?.cancel()
+                        self.responseSubscription = nil
                     }
                 }
             }
@@ -653,37 +711,6 @@ public class WalletConnectManager: ObservableObject {
         }
     }
 
-    /// Set up listener for transaction response
-    private func setupTransactionResponseListener() {
-        AppKit.instance.sessionResponsePublisher
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] response in
-                guard let self = self, let continuation = self.transactionContinuation else { return }
-
-                print("[WalletConnect] Received session response")
-
-                // RPCResult is an enum with .response(AnyCodable) or .error(JSONRPCError)
-                switch response.result {
-                case .response(let anyCodable):
-                    // Try to extract the transaction hash string
-                    if let txHash = anyCodable.value as? String {
-                        print("[WalletConnect] ✅ Transaction hash: \(txHash)")
-                        continuation.resume(returning: txHash)
-                    } else {
-                        print("[WalletConnect] ⚠️ Unexpected response type: \(type(of: anyCodable.value))")
-                        // Try to convert to string anyway
-                        let txHash = String(describing: anyCodable.value)
-                        continuation.resume(returning: txHash)
-                    }
-                case .error(let rpcError):
-                    print("[WalletConnect] ❌ Transaction rejected: \(rpcError.message)")
-                    continuation.resume(throwing: WalletError.userRejected)
-                }
-
-                self.transactionContinuation = nil
-            }
-            .store(in: &cancellables)
-    }
 
     // MARK: - Network Switching
 

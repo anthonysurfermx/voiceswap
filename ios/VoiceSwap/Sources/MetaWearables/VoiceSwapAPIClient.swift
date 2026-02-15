@@ -231,6 +231,16 @@ public struct InsufficientBalanceError: Decodable {
     public let requiredAmount: String?
 }
 
+// MARK: - Payment Receipt
+
+public struct PaymentReceiptResponse: Decodable {
+    public let receiptHash: String
+    public let txHash: String
+    public let timestamp: Int
+    public let signature: String
+    public let verifyUrl: String
+}
+
 // MARK: - Gas Sponsorship
 
 public struct GasRequestResponse: Decodable {
@@ -515,7 +525,8 @@ public actor VoiceSwapAPIClient {
         txHash: String,
         fromAddress: String,
         amount: String,
-        concept: String?
+        concept: String?,
+        blockNumber: Int? = nil
     ) async throws {
         var body: [String: Any] = [
             "merchantWallet": merchantWallet,
@@ -526,9 +537,34 @@ public actor VoiceSwapAPIClient {
         if let concept = concept {
             body["concept"] = concept
         }
+        if let blockNumber = blockNumber {
+            body["blockNumber"] = blockNumber
+        }
 
         // Fire and forget — don't fail the payment if tracking fails
         let _: APIResponse<EmptyResponse> = try await post("/voiceswap/merchant/payment", body: body)
+    }
+
+    // MARK: - Payment Receipts
+
+    /// Request a signed payment receipt (proof of purchase)
+    public func requestReceipt(
+        txHash: String,
+        payerAddress: String,
+        merchantWallet: String,
+        amount: String,
+        concept: String?
+    ) async throws -> APIResponse<PaymentReceiptResponse> {
+        var body: [String: Any] = [
+            "txHash": txHash,
+            "payerAddress": payerAddress,
+            "merchantWallet": merchantWallet,
+            "amount": amount,
+        ]
+        if let concept = concept {
+            body["concept"] = concept
+        }
+        return try await post("/voiceswap/receipt", body: body)
     }
 
     // MARK: - Gas Sponsorship

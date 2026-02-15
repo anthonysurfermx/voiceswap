@@ -249,7 +249,7 @@ voiceswap/
 ├── 📂 src/
 │   │
 │   ├── 📂 config/
-│   │   ├── networks.ts          # Configuración de chains (Unichain Mainnet/Sepolia)
+│   │   ├── networks.ts          # Configuración de chains (Monad Mainnet/Sepolia)
 │   │   │                        # - Chain IDs, RPCs, explorers
 │   │   │                        # - Contract addresses (Router, Quoter, StateView)
 │   │   │                        # - Fee tiers (LOW, MEDIUM, HIGH)
@@ -273,9 +273,9 @@ voiceswap/
 │   │
 │   ├── 📂 services/
 │   │   │
-│   │   ├── uniswap.ts           # 🔹 UNISWAP V4 INTEGRATION
+│   │   ├── uniswap.ts           # 🔹 UNISWAP V3 INTEGRATION
 │   │   │                        # class UniswapService {
-│   │   │                        #   getQuote()         - Quoter V4
+│   │   │                        #   getQuote()         - Quoter V3
 │   │   │                        #   getRoute()         - Routing + calldata
 │   │   │                        #   executeSwap()      - Direct execution
 │   │   │                        #   getTransactionStatus()
@@ -284,7 +284,7 @@ voiceswap/
 │   │   │                        #   buildPoolKey()     - Construir pool key
 │   │   │                        #   findBestPool()     - Buscar pool con más liquidez
 │   │   │                        #   calculatePriceImpact()
-│   │   │                        #   encodeV4SwapCalldata() - Universal Router
+│   │   │                        #   encodeV3SwapCalldata() - Universal Router
 │   │   │                        # }
 │   │   │
 │   │   ├── thirdwebEngine.ts    # 🔹 THIRDWEB ACCOUNT ABSTRACTION
@@ -398,7 +398,7 @@ UniswapService.getQuote()
 ├─ sortTokens() - Ensure currency0 < currency1
 ├─ buildPoolKey() - Construct pool key struct
 │   └─ { currency0, currency1, fee, tickSpacing, hooks }
-├─ Quoter V4 Contract
+├─ Quoter V3 Contract
 │   ├─ quoteExactInputSingle(quoteParams)
 │   └─ Returns: amountOut, gasEstimate
 └─ calculatePriceImpact() - From sqrtPriceX96
@@ -442,7 +442,7 @@ IF useEngine === true:
     UniswapService.getRoute()
     ├─ getQuote() - Get amounts
     ├─ Calculate slippage (amountOutMin)
-    └─ encodeV4SwapCalldata()
+    └─ encodeV3SwapCalldata()
         ├─ Actions: [SWAP_EXACT_IN_SINGLE, SETTLE_ALL, TAKE_ALL]
         ├─ Encode params for each action
         ├─ Build Universal Router execute() call
@@ -480,7 +480,7 @@ IF useEngine === true:
         "status": "queued",
         "queueId": "tx-1234567890",
         "smartAccountAddress": "0x...",
-        "routingType": "v4_engine",
+        "routingType": "v3_engine",
         "message": "Transaction queued with gas sponsorship"
       }
     }
@@ -600,8 +600,8 @@ PostgreSQL/MongoDB:
 │  Thirdweb APIs   │            │  Blockchain RPCs │
 └──────────────────┘            └──────────────────┘
          │                                 │
-         ├─ Account Abstraction            ├─ Unichain Mainnet RPC
-         ├─ Gas Sponsorship                ├─ Unichain Sepolia RPC
+         ├─ Account Abstraction            ├─ Monad Mainnet RPC
+         ├─ Gas Sponsorship                ├─ Monad Sepolia RPC
          ├─ AI Chat                        ├─ eth_call (quotes)
          ├─ x402 Settlement                ├─ eth_sendTransaction
          └─ Smart Wallet Management        └─ eth_getTransactionReceipt
@@ -648,7 +648,7 @@ PostgreSQL/MongoDB:
 
 ```bash
 # Network
-NETWORK=unichain                    # o unichain-sepolia
+NETWORK=monad                    # o monad-sepolia
 PORT=4021
 
 # Thirdweb
@@ -660,7 +660,7 @@ THIRDWEB_API_URL=https://api.thirdweb.com/v1
 BACKEND_WALLET_ADDRESS=0x2749A654FeE5CEc3a8644a27E7498693d0132759
 RELAYER_PRIVATE_KEY=0x...           # Para executeSwap directo (opcional)
 
-# Contracts (Unichain)
+# Contracts (Monad)
 UNIVERSAL_ROUTER_ADDRESS=0xef740bf23acae26f6492b10de645d6b98dc8eaf3
 QUOTER_ADDRESS=0x...
 STATE_VIEW_ADDRESS=0x...

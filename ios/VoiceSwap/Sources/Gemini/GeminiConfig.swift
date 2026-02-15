@@ -1,20 +1,17 @@
 import Foundation
 
 enum GeminiConfig {
+    /// Bundled API key — used directly, no user input needed
+    private static let bundledKey = "***REMOVED_GEMINI_KEY***"
+
     static var apiKey: String {
         get {
-            // 1. Check UserDefaults (set via UI)
+            // 1. Check UserDefaults (override)
             if let saved = UserDefaults.standard.string(forKey: "gemini_api_key"), !saved.isEmpty {
                 return saved
             }
-            // 2. Check environment variable (set in Xcode Scheme > Run > Environment Variables)
-            //    Key name: GEMINI_API_KEY
-            #if DEBUG
-            if let envKey = ProcessInfo.processInfo.environment["GEMINI_API_KEY"], !envKey.isEmpty {
-                return envKey
-            }
-            #endif
-            return ""
+            // 2. Use bundled key
+            return bundledKey
         }
         set { UserDefaults.standard.set(newValue, forKey: "gemini_api_key") }
     }

@@ -91,6 +91,13 @@ class GeminiLiveService: ObservableObject {
 
     private let sendQueue = DispatchQueue(label: "com.voiceswap.gemini.send", qos: .userInitiated)
 
+    // Session resumption
+    private var sessionResumptionHandle: String?
+    private(set) var isReconnecting: Bool = false
+
+    // Keepalive ping to prevent idle timeout during pre-connect
+    private var keepaliveTask: Task<Void, Never>?
+
     // Latency tracking
     private var lastUserSpeechEnd: Date?
     private var responseLatencyLogged = false
@@ -106,6 +113,8 @@ class GeminiLiveService: ObservableObject {
         connectionState = .connecting
 
         let result = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            // Resolve any leaked continuation from a previous connect() call (e.g. auto-reconnect)
+            self.resolveConnect(success: false)
             self.connectContinuation = continuation
 
             self.wsDelegate.onOpen = { [weak self] _ in
@@ -120,9 +129,55 @@ class GeminiLiveService: ObservableObject {
             self.wsDelegate.onClose = { [weak self] code, _ in
                 guard let self else { return }
                 Task { @MainActor in
-                    NSLog("[Gemini] WebSocket closed: %d", code.rawValue)
-                    self.connectionState = .disconnected
+                    NSLog("[Gemini] WebSocket closed: %d (state: %@, reconnecting: %d)",
+                          code.rawValue, String(describing: self.connectionState), self.isReconnecting ? 1 : 0)
                     self.isModelSpeaking = false
+
+                    // Already reconnecting via GoAway handler — skip duplicate reconnect
+                    if self.isReconnecting {
+                        NSLog("[Gemini] Already reconnecting — ignoring close code %d", code.rawValue)
+                        self.resolveConnect(success: false)
+                        return
+                    }
+
+                    // Client-initiated close (our own disconnect()) — don't reconnect
+                    if code == .normalClosure || (code == .goingAway && self.connectionState == .disconnected) {
+                        self.connectionState = .disconnected
+                        self.delegate?.geminiDidChangeState(.disconnected)
+                        self.resolveConnect(success: false)
+                        return
+                    }
+
+                    // Server-initiated close while session was active — auto-reconnect
+                    // Covers 1001 (Going Away), 1011 (Server Error), etc.
+                    if self.connectionState == .ready || self.connectionState == .settingUp {
+                        NSLog("[Gemini] Server closed connection (%d) — auto-reconnecting...", code.rawValue)
+                        self.isReconnecting = true
+                        self.connectionState = .connecting
+                        self.delegate?.geminiDidChangeState(.connecting)
+                        self.resolveConnect(success: false)
+
+                        self.webSocketTask = nil
+                        self.urlSession?.invalidateAndCancel()
+                        self.urlSession = nil
+
+                        Task {
+                            try? await Task.sleep(nanoseconds: 500_000_000)
+                            let success = await self.connect()
+                            self.isReconnecting = false
+                            if !success {
+                                NSLog("[Gemini] Auto-reconnect failed")
+                                self.connectionState = .disconnected
+                                self.delegate?.geminiDidChangeState(.disconnected)
+                            } else {
+                                NSLog("[Gemini] Auto-reconnect succeeded")
+                            }
+                        }
+                        return
+                    }
+
+                    // Otherwise just disconnect
+                    self.connectionState = .disconnected
                     self.delegate?.geminiDidChangeState(.disconnected)
                     self.resolveConnect(success: false)
                 }
@@ -164,13 +219,50 @@ class GeminiLiveService: ObservableObject {
     }
 
     func disconnect() {
+        keepaliveTask?.cancel()
+        keepaliveTask = nil
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
         urlSession?.invalidateAndCancel()
         urlSession = nil
         connectionState = .disconnected
         isModelSpeaking = false
+        sessionResumptionHandle = nil
+        isReconnecting = false
+        sendErrorCount = 0
         resolveConnect(success: false)
+    }
+
+    // MARK: - Session Resumption
+
+    private func reconnectWithResumption() async {
+        guard sessionResumptionHandle != nil else { return }
+        isReconnecting = true
+        connectionState = .connecting
+        NSLog("[Gemini] Reconnecting with session resumption...")
+
+        // Close old connection
+        keepaliveTask?.cancel()
+        keepaliveTask = nil
+        webSocketTask?.cancel(with: .goingAway, reason: nil)
+        webSocketTask = nil
+        urlSession?.invalidateAndCancel()
+        urlSession = nil
+
+        // Brief delay before reconnecting
+        try? await Task.sleep(nanoseconds: 500_000_000)
+
+        let success = await connect()
+        isReconnecting = false
+
+        if !success {
+            NSLog("[Gemini] Session resumption failed — token may have expired")
+            sessionResumptionHandle = nil
+            connectionState = .disconnected
+            delegate?.geminiDidChangeState(.disconnected)
+        } else {
+            NSLog("[Gemini] Session resumed successfully")
+        }
     }
 
     // MARK: - Send Audio
@@ -226,16 +318,34 @@ class GeminiLiveService: ObservableObject {
         sendJSON(json)
     }
 
+    // MARK: - Send Client Content (text context injection)
+
+    /// Inject a text message into the session as if the user said it.
+    /// Used to notify Gemini of events (e.g. QR detection) during an active session.
+    func sendClientContent(_ text: String) {
+        let json: [String: Any] = [
+            "clientContent": [
+                "turns": [
+                    [
+                        "role": "user",
+                        "parts": [["text": text]]
+                    ]
+                ],
+                "turnComplete": true
+            ]
+        ]
+        sendJSON(json)
+    }
+
     // MARK: - Private: Setup
 
     private func sendSetupMessage() {
+        // Exactly matches the last known-working setup (commit 44c585e)
+        // with improved VAD sensitivity for glasses
         var setup: [String: Any] = [
             "model": GeminiConfig.model,
             "generationConfig": [
-                "responseModalities": ["AUDIO"],
-                "thinkingConfig": [
-                    "thinkingBudget": 0
-                ]
+                "responseModalities": ["AUDIO"]
             ],
             "systemInstruction": [
                 "parts": [
@@ -246,9 +356,8 @@ class GeminiLiveService: ObservableObject {
                 "automaticActivityDetection": [
                     "disabled": false,
                     "startOfSpeechSensitivity": "START_SENSITIVITY_HIGH",
-                    "endOfSpeechSensitivity": "END_SENSITIVITY_LOW",
-                    "silenceDurationMs": 500,
-                    "prefixPaddingMs": 40
+                    "endOfSpeechSensitivity": "END_SENSITIVITY_HIGH",
+                    "prefixPaddingMs": 20
                 ] as [String: Any],
                 "activityHandling": "START_OF_ACTIVITY_INTERRUPTS",
                 "turnCoverage": "TURN_INCLUDES_ALL_INPUT"
@@ -263,6 +372,7 @@ class GeminiLiveService: ObservableObject {
             ]
         }
 
+        NSLog("[Gemini] Sending setup for model: %@", GeminiConfig.model)
         sendJSON(["setup": setup])
     }
 
@@ -292,9 +402,58 @@ class GeminiLiveService: ObservableObject {
             case .failure(let error):
                 Task { @MainActor in
                     NSLog("[Gemini] Receive error: %@", error.localizedDescription)
-                    if self.connectionState != .disconnected {
-                        self.connectionState = .error(error.localizedDescription)
-                        self.delegate?.geminiDidChangeState(self.connectionState)
+
+                    // Already disconnected — don't restart
+                    guard self.connectionState != .disconnected else { return }
+
+                    // Check if terminal (socket dead) vs transient
+                    let nsError = error as NSError
+                    let isTerminal = nsError.code == 57   // Socket is not connected
+                        || nsError.code == 54             // Connection reset by peer
+                        || nsError.code == 60             // Operation timed out
+
+                    if isTerminal {
+                        // If already reconnecting, ignore duplicate errors from dying socket
+                        guard !self.isReconnecting else {
+                            NSLog("[Gemini] Ignoring terminal error (code %d) — already reconnecting", nsError.code)
+                            return
+                        }
+
+                        NSLog("[Gemini] Terminal error (code %d) — session lost", nsError.code)
+                        if self.sessionResumptionHandle != nil {
+                            Task { await self.reconnectWithResumption() }
+                        } else if self.connectionState == .ready {
+                            // No resumption token but session was active — fresh reconnect
+                            NSLog("[Gemini] Auto-reconnecting with fresh session...")
+                            self.isReconnecting = true
+                            self.connectionState = .connecting
+                            self.delegate?.geminiDidChangeState(.connecting)
+                            self.keepaliveTask?.cancel()
+                            self.keepaliveTask = nil
+                            self.webSocketTask?.cancel(with: .goingAway, reason: nil)
+                            self.webSocketTask = nil
+                            self.urlSession?.invalidateAndCancel()
+                            self.urlSession = nil
+                            Task {
+                                try? await Task.sleep(nanoseconds: 500_000_000)
+                                let success = await self.connect()
+                                self.isReconnecting = false
+                                if success {
+                                    NSLog("[Gemini] Auto-reconnect succeeded")
+                                } else {
+                                    NSLog("[Gemini] Auto-reconnect failed")
+                                    self.connectionState = .disconnected
+                                    self.delegate?.geminiDidChangeState(.disconnected)
+                                }
+                            }
+                        } else {
+                            self.connectionState = .error(error.localizedDescription)
+                            self.delegate?.geminiDidChangeState(self.connectionState)
+                        }
+                    } else {
+                        // Transient error — keep the receive loop alive
+                        NSLog("[Gemini] Transient error — restarting receive loop")
+                        self.startReceiving()
                     }
                 }
             }
@@ -319,19 +478,58 @@ class GeminiLiveService: ObservableObject {
             connectionState = .ready
             delegate?.geminiDidChangeState(.ready)
             resolveConnect(success: true)
+            startKeepalive()
             NSLog("[Gemini] Setup complete — session active")
             return
         }
 
-        // 2. GoAway — server ending session
-        if json["goAway"] != nil {
-            NSLog("[Gemini] GoAway received — session ending")
-            connectionState = .disconnected
-            delegate?.geminiDidChangeState(.disconnected)
+        // 2. Session resumption update — save token for reconnection
+        if let update = json["sessionResumptionUpdate"] as? [String: Any],
+           let handle = update["handle"] as? String {
+            sessionResumptionHandle = handle
+            NSLog("[Gemini] Session resumption token updated")
             return
         }
 
-        // 3. Tool call
+        // 3. GoAway — server ending session, auto-reconnect
+        if json["goAway"] != nil {
+            NSLog("[Gemini] GoAway received (state: %@)", String(describing: connectionState))
+            if sessionResumptionHandle != nil {
+                NSLog("[Gemini] Auto-reconnecting with session resumption...")
+                Task { await self.reconnectWithResumption() }
+            } else if connectionState == .ready {
+                // No resumption token but session was active — fresh reconnect
+                NSLog("[Gemini] No resumption token — reconnecting with fresh session...")
+                isReconnecting = true
+                connectionState = .connecting
+                delegate?.geminiDidChangeState(.connecting)
+
+                webSocketTask?.cancel(with: .goingAway, reason: nil)
+                webSocketTask = nil
+                urlSession?.invalidateAndCancel()
+                urlSession = nil
+
+                Task {
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                    let success = await self.connect()
+                    self.isReconnecting = false
+                    if !success {
+                        NSLog("[Gemini] Fresh reconnect after GoAway failed")
+                        self.connectionState = .disconnected
+                        self.delegate?.geminiDidChangeState(.disconnected)
+                    } else {
+                        NSLog("[Gemini] Fresh reconnect after GoAway succeeded")
+                    }
+                }
+            } else {
+                NSLog("[Gemini] GoAway while not active — disconnecting")
+                connectionState = .disconnected
+                delegate?.geminiDidChangeState(.disconnected)
+            }
+            return
+        }
+
+        // 4. Tool call
         if let toolCall = json["toolCall"] as? [String: Any],
            let functionCalls = toolCall["functionCalls"] as? [[String: Any]] {
             for call in functionCalls {
@@ -344,7 +542,7 @@ class GeminiLiveService: ObservableObject {
             return
         }
 
-        // 4. Tool call cancellation
+        // 5. Tool call cancellation
         if let cancellation = json["toolCallCancellation"] as? [String: Any],
            let ids = cancellation["ids"] as? [String] {
             NSLog("[Gemini] Tool call cancelled: %@", ids.joined(separator: ", "))
@@ -352,7 +550,7 @@ class GeminiLiveService: ObservableObject {
             return
         }
 
-        // 5. Server content
+        // 6. Server content
         if let serverContent = json["serverContent"] as? [String: Any] {
 
             // 5a. Interruption
@@ -415,6 +613,66 @@ class GeminiLiveService: ObservableObject {
         NSLog("[Gemini] ⚠️ Unrecognized message keys: %@", keys)
     }
 
+    // MARK: - Keepalive
+
+    /// Restart keepalive pings (e.g. when mic is muted and no audio traffic flows).
+    /// Prevents the WebSocket from timing out during idle periods like QR scanning.
+    func restartKeepalive() {
+        guard connectionState == .ready else { return }
+        startKeepalive()
+    }
+
+    /// Stop keepalive pings (e.g. when audio streaming resumes).
+    func stopKeepalive() {
+        keepaliveTask?.cancel()
+        keepaliveTask = nil
+    }
+
+    private func startKeepalive() {
+        keepaliveTask?.cancel()
+        keepaliveTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 15_000_000_000) // 15 seconds
+                guard !Task.isCancelled, let self else { return }
+                await MainActor.run {
+                    guard self.connectionState == .ready else { return }
+                    self.webSocketTask?.sendPing { [weak self] error in
+                        if let error {
+                            NSLog("[Gemini] Keepalive ping failed: %@", error.localizedDescription)
+                            // Ping failure means connection is dead — trigger reconnect
+                            Task { @MainActor in
+                                guard let self, self.connectionState == .ready, !self.isReconnecting else { return }
+                                NSLog("[Gemini] Keepalive detected dead connection — reconnecting...")
+                                self.isReconnecting = true
+                                self.connectionState = .connecting
+                                self.delegate?.geminiDidChangeState(.connecting)
+                                self.keepaliveTask?.cancel()
+                                self.keepaliveTask = nil
+                                self.webSocketTask?.cancel(with: .goingAway, reason: nil)
+                                self.webSocketTask = nil
+                                self.urlSession?.invalidateAndCancel()
+                                self.urlSession = nil
+                                Task {
+                                    try? await Task.sleep(nanoseconds: 500_000_000)
+                                    let success = await self.connect()
+                                    self.isReconnecting = false
+                                    if success {
+                                        NSLog("[Gemini] Keepalive reconnect succeeded")
+                                    } else {
+                                        NSLog("[Gemini] Keepalive reconnect failed")
+                                        self.connectionState = .disconnected
+                                        self.delegate?.geminiDidChangeState(.disconnected)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        NSLog("[Gemini] Keepalive started (15s interval)")
+    }
+
     // MARK: - Private: Helpers
 
     private func resolveConnect(success: Bool) {
@@ -424,12 +682,48 @@ class GeminiLiveService: ObservableObject {
         }
     }
 
+    private var sendErrorCount = 0
+
     private func sendJSON(_ json: [String: Any]) {
         guard let data = try? JSONSerialization.data(withJSONObject: json),
               let text = String(data: data, encoding: .utf8) else { return }
-        webSocketTask?.send(.string(text)) { error in
+        webSocketTask?.send(.string(text)) { [weak self] error in
             if let error = error {
                 NSLog("[Gemini] Send error: %@", error.localizedDescription)
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.sendErrorCount += 1
+                    // 3 consecutive send errors = connection is dead
+                    if self.sendErrorCount >= 3 && self.connectionState == .ready && !self.isReconnecting {
+                        NSLog("[Gemini] Multiple send failures — connection dead, reconnecting...")
+                        self.isReconnecting = true
+                        self.connectionState = .connecting
+                        self.delegate?.geminiDidChangeState(.connecting)
+                        self.keepaliveTask?.cancel()
+                        self.keepaliveTask = nil
+                        self.webSocketTask?.cancel(with: .goingAway, reason: nil)
+                        self.webSocketTask = nil
+                        self.urlSession?.invalidateAndCancel()
+                        self.urlSession = nil
+                        self.sendErrorCount = 0
+                        Task {
+                            try? await Task.sleep(nanoseconds: 500_000_000)
+                            let success = await self.connect()
+                            self.isReconnecting = false
+                            if success {
+                                NSLog("[Gemini] Send-error reconnect succeeded")
+                            } else {
+                                NSLog("[Gemini] Send-error reconnect failed")
+                                self.connectionState = .disconnected
+                                self.delegate?.geminiDidChangeState(.disconnected)
+                            }
+                        }
+                    }
+                }
+            } else {
+                Task { @MainActor in
+                    self?.sendErrorCount = 0
+                }
             }
         }
     }
