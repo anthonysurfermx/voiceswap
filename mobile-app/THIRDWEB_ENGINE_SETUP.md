@@ -211,7 +211,7 @@ cp .env.example .env
 Edita `.env`:
 ```env
 # Thirdweb
-THIRDWEB_API_SECRET_KEY=***REMOVED_THIRDWEB_SECRET***
+THIRDWEB_API_SECRET_KEY=YOUR_THIRDWEB_SECRET_KEY
 
 # Database (PostgreSQL required)
 DATABASE_URL=postgresql://user:password@localhost:5432/engine

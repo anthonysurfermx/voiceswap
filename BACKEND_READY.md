@@ -28,8 +28,8 @@ El backend de VoiceSwap está completamente configurado y listo para pruebas. Aq
 **Backend .env** configurado con:
 ```env
 NETWORK=monad
-THIRDWEB_SECRET_KEY=lR5bfHC... ✓
-THIRDWEB_CLIENT_ID=d180849f... ✓
+THIRDWEB_SECRET_KEY=YOUR_THIRDWEB_SECRET_KEY ✓
+THIRDWEB_CLIENT_ID=YOUR_THIRDWEB_CLIENT_ID ✓
 BACKEND_WALLET_ADDRESS=0x2749... ✓
 THIRDWEB_API_URL=https://api.thirdweb.com/v1 ✓
 UNIVERSAL_ROUTER_ADDRESS=0xef740bf... ✓

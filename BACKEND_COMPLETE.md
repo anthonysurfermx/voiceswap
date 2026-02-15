@@ -241,7 +241,7 @@ npm install -g @railway/cli
 railway login
 railway init
 railway variables set NETWORK=monad
-railway variables set THIRDWEB_SECRET_KEY=lR5bfHC...
+railway variables set THIRDWEB_SECRET_KEY=YOUR_THIRDWEB_SECRET_KEY
 railway variables set X402_STRICT_MODE=true
 railway variables set NODE_ENV=production
 railway up

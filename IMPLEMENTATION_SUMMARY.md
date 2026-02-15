@@ -109,8 +109,8 @@
 ## 🔑 **Credenciales Configuradas**
 
 ### Thirdweb
-- ✅ **Client ID**: `***REMOVED_THIRDWEB_CLIENT_ID***`
-- ✅ **Secret Key**: `lR5bfHC...` (configurado)
+- ✅ **Client ID**: `YOUR_THIRDWEB_CLIENT_ID`
+- ✅ **Secret Key**: `YOUR_THIRDWEB_SECRET_KEY` (configurado)
 - ⏳ **Engine URL**: Pendiente (crear en dashboard)
 - ⏳ **Engine Token**: Pendiente (crear en dashboard)
 

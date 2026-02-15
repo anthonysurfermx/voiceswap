@@ -148,8 +148,8 @@ railway init
 
 # Configurar variables de entorno
 railway variables set NETWORK=monad
-railway variables set THIRDWEB_SECRET_KEY=***REMOVED_THIRDWEB_SECRET***
-railway variables set THIRDWEB_CLIENT_ID=***REMOVED_THIRDWEB_CLIENT_ID***
+railway variables set THIRDWEB_SECRET_KEY=YOUR_THIRDWEB_SECRET_KEY
+railway variables set THIRDWEB_CLIENT_ID=YOUR_THIRDWEB_CLIENT_ID
 railway variables set BACKEND_WALLET_ADDRESS=0x2749A654FeE5CEc3a8644a27E7498693d0132759
 railway variables set THIRDWEB_API_URL=https://api.thirdweb.com/v1
 railway variables set UNIVERSAL_ROUTER_ADDRESS=0xef740bf23acae26f6492b10de645d6b98dc8eaf3
