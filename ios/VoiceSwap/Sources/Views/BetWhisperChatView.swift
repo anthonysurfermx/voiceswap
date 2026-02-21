@@ -7,6 +7,7 @@
  */
 
 import SwiftUI
+import Speech
 
 // MARK: - i18n
 
@@ -31,6 +32,7 @@ enum ChatAttachment {
     case betChoice(MarketItem)
     case betPrompt(String, String, String) // side, slug, signalHash
     case betConfirmed(BetRecord)
+    case contextInsight(String, [String]) // insight, keyStats
     case loading(String)
     case error(String)
 }
@@ -56,7 +58,13 @@ struct BetWhisperChatView: View {
     @State private var inputText: String = ""
     @State private var isLoading: Bool = false
     @State private var betAmountText: String = ""
+    @State private var aiGateEligible: Bool = false
     @FocusState private var inputFocused: Bool
+
+    // Voice input
+    @StateObject private var speechRecognizer = SpeechRecognizer()
+    private let tts = ChatSpeechSynthesizer()
+    @State private var ttsEnabled: Bool = true
 
     private let assistantName: String
     private let categories: [String]
@@ -98,7 +106,20 @@ struct BetWhisperChatView: View {
             }
         }
         .preferredColorScheme(.dark)
-        .onAppear { loadInitialMarkets() }
+        .onAppear {
+            loadInitialMarkets()
+            checkAIGateEligibility()
+            speechRecognizer.requestPermission()
+            speechRecognizer.onFinalTranscript = { text in
+                inputText = text
+                sendMessage()
+            }
+        }
+        .onChange(of: speechRecognizer.transcript) { _, newValue in
+            if speechRecognizer.isListening && !newValue.isEmpty {
+                inputText = newValue
+            }
+        }
     }
 
     // MARK: - Header
@@ -189,6 +210,8 @@ struct BetWhisperChatView: View {
             betPromptView(side: side, slug: slug, signalHash: signalHash)
         case .betConfirmed(let record):
             betConfirmedView(record)
+        case .contextInsight(let insight, let keyStats):
+            contextInsightView(insight, keyStats: keyStats)
         case .loading(let text):
             loadingView(text)
         case .error(let text):
@@ -399,34 +422,54 @@ struct BetWhisperChatView: View {
             .overlay(Rectangle().frame(height: 1).foregroundColor(.white.opacity(0.06)), alignment: .bottom)
 
             // Action buttons
-            HStack(spacing: 8) {
-                Button {
-                    handleExplainWithAI(analysis, market: market)
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 11))
-                        Text(loc("EXPLAIN WITH AI", "EXPLICAR CON IA"))
-                            .font(.system(size: 12, weight: .bold, design: .monospaced))
-                    }
-                    .foregroundColor(.black)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-                    .background(Rectangle().fill(Color.white))
-                }
-                .disabled(isLoading)
-
-                Button {
-                    handleAskAmount(market, analysis: analysis)
-                } label: {
-                    Text(loc("SKIP", "SALTAR"))
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.4))
+            VStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    Button {
+                        handleExplainWithAI(analysis, market: market)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 11))
+                            Text(loc("EXPLAIN WITH AI", "EXPLICAR CON IA"))
+                                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                        }
+                        .foregroundColor(.black)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
-                        .background(Rectangle().fill(Color.white.opacity(0.06)))
-                        .overlay(Rectangle().stroke(Color.white.opacity(0.1), lineWidth: 1))
+                        .background(Rectangle().fill(Color.white))
+                    }
+                    .disabled(isLoading)
+
+                    Button {
+                        handleAskAmount(market, analysis: analysis)
+                    } label: {
+                        Text(loc("SKIP", "SALTAR"))
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.4))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Rectangle().fill(Color.white.opacity(0.06)))
+                            .overlay(Rectangle().stroke(Color.white.opacity(0.1), lineWidth: 1))
+                    }
                 }
+
+                Button {
+                    handleFetchContext(market)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chart.bar.fill")
+                            .font(.system(size: 11))
+                        Text(loc("STATS", "ESTADISTICAS"))
+                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            .tracking(1)
+                    }
+                    .foregroundColor(Color(hex: "3B82F6"))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background(Rectangle().fill(Color(hex: "3B82F6").opacity(0.08)))
+                    .overlay(Rectangle().stroke(Color(hex: "3B82F6").opacity(0.3), lineWidth: 1))
+                }
+                .disabled(isLoading)
             }
             .padding(14)
         }
@@ -833,6 +876,49 @@ struct BetWhisperChatView: View {
         .overlay(Rectangle().stroke(emerald.opacity(0.2), lineWidth: 1))
     }
 
+    // MARK: - Context Insight
+
+    private func contextInsightView(_ insight: String, keyStats: [String]) -> some View {
+        let blue = Color(hex: "3B82F6")
+
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Image(systemName: "chart.bar.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(blue)
+                Text(loc("STATISTICAL CONTEXT", "CONTEXTO ESTADISTICO"))
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundColor(blue.opacity(0.7))
+                    .tracking(1.5)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .overlay(Rectangle().frame(height: 1).foregroundColor(.white.opacity(0.06)), alignment: .bottom)
+
+            Text(insight)
+                .font(.system(size: 13))
+                .foregroundColor(.white.opacity(0.8))
+                .padding(14)
+
+            if !keyStats.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(keyStats.enumerated()), id: \.offset) { _, stat in
+                        HStack(spacing: 6) {
+                            Circle().fill(blue).frame(width: 4, height: 4)
+                            Text(stat)
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.6))
+                        }
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 14)
+            }
+        }
+        .background(Rectangle().fill(blue.opacity(0.04)))
+        .overlay(Rectangle().stroke(blue.opacity(0.2), lineWidth: 1))
+    }
+
     // MARK: - Loading / Error
 
     private func loadingView(_ text: String) -> some View {
@@ -865,6 +951,20 @@ struct BetWhisperChatView: View {
 
     private var inputBar: some View {
         VStack(spacing: 0) {
+            // Voice listening indicator
+            if speechRecognizer.isListening {
+                HStack(spacing: 6) {
+                    PulsingDot(color: emerald)
+                    Text(loc("Listening...", "Escuchando..."))
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundColor(emerald)
+                        .tracking(0.5)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+                .background(emerald.opacity(0.08))
+            }
+
             Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
 
             HStack(spacing: 10) {
@@ -876,6 +976,21 @@ struct BetWhisperChatView: View {
                     .focused($inputFocused)
                     .onSubmit { sendMessage() }
 
+                // Mic button
+                Button {
+                    tts.stopSpeaking()
+                    speechRecognizer.toggle()
+                } label: {
+                    Image(systemName: speechRecognizer.isListening ? "mic.fill" : "mic")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(speechRecognizer.isListening ? .black : .white.opacity(0.4))
+                        .frame(width: 32, height: 32)
+                        .background(Rectangle().fill(
+                            speechRecognizer.isListening ? emerald : Color.white.opacity(0.06)))
+                }
+                .disabled(isLoading)
+
+                // Send button
                 Button { sendMessage() } label: {
                     Image(systemName: "arrow.up")
                         .font(.system(size: 13, weight: .bold))
@@ -951,11 +1066,22 @@ struct BetWhisperChatView: View {
         return String(format: "%.0f", n)
     }
 
+    // MARK: - TTS Helper
+
+    private func speakIfEnabled(_ text: String) {
+        guard ttsEnabled else { return }
+        tts.speak(text)
+    }
+
     // MARK: - Actions
 
     private func sendMessage() {
         let text = inputText.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty else { return }
+        // Stop listening if active (user submitted via keyboard while mic was on)
+        if speechRecognizer.isListening {
+            speechRecognizer.stopListening()
+        }
         messages.append(ChatMessage(role: .user, text: text))
         inputText = ""
         isLoading = true
@@ -990,12 +1116,24 @@ struct BetWhisperChatView: View {
             messages.removeAll { $0.id == loadingId }
             let allMarkets = response.events.flatMap { $0.markets ?? [] }
             if allMarkets.isEmpty {
-                messages.append(ChatMessage(role: .assistant, text: loc("No markets found for \"\(query)\".", "No encontre mercados para \"\(query)\".")))
+                let noResultText = loc("No markets found for \"\(query)\".", "No encontre mercados para \"\(query)\".")
+                messages.append(ChatMessage(role: .assistant, text: noResultText))
+                speakIfEnabled(noResultText)
             } else {
                 let display = Array(allMarkets.prefix(5))
-                var msg = ChatMessage(role: .assistant, text: loc("Found \(allMarkets.count) market\(allMarkets.count == 1 ? "" : "s"). Tap one to analyze.", "Encontre \(allMarkets.count) mercado\(allMarkets.count == 1 ? "" : "s"). Toca uno para analizar."))
+                let foundText = loc("Found \(allMarkets.count) market\(allMarkets.count == 1 ? "" : "s"). Tap one to analyze.", "Encontre \(allMarkets.count) mercado\(allMarkets.count == 1 ? "" : "s"). Toca uno para analizar.")
+                var msg = ChatMessage(role: .assistant, text: foundText)
                 msg.attachment = .markets(display)
                 messages.append(msg)
+                // TTS: read first market question + odds
+                if let first = display.first {
+                    let yPct = Int((first.yesPrice ?? 0.5) * 100)
+                    let ttsText = loc(
+                        "Found \(allMarkets.count) markets. First: \(first.question), \(yPct) percent yes.",
+                        "Encontre \(allMarkets.count) mercados. Primero: \(first.question), \(yPct) por ciento si."
+                    )
+                    speakIfEnabled(ttsText)
+                }
             }
         } catch {
             messages.removeAll { $0.id == loadingId }
@@ -1032,6 +1170,12 @@ struct BetWhisperChatView: View {
                 var msg = ChatMessage(role: .assistant, text: text)
                 msg.attachment = .deepAnalysis(analysis, market)
                 messages.append(msg)
+                // TTS: agent radar summary
+                let ttsText = loc(
+                    "Scanned \(analysis.holdersScanned) holders, \(analysis.agentRate) percent agent activity. Smart money says \(analysis.smartMoneyDirection).",
+                    "Escaneados \(analysis.holdersScanned) holders, \(analysis.agentRate) por ciento actividad de agentes. Smart money dice \(analysis.smartMoneyDirection)."
+                )
+                speakIfEnabled(ttsText)
             } catch {
                 messages.removeAll { $0.id == loadingId }
                 messages.append(ChatMessage(role: .assistant, text: "", attachment: .error(loc("Failed to analyze market.", "Error al analizar el mercado."))))
@@ -1048,9 +1192,35 @@ struct BetWhisperChatView: View {
         messages.append(msg)
     }
 
+    // MARK: - AI Gate
+
+    private func checkAIGateEligibility() {
+        let wallet = VoiceSwapWallet.shared.isCreated ? VoiceSwapWallet.shared.address : ""
+        guard !wallet.isEmpty else { return }
+        Task {
+            do {
+                let result = try await VoiceSwapAPIClient.shared.checkGroupEligibility(wallet: wallet)
+                await MainActor.run { aiGateEligible = result.eligible }
+            } catch {
+                print("[AIGate] Check failed: \(error)")
+            }
+        }
+    }
+
     // Step 2 → Step 3: Explain with AI
     private func handleExplainWithAI(_ analysis: DeepAnalysisResult, market: MarketItem) {
         guard !isLoading else { return }
+
+        // AI Gate: require group with 2+ members
+        if !aiGateEligible {
+            messages.append(ChatMessage(role: .assistant, text: "",
+                attachment: .error(loc(
+                    "To use \"Explain with AI\", create a group and invite at least 1 friend. Go to the Groups tab.",
+                    "Para usar \"Explicar con IA\", crea un grupo e invita al menos 1 amigo. Ve a la pestaña Grupos."
+                ))))
+            return
+        }
+
         messages.append(ChatMessage(role: .user, text: loc("Explain with AI", "Explicar con IA")))
         isLoading = true
 
@@ -1069,6 +1239,64 @@ struct BetWhisperChatView: View {
             } catch {
                 messages.removeAll { $0.id == loadingId }
                 messages.append(ChatMessage(role: .assistant, text: "", attachment: .error(loc("Failed to get AI explanation.", "Error al obtener explicacion de IA."))))
+            }
+            isLoading = false
+        }
+    }
+
+    // Stats: Fetch context from Anthropic
+    private func handleFetchContext(_ market: MarketItem) {
+        guard !isLoading else { return }
+        messages.append(ChatMessage(role: .user, text: loc("Stats", "Estadisticas")))
+        isLoading = true
+
+        Task {
+            let loadingMsg = ChatMessage(role: .assistant, text: "", attachment: .loading(loc("Fetching stats...", "Buscando estadisticas...")))
+            messages.append(loadingMsg)
+            let loadingId = loadingMsg.id
+
+            do {
+                let url = URL(string: "https://betwhisper.ai/api/market/context")!
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.setValue("ios", forHTTPHeaderField: "X-Platform")
+
+                let body: [String: Any] = [
+                    "marketTitle": market.question,
+                    "marketSlug": market.slug,
+                ]
+                request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+                let (data, _) = try await URLSession.shared.data(for: request)
+
+                struct ContextResponse: Decodable {
+                    let insight: String?
+                    let keyStats: [String]?
+                    let error: String?
+                }
+
+                let response = try JSONDecoder().decode(ContextResponse.self, from: data)
+
+                await MainActor.run {
+                    messages.removeAll { $0.id == loadingId }
+
+                    if let error = response.error {
+                        messages.append(ChatMessage(role: .assistant, text: "", attachment: .error(error)))
+                    } else {
+                        let insight = response.insight ?? loc("No context available.", "Sin contexto disponible.")
+                        let stats = response.keyStats ?? []
+                        var msg = ChatMessage(role: .assistant, text: "")
+                        msg.attachment = .contextInsight(insight, stats)
+                        messages.append(msg)
+                        speakIfEnabled(insight)
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    messages.removeAll { $0.id == loadingId }
+                    messages.append(ChatMessage(role: .assistant, text: "", attachment: .error(loc("Failed to fetch stats.", "Error al obtener estadisticas."))))
+                }
             }
             isLoading = false
         }
@@ -1214,9 +1442,17 @@ struct BetWhisperChatView: View {
                 timestamp: Int(Date().timeIntervalSince1970),
                 source: source, explorerUrl: explorerUrl, shares: shares, price: price, monadTxHash: monadTxHash
             )
-            var confirmMsg = ChatMessage(role: .assistant, text: loc("Bet confirmed on Polymarket.", "Apuesta confirmada en Polymarket."))
+            let confirmText = loc("Bet confirmed on Polymarket.", "Apuesta confirmada en Polymarket.")
+            var confirmMsg = ChatMessage(role: .assistant, text: confirmText)
             confirmMsg.attachment = .betConfirmed(record)
             messages.append(confirmMsg)
+            // TTS: bet confirmation
+            let priceStr = price != nil ? String(format: " at %.2f", price!) : ""
+            let ttsText = loc(
+                "Bet placed. \(amount) dollars on \(side)\(priceStr).",
+                "Apuesta confirmada. \(amount) dolares en \(side)\(priceStr)."
+            )
+            speakIfEnabled(ttsText)
             isLoading = false
         }
     }
@@ -1233,3 +1469,5 @@ struct BetWhisperChatView: View {
         return "0x" + String(weiUInt, radix: 16)
     }
 }
+
+// PulsingDot is defined in VoiceSwapMainView.swift and reused here
