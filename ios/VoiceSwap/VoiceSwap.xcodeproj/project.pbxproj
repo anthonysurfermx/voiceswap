@@ -28,6 +28,7 @@
 		BW0000050000000000000001 /* BetWhisperPortfolioView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BW0000060000000000000001 /* BetWhisperPortfolioView.swift */; };
 		BW0000070000000000000001 /* BetWhisperTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BW0000080000000000000001 /* BetWhisperTabView.swift */; };
 		BW0000090000000000000001 /* BetWhisperGroupsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BW00000A0000000000000001 /* BetWhisperGroupsView.swift */; };
+		WV0000010000000000000001 /* BetWhisperWalletView.swift in Sources */ = {isa = PBXBuildFile; fileRef = WV0000020000000000000001 /* BetWhisperWalletView.swift */; };
 		PC0000010000000000000001 /* ProbabilityCalculator.swift in Sources */ = {isa = PBXBuildFile; fileRef = PC0000020000000000000001 /* ProbabilityCalculator.swift */; };
 		B10000050000000000000001 /* secp256k1 in Frameworks */ = {isa = PBXBuildFile; productRef = B10000060000000000000001 /* secp256k1 */; };
 		A515AF1A2EED338A00AC5AD7 /* ReownAppKit in Frameworks */ = {isa = PBXBuildFile; productRef = A515AF192EED338A00AC5AD7 /* ReownAppKit */; };
@@ -67,6 +68,7 @@
 		BW0000060000000000000001 /* BetWhisperPortfolioView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetWhisperPortfolioView.swift; sourceTree = "<group>"; };
 		BW0000080000000000000001 /* BetWhisperTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetWhisperTabView.swift; sourceTree = "<group>"; };
 		BW00000A0000000000000001 /* BetWhisperGroupsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetWhisperGroupsView.swift; sourceTree = "<group>"; };
+		WV0000020000000000000001 /* BetWhisperWalletView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetWhisperWalletView.swift; sourceTree = "<group>"; };
 		PC0000020000000000000001 /* ProbabilityCalculator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProbabilityCalculator.swift; sourceTree = "<group>"; };
 		SR0000020000000000000001 /* SpeechRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechRecognizer.swift; sourceTree = "<group>"; };
 		CS0000020000000000000001 /* ChatSpeechSynthesizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSpeechSynthesizer.swift; sourceTree = "<group>"; };
@@ -156,6 +158,7 @@
 				BW0000060000000000000001 /* BetWhisperPortfolioView.swift */,
 				BW0000080000000000000001 /* BetWhisperTabView.swift */,
 				BW00000A0000000000000001 /* BetWhisperGroupsView.swift */,
+				WV0000020000000000000001 /* BetWhisperWalletView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -286,6 +289,7 @@
 				BW0000050000000000000001 /* BetWhisperPortfolioView.swift in Sources */,
 				BW0000070000000000000001 /* BetWhisperTabView.swift in Sources */,
 				BW0000090000000000000001 /* BetWhisperGroupsView.swift in Sources */,
+				WV0000010000000000000001 /* BetWhisperWalletView.swift in Sources */,
 				PC0000010000000000000001 /* ProbabilityCalculator.swift in Sources */,
 				SR0000010000000000000001 /* SpeechRecognizer.swift in Sources */,
 				CS0000010000000000000001 /* ChatSpeechSynthesizer.swift in Sources */,
