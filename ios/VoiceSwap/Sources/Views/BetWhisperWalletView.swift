@@ -195,7 +195,7 @@ struct BetWhisperWalletView: View {
                         get: { wallet.isBackedUpToiCloud },
                         set: { newValue in
                             if newValue {
-                                wallet.enableiCloudBackup()
+                                try? wallet.enableiCloudBackup()
                             }
                         }
                     ))
