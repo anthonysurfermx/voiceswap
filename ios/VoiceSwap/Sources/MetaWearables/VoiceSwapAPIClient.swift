@@ -454,7 +454,7 @@ public struct BetRecord: Decodable {
 }
 
 public struct ClobExecuteResult: Decodable {
-    public let success: Bool
+    public let success: Bool?
     public let source: String?
     public let orderID: String?
     public let txHash: String?

@@ -1176,7 +1176,7 @@ struct BetWhisperChatView: View {
                         marketSlug: slug,
                         monadTxHash: monadTxHash
                     )
-                    if result.success {
+                    if result.success == true {
                         finalTxHash = result.polygonTxHash ?? result.txHash ?? monadTxHash ?? ""
                         explorerUrl = result.explorerUrl
                         source = result.source ?? "polymarket"
@@ -1198,6 +1198,15 @@ struct BetWhisperChatView: View {
             }
 
             messages.removeAll { $0.id == loadingId }
+
+            // Record bet on backend
+            _ = try? await VoiceSwapAPIClient.shared.recordBet(
+                marketSlug: slug,
+                side: side,
+                amount: amount,
+                walletAddress: VoiceSwapWallet.shared.isCreated ? VoiceSwapWallet.shared.address : "demo",
+                txHash: finalTxHash
+            )
 
             // Step 3: Confirmed
             let record = BetRecord(
