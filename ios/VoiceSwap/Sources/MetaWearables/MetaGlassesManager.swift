@@ -363,33 +363,37 @@ public class MetaGlassesManager: NSObject, ObservableObject {
 
         super.init()
 
-        // Defer heavy initialization to not block app startup
-        Task { @MainActor in
-            // Initialize QR detector
-            self.qrDetector = CIDetector(
-                ofType: CIDetectorTypeQRCode,
-                context: nil,
-                options: [CIDetectorAccuracy: CIDetectorAccuracyHigh]
-            )
+        // Don't auto-initialize Meta SDK at app launch.
+        // SDK + device stream will start when user explicitly connects from Settings
+        // or when startGlassesSetup() is called.
+        print("[MetaGlasses] Created (SDK deferred until user connects from Settings)")
+    }
 
-            // Setup audio route change observer for Bluetooth detection
-            // (Re-enabled - confirmed audio was NOT blocking the Meta callback)
-            self.setupAudioRouteObserver()
+    // MARK: - Deferred Startup
 
-            // Initialize Meta Wearables SDK
-            self.initializeWearablesSDK()
+    private var isSDKInitialized = false
 
-            // Restore persisted flag, but do NOT trust it as source of truth.
-            // The SDK stream is authoritative and stale local flags can block re-registration.
-            if UserDefaults.standard.bool(forKey: "metaGlassesRegistered") {
-                self.connectionState = .searching
-                self.setupDeviceStream()
-                // NOTE: Don't call requestPermission(.camera) at startup - it fails without a connected device
-                // and tries to open Safari. Camera permission will be requested when devices are found.
-            }
+    /// Call this from Settings when user wants to connect glasses.
+    /// Initializes Meta SDK, QR detector, audio observer, and restores persisted state.
+    @MainActor
+    public func startGlassesSetup() {
+        guard !isSDKInitialized else { return }
+        isSDKInitialized = true
 
-            print("[MetaGlasses] Initialized (audio managed by Gemini AudioManager)")
+        self.qrDetector = CIDetector(
+            ofType: CIDetectorTypeQRCode,
+            context: nil,
+            options: [CIDetectorAccuracy: CIDetectorAccuracyHigh]
+        )
+        self.setupAudioRouteObserver()
+        self.initializeWearablesSDK()
+
+        if UserDefaults.standard.bool(forKey: "metaGlassesRegistered") {
+            self.connectionState = .searching
+            self.setupDeviceStream()
         }
+
+        print("[MetaGlasses] Initialized (audio managed by Gemini AudioManager)")
     }
 
     // MARK: - Meta Wearables SDK Setup
@@ -581,6 +585,8 @@ public class MetaGlassesManager: NSObject, ObservableObject {
 
     /// Connect to Meta Ray-Ban glasses (convenience method)
     public func connect() async {
+        // Ensure SDK is initialized before connecting
+        await startGlassesSetup()
         do {
             try await connectToGlasses()
         } catch {

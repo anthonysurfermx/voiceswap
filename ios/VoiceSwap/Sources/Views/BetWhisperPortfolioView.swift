@@ -55,11 +55,17 @@ struct MonCashout: Decodable {
 
 // MARK: - Portfolio View
 
+enum PortfolioTab: String, CaseIterable {
+    case positions = "Positions"
+    case history = "History"
+}
+
 struct BetWhisperPortfolioView: View {
     @ObservedObject private var walletManager = WalletConnectManager.shared
     @ObservedObject private var localWallet = VoiceSwapWallet.shared
     @ObservedObject private var security = SecuritySettings.shared
 
+    @State private var selectedTab: PortfolioTab = .positions
     @State private var positions: [PositionItem] = []
     @State private var totalValue: Double = 0
     @State private var totalPnl: Double = 0
@@ -68,6 +74,8 @@ struct BetWhisperPortfolioView: View {
     @State private var sellInProgress: Int? = nil
     @State private var sellResult: String? = nil
     @State private var errorMessage: String? = nil
+    @State private var orders: [OrderHistoryItem] = []
+    @State private var isLoadingHistory = false
 
     private var isConnected: Bool {
         walletManager.isConnected || localWallet.isCreated
@@ -94,7 +102,12 @@ struct BetWhisperPortfolioView: View {
                         if isConnected {
                             if isAuthenticated {
                                 balanceCard
-                                positionsSection
+                                tabPicker
+                                if selectedTab == .positions {
+                                    positionsSection
+                                } else {
+                                    historySection
+                                }
                             } else {
                                 authPrompt
                             }
@@ -108,7 +121,7 @@ struct BetWhisperPortfolioView: View {
                 }
             }
 
-            if isLoading {
+            if isLoading || isLoadingHistory {
                 Color.black.opacity(0.6).ignoresSafeArea()
                 ProgressView()
                     .tint(.white)
@@ -127,7 +140,10 @@ struct BetWhisperPortfolioView: View {
             let passed = await security.authenticateWithBiometrics()
             await MainActor.run {
                 isAuthenticated = passed
-                if passed { fetchPositions() }
+                if passed {
+                    fetchPositions()
+                    fetchHistory()
+                }
             }
         }
     }
@@ -189,6 +205,28 @@ struct BetWhisperPortfolioView: View {
                 await MainActor.run {
                     self.errorMessage = "Failed to load positions"
                     self.isLoading = false
+                }
+            }
+        }
+    }
+
+    // MARK: - Fetch History
+
+    private func fetchHistory() {
+        guard let addr = walletAddress else { return }
+        isLoadingHistory = true
+
+        Task {
+            do {
+                let response = try await VoiceSwapAPIClient.shared.getOrderHistory(wallet: addr)
+                await MainActor.run {
+                    self.orders = response.orders
+                    self.isLoadingHistory = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.orders = []
+                    self.isLoadingHistory = false
                 }
             }
         }
@@ -271,7 +309,11 @@ struct BetWhisperPortfolioView: View {
             Spacer()
             if isConnected && isAuthenticated {
                 Button {
-                    fetchPositions()
+                    if selectedTab == .positions {
+                        fetchPositions()
+                    } else {
+                        fetchHistory()
+                    }
                 } label: {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 14))
@@ -412,6 +454,174 @@ struct BetWhisperPortfolioView: View {
         .padding(12)
         .background(Rectangle().fill(Color.white.opacity(0.04)))
         .overlay(Rectangle().stroke(Color.white.opacity(0.08), lineWidth: 1))
+    }
+
+    // MARK: - Tab Picker
+
+    private var tabPicker: some View {
+        HStack(spacing: 0) {
+            ForEach(PortfolioTab.allCases, id: \.self) { tab in
+                Button {
+                    selectedTab = tab
+                } label: {
+                    Text(tab.rawValue.uppercased())
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .tracking(1.5)
+                        .foregroundColor(selectedTab == tab ? .white : .white.opacity(0.3))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(
+                            Rectangle().fill(selectedTab == tab ? Color.white.opacity(0.08) : Color.clear)
+                        )
+                        .overlay(
+                            Rectangle()
+                                .frame(height: selectedTab == tab ? 2 : 0)
+                                .foregroundColor(.white),
+                            alignment: .bottom
+                        )
+                }
+            }
+        }
+        .background(Rectangle().fill(Color.white.opacity(0.02)))
+        .overlay(Rectangle().stroke(Color.white.opacity(0.06), lineWidth: 1))
+    }
+
+    // MARK: - History Section
+
+    private var historySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("TRANSACTIONS")
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundColor(.white.opacity(0.25))
+                .tracking(1.5)
+                .padding(.top, 8)
+
+            if orders.isEmpty && !isLoadingHistory {
+                VStack(spacing: 8) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 24))
+                        .foregroundColor(.white.opacity(0.15))
+                    Text("No transactions yet")
+                        .font(.system(size: 14))
+                        .foregroundColor(.white.opacity(0.3))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 32)
+                .background(Rectangle().fill(Color.white.opacity(0.02)))
+                .overlay(Rectangle().stroke(Color.white.opacity(0.06), lineWidth: 1))
+            } else {
+                ForEach(orders) { order in
+                    orderRow(order)
+                }
+            }
+        }
+    }
+
+    private func orderRow(_ order: OrderHistoryItem) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Market + timestamp
+            HStack {
+                Text(order.marketSlug)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.white)
+                    .lineLimit(2)
+
+                Spacer()
+
+                Text(order.relativeTime)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.3))
+            }
+
+            // Side + amount + shares
+            HStack {
+                Text(order.side.uppercased())
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundColor(order.side == "Yes" ? Color(hex: "10B981") : Color(hex: "EF4444"))
+
+                Text("$\(String(format: "%.2f", order.amountUSD))")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.6))
+
+                Text("\(String(format: "%.1f", order.shares)) shares @ $\(String(format: "%.2f", order.fillPrice))")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.3))
+
+                Spacer()
+
+                // Status badge
+                statusBadge(order.status)
+            }
+
+            // MON paid
+            if let monPaid = order.monPaid {
+                Text("\(monPaid) MON")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundColor(Color(hex: "836EF9").opacity(0.8))
+            }
+
+            // Explorer links
+            HStack(spacing: 12) {
+                if let hash = order.monadTxHash {
+                    Link(destination: URL(string: "https://testnet.monadexplorer.com/tx/\(hash)")!) {
+                        HStack(spacing: 4) {
+                            Text("MON")
+                                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                .tracking(0.5)
+                            Image(systemName: "arrow.up.right.square")
+                                .font(.system(size: 9))
+                        }
+                        .foregroundColor(Color(hex: "836EF9"))
+                    }
+                }
+
+                if let hash = order.polygonTxHash {
+                    Link(destination: URL(string: "https://polygonscan.com/tx/\(hash)")!) {
+                        HStack(spacing: 4) {
+                            Text("POLY")
+                                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                .tracking(0.5)
+                            Image(systemName: "arrow.up.right.square")
+                                .font(.system(size: 9))
+                        }
+                        .foregroundColor(Color(hex: "7B3FE4"))
+                    }
+                }
+
+                Spacer()
+            }
+        }
+        .padding(12)
+        .background(Rectangle().fill(Color.white.opacity(0.04)))
+        .overlay(Rectangle().stroke(Color.white.opacity(0.08), lineWidth: 1))
+    }
+
+    private func statusBadge(_ status: String) -> some View {
+        let color: Color
+        let label: String
+
+        switch status {
+        case "success":
+            color = Color(hex: "10B981")
+            label = "SUCCESS"
+        case "pending":
+            color = Color(hex: "F59E0B")
+            label = "PENDING"
+        case "clob_failed":
+            color = Color(hex: "EF4444")
+            label = "FAILED"
+        default:
+            color = .white.opacity(0.3)
+            label = status.uppercased()
+        }
+
+        return Text(label)
+            .font(.system(size: 8, weight: .bold, design: .monospaced))
+            .tracking(0.5)
+            .foregroundColor(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .overlay(Rectangle().stroke(color.opacity(0.3), lineWidth: 1))
     }
 
     // MARK: - Auth Prompt

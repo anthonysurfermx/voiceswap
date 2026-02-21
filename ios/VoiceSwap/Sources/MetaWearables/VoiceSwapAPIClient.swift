@@ -469,6 +469,152 @@ public struct ClobExecuteResult: Decodable {
     public let error: String?
 }
 
+// MARK: - Order History (Transaction History)
+
+public struct OrderHistoryItem: Decodable, Identifiable {
+    public var id: Int
+    public let marketSlug: String
+    public let side: String
+    public let amountUSD: Double
+    public let shares: Double
+    public let fillPrice: Double
+    public let status: String
+    public let monadTxHash: String?
+    public let polygonTxHash: String?
+    public let monPaid: String?
+    public let monPriceUSD: Double?
+    public let errorMsg: String?
+    public let createdAt: String
+
+    public var monadTxShort: String? {
+        guard let hash = monadTxHash, hash.count > 12 else { return monadTxHash }
+        return "\(hash.prefix(8))...\(hash.suffix(4))"
+    }
+
+    public var polygonTxShort: String? {
+        guard let hash = polygonTxHash, hash.count > 12 else { return polygonTxHash }
+        return "\(hash.prefix(8))...\(hash.suffix(4))"
+    }
+
+    public var date: Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = formatter.date(from: createdAt) { return d }
+        // Try without fractional seconds
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: createdAt)
+    }
+
+    public var relativeTime: String {
+        guard let d = date else { return createdAt }
+        let interval = Date().timeIntervalSince(d)
+        if interval < 60 { return "just now" }
+        if interval < 3600 { return "\(Int(interval / 60))m ago" }
+        if interval < 86400 { return "\(Int(interval / 3600))h ago" }
+        return "\(Int(interval / 86400))d ago"
+    }
+}
+
+public struct OrderHistoryResponse: Decodable {
+    public let orders: [OrderHistoryItem]
+}
+
+// MARK: - Groups Models
+
+public struct GroupEligibility: Decodable {
+    public let eligible: Bool
+    public let group: GroupInfo?
+}
+
+public struct GroupInfo: Decodable, Identifiable {
+    public let id: String
+    public let name: String
+    public let mode: String
+    public let invite_code: String
+    public let creator_wallet: String
+    public let member_count: Int?
+    public let market_slug: String?
+    public let created_at: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, mode, invite_code, creator_wallet, member_count, market_slug, created_at
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        mode = try c.decode(String.self, forKey: .mode)
+        invite_code = try c.decode(String.self, forKey: .invite_code)
+        creator_wallet = try c.decode(String.self, forKey: .creator_wallet)
+        market_slug = try c.decodeIfPresent(String.self, forKey: .market_slug)
+        created_at = try c.decodeIfPresent(String.self, forKey: .created_at)
+        // member_count can come as Int or String from Postgres
+        if let intVal = try? c.decode(Int.self, forKey: .member_count) {
+            member_count = intVal
+        } else if let strVal = try? c.decode(String.self, forKey: .member_count), let parsed = Int(strVal) {
+            member_count = parsed
+        } else {
+            member_count = nil
+        }
+    }
+}
+
+public struct GroupMember: Decodable {
+    public let wallet_address: String
+    public let joined_at: String?
+}
+
+public struct GroupDetail: Decodable {
+    public let id: String
+    public let name: String
+    public let mode: String
+    public let invite_code: String
+    public let creator_wallet: String
+    public let member_count: Int?
+    public let members: [GroupMember]
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, mode, invite_code, creator_wallet, member_count, members
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        mode = try c.decode(String.self, forKey: .mode)
+        invite_code = try c.decode(String.self, forKey: .invite_code)
+        creator_wallet = try c.decode(String.self, forKey: .creator_wallet)
+        members = try c.decode([GroupMember].self, forKey: .members)
+        if let intVal = try? c.decode(Int.self, forKey: .member_count) {
+            member_count = intVal
+        } else if let strVal = try? c.decode(String.self, forKey: .member_count), let parsed = Int(strVal) {
+            member_count = parsed
+        } else {
+            member_count = nil
+        }
+    }
+}
+
+public struct JoinGroupResult: Decodable {
+    public let joined: Bool
+    public let group_id: String
+    public let group_name: String
+    public let member_count: Int
+}
+
+public struct LeaderboardEntry: Decodable {
+    public let wallet_address: String
+    public let total_pnl: String
+    public let bet_count: String
+}
+
+public struct GroupLeaderboard: Decodable {
+    public let group_name: String
+    public let mode: String
+    public let leaderboard: [LeaderboardEntry]
+}
+
 // MARK: - API Client
 
 public actor VoiceSwapAPIClient {
@@ -901,7 +1047,8 @@ public actor VoiceSwapAPIClient {
         amountUSD: Double,
         signalHash: String,
         marketSlug: String,
-        monadTxHash: String?
+        monadTxHash: String?,
+        monPriceUSD: Double? = nil
     ) async throws -> ClobExecuteResult {
         let url = URL(string: "\(betwhisperURL)/api/bet/execute")!
         var request = URLRequest(url: url)
@@ -918,9 +1065,108 @@ public actor VoiceSwapAPIClient {
         if let monadTx = monadTxHash {
             body["monadTxHash"] = monadTx
         }
+        if let price = monPriceUSD {
+            body["monPriceUSD"] = price
+        }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, _) = try await session.data(for: request)
         return try JSONDecoder().decode(ClobExecuteResult.self, from: data)
+    }
+
+    // MARK: - Groups API
+
+    /// Check AI Gate eligibility
+    public func checkGroupEligibility(wallet: String) async throws -> GroupEligibility {
+        let url = URL(string: "\(betwhisperURL)/api/groups/check?wallet=\(wallet.lowercased())")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (data, _) = try await session.data(for: request)
+        return try JSONDecoder().decode(GroupEligibility.self, from: data)
+    }
+
+    /// List groups for a wallet
+    public func listGroups(wallet: String) async throws -> [GroupInfo] {
+        let url = URL(string: "\(betwhisperURL)/api/groups?wallet=\(wallet.lowercased())")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (data, _) = try await session.data(for: request)
+        return try JSONDecoder().decode([GroupInfo].self, from: data)
+    }
+
+    /// Create a group
+    public func createGroup(name: String, mode: String, creatorWallet: String) async throws -> GroupInfo {
+        let url = URL(string: "\(betwhisperURL)/api/groups")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let body: [String: Any] = ["name": name, "mode": mode, "creator_wallet": creatorWallet.lowercased()]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, _) = try await session.data(for: request)
+        return try JSONDecoder().decode(GroupInfo.self, from: data)
+    }
+
+    /// Join a group by invite code
+    public func joinGroup(code: String, wallet: String) async throws -> JoinGroupResult {
+        let url = URL(string: "\(betwhisperURL)/api/groups/\(code)/join")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let body: [String: Any] = ["wallet_address": wallet.lowercased()]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        if http.statusCode == 409 {
+            throw APIError.serverError("Already a member")
+        }
+        if http.statusCode >= 400 {
+            if let err = try? JSONDecoder().decode([String: String].self, from: data), let msg = err["error"] {
+                throw APIError.serverError(msg)
+            }
+            throw APIError.httpError(http.statusCode)
+        }
+        return try JSONDecoder().decode(JoinGroupResult.self, from: data)
+    }
+
+    /// Get group detail by invite code
+    public func getGroupDetail(code: String) async throws -> GroupDetail {
+        let url = URL(string: "\(betwhisperURL)/api/groups/\(code)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (data, _) = try await session.data(for: request)
+        return try JSONDecoder().decode(GroupDetail.self, from: data)
+    }
+
+    /// Get group leaderboard
+    public func getGroupLeaderboard(code: String) async throws -> GroupLeaderboard {
+        let url = URL(string: "\(betwhisperURL)/api/groups/\(code)/leaderboard")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (data, _) = try await session.data(for: request)
+        return try JSONDecoder().decode(GroupLeaderboard.self, from: data)
+    }
+
+    // MARK: - Order History
+
+    /// Get user's order history (transaction history)
+    /// Uses X-Platform: ios header instead of JWT (Face ID gated on device)
+    public func getOrderHistory(wallet: String) async throws -> OrderHistoryResponse {
+        let url = URL(string: "\(betwhisperURL)/api/user/history?wallet=\(wallet.lowercased())")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("ios", forHTTPHeaderField: "X-Platform")
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        if http.statusCode >= 400 {
+            throw APIError.httpError(http.statusCode)
+        }
+        return try JSONDecoder().decode(OrderHistoryResponse.self, from: data)
     }
 
     // MARK: - Health Check

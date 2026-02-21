@@ -18,7 +18,7 @@ struct VoiceSwapApp: App {
 
     var body: some Scene {
         WindowGroup {
-            VoiceSwapMainView()
+            BetWhisperTabView()
                 .environmentObject(appState)
                 .onAppear {
                     setupApp()
@@ -54,32 +54,29 @@ struct VoiceSwapApp: App {
         // Restore VoiceSwap Wallet from Keychain (if previously created)
         VoiceSwapWallet.shared.restore()
 
-        // Request necessary permissions
-        requestPermissions()
-
         // Initialize WalletConnect
         WalletConnectManager.shared.initialize()
 
+        // Request only notification permissions on launch.
+        // Microphone and glasses permissions are deferred until the user
+        // explicitly activates voice or connects glasses from Settings.
+        requestNotificationPermission()
+
         // Configure app
-        print("[VoiceSwap] App started")
-        print("[VoiceSwap] Network: Monad Mainnet (Chain ID: 143)")
+        print("[BetWhisper] App started")
+        print("[BetWhisper] Network: Monad Mainnet (Chain ID: 143)")
         if VoiceSwapWallet.shared.isCreated {
-            print("[VoiceSwap] VoiceSwap Wallet: \(VoiceSwapWallet.shared.address)")
+            print("[BetWhisper] Wallet: \(VoiceSwapWallet.shared.address)")
         }
     }
 
-    private func requestPermissions() {
-        // Request microphone permission for Gemini Live audio streaming
-        AVAudioSession.sharedInstance().requestRecordPermission { granted in
-            print("[VoiceSwap] Microphone permission: \(granted)")
-        }
-
-        // Request notification permission for payment alerts
+    private func requestNotificationPermission() {
+        // Request notification permission for bet alerts
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             if let error = error {
-                print("[VoiceSwap] Notification permission error: \(error)")
+                print("[BetWhisper] Notification permission error: \(error)")
             } else if granted {
-                print("[VoiceSwap] Notifications authorized")
+                print("[BetWhisper] Notifications authorized")
             }
         }
     }

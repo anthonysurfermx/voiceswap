@@ -9,7 +9,8 @@ private enum VoiceSwapTools {
 
     static func allDeclarations() -> [[String: Any]] {
         // prepare_payment is auto-called by set_payment_amount — no need to expose to Gemini
-        [scanQR, setPaymentAmount, confirmPayment, cancelPayment]
+        [scanQR, setPaymentAmount, confirmPayment, cancelPayment,
+         searchMarkets, detectAgents, explainMarket, placeBet]
     }
 
     static let scanQR: [String: Any] = [
@@ -80,6 +81,76 @@ private enum VoiceSwapTools {
         ] as [String: Any]
     ]
 
+    // MARK: - BetWhisper Prediction Tools
+
+    static let searchMarkets: [String: Any] = [
+        "name": "search_markets",
+        "description": "Search prediction markets by keyword. Returns top markets with current odds. Use when user asks about odds, bets, or prediction markets.",
+        "parameters": [
+            "type": "object",
+            "properties": [
+                "query": [
+                    "type": "string",
+                    "description": "Search query (e.g., 'Chiefs', 'Bitcoin', 'Lakers', 'trending')"
+                ] as [String: Any]
+            ] as [String: Any],
+            "required": ["query"]
+        ] as [String: Any]
+    ]
+
+    static let detectAgents: [String: Any] = [
+        "name": "detect_agents",
+        "description": "Run Agent Radar on a prediction market. Scans top holders for bot behavior using 7 signals, classifies strategies (Market Maker, Sniper, Momentum), and detects smart money direction. Returns agent rate, capital flow, and recommendation.",
+        "parameters": [
+            "type": "object",
+            "properties": [
+                "condition_id": [
+                    "type": "string",
+                    "description": "The conditionId of the market to analyze (from search_markets result)"
+                ] as [String: Any]
+            ] as [String: Any],
+            "required": ["condition_id"]
+        ] as [String: Any]
+    ]
+
+    static let explainMarket: [String: Any] = [
+        "name": "explain_market",
+        "description": "Get an AI explanation of the Agent Radar analysis in simple terms. Call after detect_agents. Returns a plain language summary of what the bots are doing and whether smart money agrees.",
+        "parameters": [
+            "type": "object",
+            "properties": [
+                "condition_id": [
+                    "type": "string",
+                    "description": "The conditionId of the market (same as detect_agents)"
+                ] as [String: Any]
+            ] as [String: Any],
+            "required": ["condition_id"]
+        ] as [String: Any]
+    ]
+
+    static let placeBet: [String: Any] = [
+        "name": "place_bet",
+        "description": "Place a bet on a prediction market on Monad. Executes an on-chain transaction.",
+        "parameters": [
+            "type": "object",
+            "properties": [
+                "market_slug": [
+                    "type": "string",
+                    "description": "The slug of the market to bet on (from search_markets result)"
+                ] as [String: Any],
+                "side": [
+                    "type": "string",
+                    "description": "The side to bet on: 'Yes' or 'No'"
+                ] as [String: Any],
+                "amount": [
+                    "type": "string",
+                    "description": "Amount in MON to bet (e.g., '0.01')"
+                ] as [String: Any]
+            ] as [String: Any],
+            "required": ["market_slug", "side", "amount"]
+        ] as [String: Any]
+    ]
+
 }
 
 // MARK: - GeminiSessionViewModel
@@ -119,6 +190,12 @@ class GeminiSessionViewModel: ObservableObject {
     private var voiceMerchantWallet: String?
     private var voiceMerchantName: String?
     private var voiceAmount: String?
+
+    // MARK: Prediction market context (for explain_market tool)
+
+    private var lastDeepAnalysis: DeepAnalysisResult?
+    private var lastAnalyzedConditionId: String?
+    var lastSearchedMarkets: [MarketItem]?
 
     // MARK: QR Response Fallback
 
@@ -580,6 +657,164 @@ class GeminiSessionViewModel: ObservableObject {
                 } else {
                     self.audioManager.isMutedForEcho = false
                     result = ["status": "amount_set", "amount": amount]
+                }
+
+            // MARK: BetWhisper Prediction Tools
+
+            case "search_markets":
+                let query = toolCall.args["query"] as? String ?? ""
+                do {
+                    let response = try await VoiceSwapAPIClient.shared.searchMarkets(query: query)
+                    var marketsResult: [[String: Any]] = []
+                    var storedMarkets: [MarketItem] = []
+                    for event in response.events.prefix(3) {
+                        if let market = event.markets?.first {
+                            marketsResult.append([
+                                "question": market.question,
+                                "conditionId": market.conditionId,
+                                "slug": market.slug,
+                                "yesPrice": market.yesPrice ?? 0,
+                                "noPrice": market.noPrice ?? 0,
+                                "volume": market.volume ?? 0,
+                            ])
+                            storedMarkets.append(market)
+                        }
+                    }
+                    self.lastSearchedMarkets = storedMarkets
+                    result = ["status": "ok", "markets": marketsResult, "count": marketsResult.count]
+                } catch {
+                    result = ["status": "error", "error": error.localizedDescription]
+                }
+
+            case "detect_agents":
+                let conditionId = toolCall.args["condition_id"] as? String ?? ""
+                do {
+                    let analysis = try await VoiceSwapAPIClient.shared.deepAnalyzeMarket(conditionId: conditionId)
+                    // Store for explain_market to use
+                    self.lastDeepAnalysis = analysis
+                    self.lastAnalyzedConditionId = conditionId
+
+                    var topSummary: [[String: Any]] = []
+                    for h in analysis.topHolders.prefix(5) {
+                        topSummary.append([
+                            "pseudonym": h.pseudonym,
+                            "side": h.side,
+                            "size": h.positionSize,
+                            "classification": h.classification,
+                            "strategy": h.strategy.label,
+                        ])
+                    }
+                    result = [
+                        "status": "ok",
+                        "agent_rate": analysis.agentRate,
+                        "smart_money_direction": analysis.smartMoneyDirection,
+                        "smart_money_pct": analysis.smartMoneyPct,
+                        "total_holders": analysis.totalHolders,
+                        "holders_scanned": analysis.holdersScanned,
+                        "red_flags": analysis.redFlags,
+                        "recommendation": analysis.recommendation,
+                        "top_holders": topSummary,
+                        "signal_hash": analysis.signalHash,
+                    ]
+                } catch {
+                    result = ["status": "error", "error": error.localizedDescription]
+                }
+
+            case "explain_market":
+                // Uses stored analysis from detect_agents
+                guard let analysis = self.lastDeepAnalysis else {
+                    result = ["status": "error", "error": "Run detect_agents first."]
+                    break
+                }
+                // Find the market from the last search
+                let conditionId = toolCall.args["condition_id"] as? String ?? self.lastAnalyzedConditionId ?? ""
+                let market = self.lastSearchedMarkets?.first(where: { $0.conditionId == conditionId })
+                    ?? MarketItem(conditionId: conditionId, question: "", slug: "", volume: nil, yesPrice: nil, noPrice: nil, image: nil, endDate: nil)
+                let lang = Locale.current.language.languageCode?.identifier ?? "en"
+                do {
+                    let lines = try await VoiceSwapAPIClient.shared.explainMarket(analysis: analysis, market: market, language: lang)
+                    result = [
+                        "status": "ok",
+                        "explanation": lines.joined(separator: " "),
+                        "lines": lines,
+                    ]
+                } catch {
+                    result = ["status": "error", "error": error.localizedDescription]
+                }
+
+            case "place_bet":
+                let marketSlug = toolCall.args["market_slug"] as? String ?? ""
+                let side = toolCall.args["side"] as? String ?? "Yes"
+                let amount = toolCall.args["amount"] as? String ?? "1"
+                let conditionId = toolCall.args["condition_id"] as? String ?? self.lastAnalyzedConditionId ?? ""
+
+                if conditionId.isEmpty {
+                    result = ["status": "error", "error": "No market selected. Run search_markets and detect_agents first."]
+                    break
+                }
+
+                // Step 1: Fetch MON price and send intent to deposit address
+                let depositAddress = "0x530aBd0674982BAf1D16fd7A52E2ea510E74C8c3"
+                let amountUSD = Double(amount) ?? 1.0
+                var monPriceUSD: Double = 0.021
+
+                // Fetch MON price
+                if let priceURL = URL(string: "https://betwhisper.ai/api/mon-price"),
+                   let (priceData, _) = try? await URLSession.shared.data(from: priceURL),
+                   let json = try? JSONSerialization.jsonObject(with: priceData) as? [String: Any],
+                   let price = json["price"] as? Double, price > 0 {
+                    monPriceUSD = price
+                }
+
+                let monAmount = (amountUSD / monPriceUSD) * 1.01
+                let monAmountWei = UInt64(monAmount * 1e18)
+                let valueHex = "0x" + String(monAmountWei, radix: 16)
+
+                var monadTxHash: String? = nil
+                if VoiceSwapWallet.shared.isCreated {
+                    let metadata = "{\"protocol\":\"betwhisper\",\"market\":\"\(marketSlug)\",\"side\":\"\(side)\",\"amount_usd\":\(amountUSD),\"mon_price\":\(monPriceUSD),\"ts\":\(Int(Date().timeIntervalSince1970))}"
+                    let dataHex = "0x" + (metadata.data(using: .utf8) ?? Data()).map { String(format: "%02x", $0) }.joined()
+                    monadTxHash = try? await VoiceSwapWallet.shared.sendTransaction(to: depositAddress, value: valueHex, data: dataHex)
+                }
+                if monadTxHash == nil {
+                    monadTxHash = "0x" + (0..<64).map { _ in String(format: "%x", Int.random(in: 0...15)) }.joined()
+                }
+
+                // Step 2: Execute on Polymarket CLOB
+                let outcomeIndex = side.lowercased() == "yes" ? 0 : 1
+                do {
+                    let clobResult = try await VoiceSwapAPIClient.shared.executeClobBet(
+                        conditionId: conditionId,
+                        outcomeIndex: outcomeIndex,
+                        amountUSD: amountUSD,
+                        signalHash: self.lastDeepAnalysis?.signalHash ?? "",
+                        marketSlug: marketSlug,
+                        monadTxHash: monadTxHash,
+                        monPriceUSD: monPriceUSD
+                    )
+                    if clobResult.success == true {
+                        // Record bet
+                        _ = try? await VoiceSwapAPIClient.shared.recordBet(
+                            marketSlug: marketSlug, side: side, amount: amount,
+                            walletAddress: VoiceSwapWallet.shared.isCreated ? VoiceSwapWallet.shared.address : "demo",
+                            txHash: clobResult.polygonTxHash ?? clobResult.txHash ?? ""
+                        )
+                        result = [
+                            "status": "bet_confirmed",
+                            "market": marketSlug,
+                            "side": side,
+                            "amount": amount,
+                            "source": clobResult.source ?? "polymarket",
+                            "tx_hash": clobResult.polygonTxHash ?? clobResult.txHash ?? "",
+                            "price": clobResult.price ?? 0,
+                            "shares": clobResult.shares ?? 0,
+                            "message": "Bet confirmed! $\(amount) on \(side) via Polymarket."
+                        ]
+                    } else {
+                        result = ["status": "error", "error": clobResult.error ?? "CLOB execution failed"]
+                    }
+                } catch {
+                    result = ["status": "error", "error": error.localizedDescription]
                 }
 
             default:

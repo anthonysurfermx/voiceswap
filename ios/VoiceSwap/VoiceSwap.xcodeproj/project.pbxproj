@@ -23,6 +23,12 @@
 		1A0000160000000000000001 /* SecuritySettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00003C0000000000000002 /* SecuritySettings.swift */; };
 		B10000010000000000000001 /* VoiceSwapWallet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000020000000000000001 /* VoiceSwapWallet.swift */; };
 		B10000030000000000000001 /* WalletSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000040000000000000001 /* WalletSetupView.swift */; };
+		BW0000010000000000000001 /* BetWhisperOnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BW0000020000000000000001 /* BetWhisperOnboardingView.swift */; };
+		BW0000030000000000000001 /* BetWhisperChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BW0000040000000000000001 /* BetWhisperChatView.swift */; };
+		BW0000050000000000000001 /* BetWhisperPortfolioView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BW0000060000000000000001 /* BetWhisperPortfolioView.swift */; };
+		BW0000070000000000000001 /* BetWhisperTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BW0000080000000000000001 /* BetWhisperTabView.swift */; };
+		BW0000090000000000000001 /* BetWhisperGroupsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BW00000A0000000000000001 /* BetWhisperGroupsView.swift */; };
+		PC0000010000000000000001 /* ProbabilityCalculator.swift in Sources */ = {isa = PBXBuildFile; fileRef = PC0000020000000000000001 /* ProbabilityCalculator.swift */; };
 		B10000050000000000000001 /* secp256k1 in Frameworks */ = {isa = PBXBuildFile; productRef = B10000060000000000000001 /* secp256k1 */; };
 		A515AF1A2EED338A00AC5AD7 /* ReownAppKit in Frameworks */ = {isa = PBXBuildFile; productRef = A515AF192EED338A00AC5AD7 /* ReownAppKit */; };
 		A515AF1C2EED338A00AC5AD7 /* ReownAppKitUI in Frameworks */ = {isa = PBXBuildFile; productRef = A515AF1B2EED338A00AC5AD7 /* ReownAppKitUI */; };
@@ -32,6 +38,8 @@
 		A54F4D522EEDEAAE00B63C69 /* MWDATCamera in Frameworks */ = {isa = PBXBuildFile; productRef = A54F4D512EEDEAAE00B63C69 /* MWDATCamera */; };
 		A54F4D542EEDEAAE00B63C69 /* MWDATCore in Frameworks */ = {isa = PBXBuildFile; productRef = A54F4D532EEDEAAE00B63C69 /* MWDATCore */; };
 		A54F4D562EEDEAAE00B63C69 /* MWDATMockDevice in Frameworks */ = {isa = PBXBuildFile; productRef = A54F4D552EEDEAAE00B63C69 /* MWDATMockDevice */; };
+		SR0000010000000000000001 /* SpeechRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = SR0000020000000000000001 /* SpeechRecognizer.swift */; };
+		CS0000010000000000000001 /* ChatSpeechSynthesizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = CS0000020000000000000001 /* ChatSpeechSynthesizer.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -54,6 +62,14 @@
 		1A00003C0000000000000002 /* SecuritySettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecuritySettings.swift; sourceTree = "<group>"; };
 		B10000020000000000000001 /* VoiceSwapWallet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSwapWallet.swift; sourceTree = "<group>"; };
 		B10000040000000000000001 /* WalletSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletSetupView.swift; sourceTree = "<group>"; };
+		BW0000020000000000000001 /* BetWhisperOnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetWhisperOnboardingView.swift; sourceTree = "<group>"; };
+		BW0000040000000000000001 /* BetWhisperChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetWhisperChatView.swift; sourceTree = "<group>"; };
+		BW0000060000000000000001 /* BetWhisperPortfolioView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetWhisperPortfolioView.swift; sourceTree = "<group>"; };
+		BW0000080000000000000001 /* BetWhisperTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetWhisperTabView.swift; sourceTree = "<group>"; };
+		BW00000A0000000000000001 /* BetWhisperGroupsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetWhisperGroupsView.swift; sourceTree = "<group>"; };
+		PC0000020000000000000001 /* ProbabilityCalculator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProbabilityCalculator.swift; sourceTree = "<group>"; };
+		SR0000020000000000000001 /* SpeechRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechRecognizer.swift; sourceTree = "<group>"; };
+		CS0000020000000000000001 /* ChatSpeechSynthesizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSpeechSynthesizer.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -106,6 +122,9 @@
 			isa = PBXGroup;
 			children = (
 				1A0000020000000000000001 /* VoiceSwapApp.swift */,
+				PC0000020000000000000001 /* ProbabilityCalculator.swift */,
+				SR0000020000000000000001 /* SpeechRecognizer.swift */,
+				CS0000020000000000000001 /* ChatSpeechSynthesizer.swift */,
 				1A00003C0000000000000001 /* Gemini */,
 				1A0000340000000000000001 /* Views */,
 				1A0000350000000000000001 /* MetaWearables */,
@@ -132,6 +151,11 @@
 			children = (
 				1A0000040000000000000001 /* VoiceSwapMainView.swift */,
 				B10000040000000000000001 /* WalletSetupView.swift */,
+				BW0000020000000000000001 /* BetWhisperOnboardingView.swift */,
+				BW0000040000000000000001 /* BetWhisperChatView.swift */,
+				BW0000060000000000000001 /* BetWhisperPortfolioView.swift */,
+				BW0000080000000000000001 /* BetWhisperTabView.swift */,
+				BW00000A0000000000000001 /* BetWhisperGroupsView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -257,6 +281,14 @@
 				1A0000160000000000000001 /* SecuritySettings.swift in Sources */,
 				B10000010000000000000001 /* VoiceSwapWallet.swift in Sources */,
 				B10000030000000000000001 /* WalletSetupView.swift in Sources */,
+				BW0000010000000000000001 /* BetWhisperOnboardingView.swift in Sources */,
+				BW0000030000000000000001 /* BetWhisperChatView.swift in Sources */,
+				BW0000050000000000000001 /* BetWhisperPortfolioView.swift in Sources */,
+				BW0000070000000000000001 /* BetWhisperTabView.swift in Sources */,
+				BW0000090000000000000001 /* BetWhisperGroupsView.swift in Sources */,
+				PC0000010000000000000001 /* ProbabilityCalculator.swift in Sources */,
+				SR0000010000000000000001 /* SpeechRecognizer.swift in Sources */,
+				CS0000010000000000000001 /* ChatSpeechSynthesizer.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -395,7 +427,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = VoiceSwap;
+				INFOPLIST_KEY_CFBundleDisplayName = BetWhisper;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.finance";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "VoiceSwap needs Bluetooth to connect to your Meta Ray-Ban glasses.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "VoiceSwap needs camera access to scan merchant QR codes for payments.";
@@ -437,7 +469,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = VoiceSwap;
+				INFOPLIST_KEY_CFBundleDisplayName = BetWhisper;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.finance";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "VoiceSwap needs Bluetooth to connect to your Meta Ray-Ban glasses.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "VoiceSwap needs camera access to scan merchant QR codes for payments.";

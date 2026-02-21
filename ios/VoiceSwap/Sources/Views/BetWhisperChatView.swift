@@ -965,6 +965,22 @@ struct BetWhisperChatView: View {
                 .background(emerald.opacity(0.08))
             }
 
+            // Voice error indicator
+            if let voiceError = speechRecognizer.errorMessage {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 9))
+                        .foregroundColor(amber400)
+                    Text(voiceError)
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundColor(amber400)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+                .background(amber400.opacity(0.08))
+            }
+
             Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
 
             HStack(spacing: 10) {
@@ -979,7 +995,10 @@ struct BetWhisperChatView: View {
                 // Mic button
                 Button {
                     tts.stopSpeaking()
-                    speechRecognizer.toggle()
+                    // Small delay to let TTS audio session release
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        speechRecognizer.toggle()
+                    }
                 } label: {
                     Image(systemName: speechRecognizer.isListening ? "mic.fill" : "mic")
                         .font(.system(size: 15, weight: .medium))
@@ -1338,33 +1357,68 @@ struct BetWhisperChatView: View {
         messages.append(msg)
     }
 
+    // BetWhisper deposit address (server wallet that receives MON payments)
+    private let depositAddress = "0x530aBd0674982BAf1D16fd7A52E2ea510E74C8c3"
+
     // Place bet: 3-step flow (Monad Intent → CLOB Execution → Confirmed)
     private func handlePlaceBet(side: String, slug: String, signalHash: String, amount: String, conditionId: String = "") {
         messages.append(ChatMessage(role: .user, text: "$\(amount) on \(side)"))
         isLoading = true
 
         Task {
-            // Step 1: Register intent on Monad
-            var loadingMsg = ChatMessage(role: .assistant, text: "", attachment: .loading(loc("Registering intent on Monad...", "Registrando intento en Monad...")))
+            // Step 1: Fetch MON price and register intent on Monad
+            var loadingMsg = ChatMessage(role: .assistant, text: "", attachment: .loading(loc("Fetching MON price...", "Obteniendo precio MON...")))
             messages.append(loadingMsg)
             var loadingId = loadingMsg.id
 
-            var monadTxHash: String? = nil
-            if VoiceSwapWallet.shared.isCreated {
-                do {
-                    let metadata = "{\"protocol\":\"betwhisper\",\"market\":\"\(slug)\",\"side\":\"\(side)\",\"signal\":\"\(signalHash)\",\"ts\":\(Int(Date().timeIntervalSince1970))}"
-                    let dataHex = "0x" + (metadata.data(using: .utf8) ?? Data()).map { String(format: "%02x", $0) }.joined()
-                    let valueHex = monToWeiHex("0.001")
-                    let selfAddress = VoiceSwapWallet.shared.address
-                    monadTxHash = try await VoiceSwapWallet.shared.sendTransaction(to: selfAddress, value: valueHex, data: dataHex)
-                    print("[BetWhisper] Monad intent tx: \(monadTxHash ?? "")")
-                } catch {
-                    print("[BetWhisper] Monad intent failed: \(error)")
+            // Fetch current MON price
+            var monPriceUSD: Double = 0.021
+            do {
+                let url = URL(string: "https://betwhisper.ai/api/mon-price")!
+                let (data, _) = try await URLSession.shared.data(from: url)
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let price = json["price"] as? Double, price > 0 {
+                    monPriceUSD = price
                 }
+            } catch {
+                print("[BetWhisper] MON price fetch failed, using fallback: \(monPriceUSD)")
             }
-            if monadTxHash == nil {
-                try? await Task.sleep(nanoseconds: 800_000_000)
-                monadTxHash = "0x" + (0..<64).map { _ in String(format: "%x", Int.random(in: 0...15)) }.joined()
+
+            // Calculate MON amount: (USD / MON price) * 1.01 buffer
+            let amountUSD = Double(amount) ?? 1.0
+            let monAmount = (amountUSD / monPriceUSD) * 1.01
+            let monAmountStr = String(format: "%.6f", monAmount)
+
+            messages.removeAll { $0.id == loadingId }
+            loadingMsg = ChatMessage(role: .assistant, text: "", attachment: .loading(loc("Sending \(monAmountStr) MON on Monad...", "Enviando \(monAmountStr) MON en Monad...")))
+            messages.append(loadingMsg)
+            loadingId = loadingMsg.id
+
+            // Require wallet for real on-chain payment
+            guard VoiceSwapWallet.shared.isCreated else {
+                messages.removeAll { $0.id == loadingId }
+                messages.append(ChatMessage(role: .assistant, text: loc(
+                    "Wallet not created. Go to the Wallet tab to set up your wallet first.",
+                    "Wallet no creada. Ve a la tab Wallet para configurarla."
+                )))
+                return
+            }
+
+            var monadTxHash: String? = nil
+            do {
+                let metadata = "{\"protocol\":\"betwhisper\",\"market\":\"\(slug)\",\"side\":\"\(side)\",\"signal\":\"\(signalHash)\",\"amount_usd\":\(amountUSD),\"mon_price\":\(monPriceUSD),\"ts\":\(Int(Date().timeIntervalSince1970))}"
+                let dataHex = "0x" + (metadata.data(using: .utf8) ?? Data()).map { String(format: "%02x", $0) }.joined()
+                let valueHex = monToWeiHex(monAmountStr)
+                monadTxHash = try await VoiceSwapWallet.shared.sendTransaction(to: depositAddress, value: valueHex, data: dataHex)
+                print("[BetWhisper] Monad intent tx: \(monadTxHash ?? "") (\(monAmountStr) MON to deposit)")
+            } catch {
+                print("[BetWhisper] Monad intent failed: \(error)")
+                messages.removeAll { $0.id == loadingId }
+                messages.append(ChatMessage(role: .assistant, text: loc(
+                    "Transaction failed: \(error.localizedDescription). Check your MON balance in the Wallet tab.",
+                    "Transaccion fallida: \(error.localizedDescription). Revisa tu balance de MON en la tab Wallet."
+                )))
+                return
             }
             messages.removeAll { $0.id == loadingId }
 
@@ -1402,7 +1456,8 @@ struct BetWhisperChatView: View {
                         amountUSD: Double(amount) ?? 1.0,
                         signalHash: signalHash,
                         marketSlug: slug,
-                        monadTxHash: monadTxHash
+                        monadTxHash: monadTxHash,
+                        monPriceUSD: monPriceUSD
                     )
                     if result.success == true {
                         finalTxHash = result.polygonTxHash ?? result.txHash ?? monadTxHash ?? ""
