@@ -1,30 +1,6 @@
 <svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-  <!-- Background -->
-  <rect width="1024" height="1024" rx="224" fill="#0A0A0A"/>
-
-  <!-- Glasses frame - minimalist Ray-Ban style (Monad purple) -->
-  <g fill="none" stroke="#836EF9" stroke-width="28" stroke-linecap="round" stroke-linejoin="round">
-    <!-- Left lens -->
-    <rect x="180" y="420" width="280" height="200" rx="40"/>
-
-    <!-- Right lens -->
-    <rect x="564" y="420" width="280" height="200" rx="40"/>
-
-    <!-- Bridge -->
-    <path d="M460 520 L564 520"/>
-
-    <!-- Left temple arm -->
-    <path d="M180 480 L100 440"/>
-
-    <!-- Right temple arm -->
-    <path d="M844 480 L924 440"/>
-  </g>
-
-  <!-- $ signs reflected on lenses -->
-  <g fill="#A18FFF" opacity="0.6">
-    <!-- Left lens $ -->
-    <text x="320" y="565" font-family="'Helvetica Neue', Arial, sans-serif" font-weight="900" font-size="180" text-anchor="middle">$</text>
-    <!-- Right lens $ -->
-    <text x="704" y="565" font-family="'Helvetica Neue', Arial, sans-serif" font-weight="900" font-size="180" text-anchor="middle">$</text>
-  </g>
+  <rect width="1024" height="1024" rx="224" fill="#000000"/>
+  <rect x="16" y="16" width="992" height="992" rx="212" fill="none" stroke="#ffffff" stroke-width="3" opacity="0.12"/>
+  <text x="512" y="580" text-anchor="middle" font-family="'Helvetica Neue', 'SF Pro Display', system-ui, sans-serif" font-weight="800" font-size="340" fill="#ffffff">BW</text>
+  <rect x="342" y="624" width="340" height="8" rx="4" fill="#836EF9" opacity="0.82"/>
 </svg>
