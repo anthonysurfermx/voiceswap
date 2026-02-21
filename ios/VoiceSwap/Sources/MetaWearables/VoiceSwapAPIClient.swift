@@ -310,6 +310,165 @@ public struct TransactionStatusResponse: Decodable {
     public let message: String
 }
 
+// MARK: - BetWhisper Prediction Market Models
+
+public struct MarketEvent: Decodable {
+    public let title: String
+    public let slug: String
+    public let image: String?
+    public let volume: Double?
+    public let endDate: String?
+    public let markets: [MarketItem]?
+}
+
+public struct MarketItem: Decodable {
+    public let conditionId: String
+    public let question: String
+    public let slug: String
+    public let volume: Double?
+    public let yesPrice: Double?
+    public let noPrice: Double?
+    public let image: String?
+    public let endDate: String?
+}
+
+public struct MarketsResponse: Decodable {
+    public let events: [MarketEvent]
+    public let cached: Bool?
+}
+
+public struct SmartWalletPosition: Decodable {
+    public let pseudonym: String
+    public let score: Double
+    public let side: String
+    public let positionSize: Double
+    public let conviction: Double
+    public let weight: Double
+    public let isAgent: Bool
+}
+
+public struct MarketConsensus: Decodable {
+    public let direction: String
+    public let pct: Int
+    public let yesWeight: Int
+    public let noWeight: Int
+    public let count: Int
+}
+
+public struct AgentShieldInfo: Decodable {
+    public let agentCount: Int
+    public let humanCount: Int
+    public let warning: String?
+    public let riskLevel: String
+}
+
+public struct MarketAnalysis: Decodable {
+    public let smartWallets: [SmartWalletPosition]
+    public let consensus: MarketConsensus
+    public let agentShield: AgentShieldInfo
+    public let totalHolders: Int
+    public let trackedWalletCount: Int
+    public let signalHash: String
+}
+
+// MARK: - Deep Analysis Models (Agent Radar)
+
+public struct DeepAnalysisClassifications: Decodable {
+    public let bot: Int
+    public let likelyBot: Int
+    public let mixed: Int
+    public let human: Int
+}
+
+public struct OutcomeCapital: Decodable {
+    public let total: Double
+    public let agent: Double
+    public let human: Double
+}
+
+public struct CapitalByOutcome: Decodable {
+    public let Yes: OutcomeCapital
+    public let No: OutcomeCapital
+}
+
+public struct HolderStrategy: Decodable {
+    public let type: String
+    public let label: String
+    public let confidence: Double
+}
+
+public struct DominantStrategy: Decodable {
+    public let type: String
+    public let label: String
+    public let count: Int
+}
+
+public struct TopHolder: Decodable {
+    public let address: String
+    public let pseudonym: String
+    public let side: String
+    public let positionSize: Double
+    public let botScore: Int
+    public let classification: String
+    public let strategy: HolderStrategy
+}
+
+public struct DeepAnalysisResult: Decodable {
+    public let totalHolders: Int
+    public let holdersScanned: Int
+    public let agentRate: Int
+    public let classifications: DeepAnalysisClassifications
+    public let strategies: [String: Int]
+    public let dominantStrategy: DominantStrategy?
+    public let capitalByOutcome: CapitalByOutcome
+    public let topHolders: [TopHolder]
+    public let smartMoneyDirection: String
+    public let smartMoneyPct: Int
+    public let redFlags: [String]
+    public let recommendation: String
+    public let tags: [String]
+    public let signalHash: String
+}
+
+public struct ExplainFallbackResponse: Decodable {
+    public let fallback: [String]?
+}
+
+public struct BetConfirmation: Decodable {
+    public let success: Bool
+    public let bet: BetRecord?
+}
+
+public struct BetRecord: Decodable {
+    public let id: String?
+    public let marketSlug: String
+    public let side: String
+    public let amount: String
+    public let txHash: String
+    public let timestamp: Int?
+    public let source: String?
+    public let explorerUrl: String?
+    public let shares: Double?
+    public let price: Double?
+    public let monadTxHash: String?
+}
+
+public struct ClobExecuteResult: Decodable {
+    public let success: Bool
+    public let source: String?
+    public let orderID: String?
+    public let txHash: String?
+    public let polygonTxHash: String?
+    public let price: Double?
+    public let shares: Double?
+    public let amountUSD: Double?
+    public let explorerUrl: String?
+    public let monadTxHash: String?
+    public let marketSlug: String?
+    public let side: String?
+    public let error: String?
+}
+
 // MARK: - API Client
 
 public actor VoiceSwapAPIClient {
@@ -318,19 +477,22 @@ public actor VoiceSwapAPIClient {
     public static let shared = VoiceSwapAPIClient()
 
     // MARK: - Properties
-    private let baseURL: String
+    private let baseURL: String        // Payment/wallet API (Express server)
+    private let betwhisperURL: String  // Prediction market API (Next.js app)
     private let session: URLSession
 
     // MARK: - Initialization
 
     private init() {
-        // Use production API by default, or override with environment variable for local development
-        // To test locally: set VOICESWAP_API_URL environment variable (e.g., "http://192.168.1.X:4021")
+        // Payment API: Express server at voiceswap.vercel.app
         #if DEBUG
         self.baseURL = ProcessInfo.processInfo.environment["VOICESWAP_API_URL"] ?? "https://voiceswap.vercel.app"
         #else
         self.baseURL = "https://voiceswap.vercel.app"
         #endif
+
+        // Prediction market API: Next.js app at betwhisper.ai
+        self.betwhisperURL = "https://betwhisper.ai"
 
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
@@ -338,6 +500,7 @@ public actor VoiceSwapAPIClient {
         self.session = URLSession(configuration: config)
 
         print("[VoiceSwapAPI] Initialized with base URL: \(baseURL)")
+        print("[VoiceSwapAPI] BetWhisper API: \(betwhisperURL)")
     }
 
     // MARK: - AI Endpoints
@@ -580,6 +743,184 @@ public actor VoiceSwapAPIClient {
     /// Get user's payment history
     public func getUserPayments(address: String, limit: Int = 50, offset: Int = 0) async throws -> APIResponse<UserPaymentsResponse> {
         return try await get("/voiceswap/user/payments/\(address)?limit=\(limit)&offset=\(offset)")
+    }
+
+    // MARK: - BetWhisper Prediction Markets
+
+    /// Search prediction markets by query
+    public func searchMarkets(query: String, limit: Int = 5) async throws -> MarketsResponse {
+        let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        let url = URL(string: "\(betwhisperURL)/api/markets?q=\(encodedQuery)&limit=\(limit)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (data, _) = try await session.data(for: request)
+        return try JSONDecoder().decode(MarketsResponse.self, from: data)
+    }
+
+    /// Analyze a market for whale positions
+    public func analyzeMarket(conditionId: String) async throws -> MarketAnalysis {
+        let url = URL(string: "\(betwhisperURL)/api/market/analyze")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["conditionId": conditionId])
+        let (data, _) = try await session.data(for: request)
+        return try JSONDecoder().decode(MarketAnalysis.self, from: data)
+    }
+
+    /// Deep analyze a market with Agent Radar (bot detection, strategy classification)
+    public func deepAnalyzeMarket(conditionId: String) async throws -> DeepAnalysisResult {
+        let url = URL(string: "\(betwhisperURL)/api/market/deep-analyze")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 120 // deep analysis scans 15 holders, can take a while
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["conditionId": conditionId])
+        let (data, _) = try await session.data(for: request)
+        return try JSONDecoder().decode(DeepAnalysisResult.self, from: data)
+    }
+
+    /// Get AI explanation of market analysis (Claude Haiku)
+    /// Handles both SSE stream and JSON fallback responses
+    public func explainMarket(
+        analysis: DeepAnalysisResult,
+        market: MarketItem,
+        language: String
+    ) async throws -> [String] {
+        let url = URL(string: "\(betwhisperURL)/api/market/explain")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 30
+
+        // Build the request body matching the web's ExplainRequest interface
+        let analysisDict: [String: Any] = [
+            "totalHolders": analysis.totalHolders,
+            "holdersScanned": analysis.holdersScanned,
+            "agentRate": analysis.agentRate,
+            "classifications": [
+                "bot": analysis.classifications.bot,
+                "likelyBot": analysis.classifications.likelyBot,
+                "mixed": analysis.classifications.mixed,
+                "human": analysis.classifications.human,
+            ],
+            "strategies": analysis.strategies,
+            "capitalByOutcome": [
+                "Yes": ["total": analysis.capitalByOutcome.Yes.total, "agent": analysis.capitalByOutcome.Yes.agent, "human": analysis.capitalByOutcome.Yes.human],
+                "No": ["total": analysis.capitalByOutcome.No.total, "agent": analysis.capitalByOutcome.No.agent, "human": analysis.capitalByOutcome.No.human],
+            ],
+            "topHolders": analysis.topHolders.map { h in
+                [
+                    "address": h.address,
+                    "pseudonym": h.pseudonym,
+                    "side": h.side,
+                    "positionSize": h.positionSize,
+                    "classification": h.classification,
+                    "strategy": ["label": h.strategy.label, "confidence": h.strategy.confidence],
+                ] as [String: Any]
+            },
+            "smartMoneyDirection": analysis.smartMoneyDirection,
+            "smartMoneyPct": analysis.smartMoneyPct,
+            "redFlags": analysis.redFlags,
+            "signalHash": analysis.signalHash,
+        ]
+
+        let marketDict: [String: Any] = [
+            "question": market.question,
+            "yesPrice": market.yesPrice ?? 0,
+            "noPrice": market.noPrice ?? 0,
+            "volume": market.volume ?? 0,
+            "endDate": market.endDate ?? "",
+        ]
+
+        let body: [String: Any] = [
+            "analysis": analysisDict,
+            "market": marketDict,
+            "language": language,
+        ]
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await session.data(for: request)
+
+        let contentType = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type") ?? ""
+
+        if contentType.contains("text/event-stream") {
+            // Parse SSE: extract text from data: {"text": "..."} lines
+            guard let raw = String(data: data, encoding: .utf8) else { return ["> Analysis unavailable."] }
+            var fullText = ""
+            for line in raw.components(separatedBy: "\n") where line.hasPrefix("data: ") {
+                let payload = String(line.dropFirst(6))
+                if payload == "[DONE]" { break }
+                if let jsonData = payload.data(using: .utf8),
+                   let parsed = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                   let text = parsed["text"] as? String {
+                    fullText += text
+                }
+            }
+            return fullText.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        } else {
+            // JSON fallback
+            let decoded = try JSONDecoder().decode(ExplainFallbackResponse.self, from: data)
+            return decoded.fallback ?? ["> Analysis unavailable."]
+        }
+    }
+
+    /// Record a bet placement
+    public func recordBet(
+        marketSlug: String,
+        side: String,
+        amount: String,
+        walletAddress: String,
+        txHash: String
+    ) async throws -> BetConfirmation {
+        let url = URL(string: "\(betwhisperURL)/api/bet")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let body: [String: Any] = [
+            "marketSlug": marketSlug,
+            "side": side,
+            "amount": amount,
+            "walletAddress": walletAddress,
+            "txHash": txHash
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, _) = try await session.data(for: request)
+        return try JSONDecoder().decode(BetConfirmation.self, from: data)
+    }
+
+    /// Execute a real Polymarket CLOB bet via backend
+    public func executeClobBet(
+        conditionId: String,
+        outcomeIndex: Int,
+        amountUSD: Double,
+        signalHash: String,
+        marketSlug: String,
+        monadTxHash: String?
+    ) async throws -> ClobExecuteResult {
+        let url = URL(string: "\(betwhisperURL)/api/bet/execute")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        var body: [String: Any] = [
+            "conditionId": conditionId,
+            "outcomeIndex": outcomeIndex,
+            "amountUSD": amountUSD,
+            "signalHash": signalHash,
+            "marketSlug": marketSlug
+        ]
+        if let monadTx = monadTxHash {
+            body["monadTxHash"] = monadTx
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, _) = try await session.data(for: request)
+        return try JSONDecoder().decode(ClobExecuteResult.self, from: data)
     }
 
     // MARK: - Health Check
