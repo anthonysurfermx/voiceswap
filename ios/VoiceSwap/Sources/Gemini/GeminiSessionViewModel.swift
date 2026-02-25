@@ -84,13 +84,13 @@ private enum VoiceSwapTools {
 
     static let searchMarkets: [String: Any] = [
         "name": "search_markets",
-        "description": "Search prediction markets by keyword. Returns top markets with current odds. Use when user asks about odds, bets, or prediction markets.",
+        "description": "Search prediction markets by keyword. Returns top markets with current odds. Use when user asks about odds, bets, or prediction markets. IMPORTANT: Use specific team names from what you see in the camera or hear from the user. For game matchups, use 'TeamA vs TeamB' format (e.g., 'Celtics vs Suns'). For a single team, use the team name (e.g., 'Lakers'). The API supports daily game markets, futures, player props, spreads, and totals.",
         "parameters": [
             "type": "object",
             "properties": [
                 "query": [
                     "type": "string",
-                    "description": "Search query (e.g., 'Chiefs', 'Bitcoin', 'Lakers', 'trending')"
+                    "description": "Search query using team/player names. For games: 'Celtics vs Suns', 'Lakers vs Warriors'. For teams: 'Thunder', 'Real Madrid'. For topics: 'Bitcoin', 'Trump', 'trending'."
                 ] as [String: Any]
             ] as [String: Any],
             "required": ["query"]
@@ -820,12 +820,15 @@ class GeminiSessionViewModel: ObservableObject {
 
             case "search_markets":
                 let query = toolCall.args["query"] as? String ?? ""
+                NSLog("[Gemini] search_markets query: \"%@\"", query)
                 do {
                     let response = try await VoiceSwapAPIClient.shared.searchMarkets(query: query)
+                    NSLog("[Gemini] search_markets: %d events returned", response.events.count)
                     var marketsResult: [[String: Any]] = []
                     var storedMarkets: [MarketItem] = []
                     for event in response.events.prefix(3) {
                         if let market = event.markets?.first {
+                            NSLog("[Gemini] search_markets result: \"%@\" (slug: %@)", market.question, market.slug)
                             marketsResult.append([
                                 "question": market.question,
                                 "conditionId": market.conditionId,
@@ -840,6 +843,7 @@ class GeminiSessionViewModel: ObservableObject {
                     self.lastSearchedMarkets = storedMarkets
                     result = ["status": "ok", "markets": marketsResult, "count": marketsResult.count]
                 } catch {
+                    NSLog("[Gemini] search_markets error: %@", error.localizedDescription)
                     result = ["status": "error", "error": error.localizedDescription]
                 }
 
