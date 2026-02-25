@@ -1151,6 +1151,16 @@ public actor VoiceSwapAPIClient {
         return try JSONDecoder().decode(GroupLeaderboard.self, from: data)
     }
 
+    public func deleteGroup(code: String, wallet: String) async throws {
+        let url = URL(string: "\(betwhisperURL)/api/groups/\(code)?wallet=\(wallet.lowercased())")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode < 400 else {
+            throw APIError.httpError((response as? HTTPURLResponse)?.statusCode ?? 500)
+        }
+    }
+
     // MARK: - Order History
 
     /// Get user's order history (transaction history)

@@ -584,82 +584,15 @@ struct BetWhisperFundSheet: View {
 
     private var fundFormView: some View {
         VStack(spacing: 20) {
-            Text("Send MON from\n\(walletConnect.connectedWallet?.walletName ?? "external wallet")")
+            let walletName: String = walletConnect.connectedWallet?.walletName ?? "external wallet"
+            Text("Send MON from\n\(walletName)")
                 .font(.system(size: 14, weight: .medium))
                 .foregroundColor(.white.opacity(0.4))
                 .multilineTextAlignment(.center)
 
-            // Amount presets
-            VStack(spacing: 12) {
-                Text("SELECT AMOUNT")
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.25))
-                    .tracking(2)
+            fundAmountSection
 
-                HStack(spacing: 8) {
-                    ForEach(presets, id: \.self) { preset in
-                        Button {
-                            selectedAmount = preset
-                            isCustom = false
-                            customAmount = ""
-                            isAmountFocused = false
-                        } label: {
-                            Text("\(preset) MON")
-                                .font(.system(size: 12, weight: .bold, design: .monospaced))
-                                .foregroundColor(!isCustom && selectedAmount == preset ? .black : .white.opacity(0.5))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 10)
-                                .background(
-                                    Rectangle().fill(!isCustom && selectedAmount == preset
-                                        ? Color.white
-                                        : Color.white.opacity(0.06))
-                                )
-                                .overlay(
-                                    Rectangle().stroke(!isCustom && selectedAmount == preset
-                                        ? Color.clear
-                                        : Color.white.opacity(0.08), lineWidth: 1)
-                                )
-                        }
-                    }
-                }
-
-                // Custom amount
-                HStack(spacing: 8) {
-                    TextField("Custom", text: $customAmount)
-                        .font(.system(size: 14, weight: .bold, design: .monospaced))
-                        .foregroundColor(.white)
-                        .keyboardType(.decimalPad)
-                        .focused($isAmountFocused)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .background(Rectangle().fill(isCustom ? Color.white.opacity(0.1) : Color.white.opacity(0.04)))
-                        .overlay(Rectangle().stroke(isCustom ? Color.white.opacity(0.3) : Color.white.opacity(0.06), lineWidth: 1))
-                        .onChange(of: customAmount) { _, _ in
-                            if !customAmount.isEmpty { isCustom = true }
-                        }
-
-                    Text("MON")
-                        .font(.system(size: 12, weight: .bold, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.4))
-                }
-            }
-            .padding(.horizontal, 24)
-
-            // Destination
-            VStack(spacing: 4) {
-                Text("TO")
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.25))
-                    .tracking(2)
-                Text(String(walletAddress.prefix(8)) + "..." + String(walletAddress.suffix(6)))
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.6))
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity)
-            .background(Rectangle().fill(Color.white.opacity(0.04)))
-            .overlay(Rectangle().stroke(Color.white.opacity(0.06), lineWidth: 1))
-            .padding(.horizontal, 24)
+            fundDestinationSection
 
             if let error = error {
                 Text(error)
@@ -670,32 +603,106 @@ struct BetWhisperFundSheet: View {
 
             Spacer()
 
-            // Send button
-            Button {
-                sendFunds()
-            } label: {
-                HStack(spacing: 8) {
-                    if isFunding {
-                        ProgressView()
-                            .tint(.black)
-                            .scaleEffect(0.8)
-                    } else {
-                        Image(systemName: "paperplane.fill")
-                            .font(.system(size: 14, weight: .bold))
-                    }
-                    Text(isFunding ? "APPROVE IN WALLET..." : "SEND MON")
-                        .font(.system(size: 14, weight: .bold, design: .monospaced))
-                        .tracking(2)
-                }
-                .foregroundColor(.black)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-                .background(Rectangle().fill(isFunding ? Color.white.opacity(0.5) : Color.white))
-            }
-            .disabled(isFunding)
-            .padding(.horizontal, 24)
-            .padding(.bottom, 32)
+            fundSendButton
         }
+    }
+
+    private var fundAmountSection: some View {
+        VStack(spacing: 12) {
+            Text("SELECT AMOUNT")
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundColor(.white.opacity(0.25))
+                .tracking(2)
+
+            HStack(spacing: 8) {
+                ForEach(presets, id: \.self) { preset in
+                    let isActive = !isCustom && selectedAmount == preset
+                    Button {
+                        selectedAmount = preset
+                        isCustom = false
+                        customAmount = ""
+                        isAmountFocused = false
+                    } label: {
+                        Text("\(preset) MON")
+                            .font(.system(size: 12, weight: .bold, design: .monospaced))
+                            .foregroundColor(isActive ? .black : .white.opacity(0.5))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 10)
+                            .background(Rectangle().fill(isActive ? Color.white : Color.white.opacity(0.06)))
+                            .overlay(Rectangle().stroke(isActive ? Color.clear : Color.white.opacity(0.08), lineWidth: 1))
+                    }
+                }
+            }
+
+            HStack(spacing: 8) {
+                let customBg: Color = isCustom ? Color.white.opacity(0.1) : Color.white.opacity(0.04)
+                let customBorder: Color = isCustom ? Color.white.opacity(0.3) : Color.white.opacity(0.06)
+                TextField("Custom", text: $customAmount)
+                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                    .foregroundColor(.white)
+                    .keyboardType(.decimalPad)
+                    .focused($isAmountFocused)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Rectangle().fill(customBg))
+                    .overlay(Rectangle().stroke(customBorder, lineWidth: 1))
+                    .onChange(of: customAmount) { _, _ in
+                        if !customAmount.isEmpty { isCustom = true }
+                    }
+
+                Text("MON")
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.4))
+            }
+        }
+        .padding(.horizontal, 24)
+    }
+
+    private var fundDestinationSection: some View {
+        let shortAddr = String(walletAddress.prefix(8)) + "..." + String(walletAddress.suffix(6))
+        return VStack(spacing: 4) {
+            Text("TO")
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundColor(.white.opacity(0.25))
+                .tracking(2)
+            Text(shortAddr)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundColor(.white.opacity(0.6))
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity)
+        .background(Rectangle().fill(Color.white.opacity(0.04)))
+        .overlay(Rectangle().stroke(Color.white.opacity(0.06), lineWidth: 1))
+        .padding(.horizontal, 24)
+    }
+
+    private var fundSendButton: some View {
+        let buttonBg: Color = isFunding ? Color.white.opacity(0.5) : Color.white
+        let buttonText: String = isFunding ? "APPROVE IN WALLET..." : "SEND MON"
+        return Button {
+            sendFunds()
+        } label: {
+            HStack(spacing: 8) {
+                if isFunding {
+                    ProgressView()
+                        .tint(.black)
+                        .scaleEffect(0.8)
+                } else {
+                    Image(systemName: "paperplane.fill")
+                        .font(.system(size: 14, weight: .bold))
+                }
+                Text(buttonText)
+                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                    .tracking(2)
+            }
+            .foregroundColor(.black)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 16)
+            .background(Rectangle().fill(buttonBg))
+        }
+        .disabled(isFunding)
+        .padding(.horizontal, 24)
+        .padding(.bottom, 32)
     }
 
     // MARK: - Send Funds

@@ -8,9 +8,8 @@ import AVFoundation
 private enum VoiceSwapTools {
 
     static func allDeclarations() -> [[String: Any]] {
-        // prepare_payment is auto-called by set_payment_amount — no need to expose to Gemini
-        [scanQR, setPaymentAmount, confirmPayment, cancelPayment,
-         searchMarkets, detectAgents, explainMarket, placeBet]
+        // BetWhisper mode: prediction market tools only (no payment/QR tools)
+        [searchMarkets, detectAgents, explainMarket, placeBet, confirmBet]
     }
 
     static let scanQR: [String: Any] = [
@@ -130,7 +129,7 @@ private enum VoiceSwapTools {
 
     static let placeBet: [String: Any] = [
         "name": "place_bet",
-        "description": "Place a bet on a prediction market on Monad. Executes an on-chain transaction.",
+        "description": "Prepare a bet on a prediction market. Does NOT execute yet — returns details for user confirmation. You MUST ask the user to confirm before calling confirm_bet.",
         "parameters": [
             "type": "object",
             "properties": [
@@ -144,13 +143,57 @@ private enum VoiceSwapTools {
                 ] as [String: Any],
                 "amount": [
                     "type": "string",
-                    "description": "Amount in MON to bet (e.g., '0.01')"
+                    "description": "Amount in USD to bet (e.g., '1')"
                 ] as [String: Any]
             ] as [String: Any],
             "required": ["market_slug", "side", "amount"]
         ] as [String: Any]
     ]
 
+    static let confirmBet: [String: Any] = [
+        "name": "confirm_bet",
+        "description": "Execute the previously prepared bet AFTER the user has explicitly confirmed. Only call this when the user says 'yes', 'confirm', 'do it', 'dale', or similar explicit confirmation.",
+        "parameters": [
+            "type": "object",
+            "properties": [:] as [String: Any],
+            "required": [] as [String]
+        ] as [String: Any]
+    ]
+
+}
+
+// MARK: - Transcript Event
+
+struct TranscriptEvent: Equatable {
+    let id = UUID()
+    let role: String   // "user" or "assistant"
+    let text: String
+
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }
+}
+
+// MARK: - Pending Bet (confirmation gate)
+
+struct PendingBet {
+    let marketSlug: String
+    let side: String
+    let amountUSD: Double
+    let conditionId: String
+    let monPriceUSD: Double
+    let monAmount: Double
+}
+
+// MARK: - Bet Result Event (for chat display)
+
+struct BetResultEvent: Equatable {
+    let id = UUID()
+    let market: String
+    let side: String
+    let amountUSD: String
+    let txHash: String
+    let success: Bool
+
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }
 }
 
 // MARK: - GeminiSessionViewModel
@@ -165,8 +208,21 @@ class GeminiSessionViewModel: ObservableObject {
     @Published private(set) var isAISpeaking: Bool = false
     @Published private(set) var sessionError: String?
 
+    /// Fires when a complete transcript is ready (debounced from incremental chunks)
+    @Published private(set) var latestTranscript: TranscriptEvent?
+
+    /// Fires when a bet is executed (for chat display)
+    @Published private(set) var latestBetResult: BetResultEvent?
+
     /// True when user explicitly started voice session (vs just pre-connected)
     private var userStartedSession: Bool = false
+
+    // MARK: Transcript Accumulation
+
+    private var userTranscriptBuffer: String = ""
+    private var assistantTranscriptBuffer: String = ""
+    private var userTranscriptDebounce: Task<Void, Never>?
+    private var assistantTranscriptDebounce: Task<Void, Never>?
 
     // MARK: Services
 
@@ -197,10 +253,21 @@ class GeminiSessionViewModel: ObservableObject {
     private var lastAnalyzedConditionId: String?
     var lastSearchedMarkets: [MarketItem]?
 
+    // MARK: Bet confirmation gate
+
+    private var pendingBet: PendingBet?
+
     // MARK: QR Response Fallback
 
     private var qrResponseFallbackTask: Task<Void, Never>?
     private var fallbackSynthesizer: AVSpeechSynthesizer?
+
+    // MARK: Video Frame Throttle (glasses camera → Gemini)
+
+    private var lastVideoFrameTime: Date = .distantPast
+    private var videoFrameCount: Int = 0
+    /// After initial context captured, slow down video to avoid flooding WebSocket
+    private var videoSlowMode: Bool = false
 
     // MARK: Error Management
 
@@ -229,6 +296,33 @@ class GeminiSessionViewModel: ObservableObject {
             .assign(to: &$isAISpeaking)
     }
 
+    // MARK: - Video Frames (glasses camera → Gemini vision)
+
+    /// Called by MetaGlassesManager.onVideoFrame for every camera frame.
+    /// Throttles to ~1fps and sends JPEG to Gemini for visual context.
+    func handleVideoFrame(_ image: UIImage) {
+        guard isSessionActive, geminiService.connectionState == .ready else { return }
+
+        // Pause video while AI is speaking or processing a tool call — reduces WebSocket load
+        guard !geminiService.isModelSpeaking, inFlightTasks.isEmpty else { return }
+
+        // After initial context (10 frames), slow to 1 frame/5s to prioritize audio
+        let interval: TimeInterval = videoSlowMode ? 5.0 : 1.0
+        let now = Date()
+        guard now.timeIntervalSince(lastVideoFrameTime) >= interval else { return }
+        lastVideoFrameTime = now
+
+        // Convert to JPEG at 50% quality
+        guard let jpegData = image.jpegData(compressionQuality: 0.5) else { return }
+        geminiService.sendVideoFrame(jpegData: jpegData)
+
+        videoFrameCount += 1
+        if videoFrameCount >= 10 && !videoSlowMode {
+            videoSlowMode = true
+            NSLog("[GeminiSession] Video slow mode: 1 frame/5s (initial context captured)")
+        }
+    }
+
     // MARK: - Session Lifecycle
 
     /// Pre-establish WebSocket so voice activation is instant.
@@ -240,9 +334,12 @@ class GeminiSessionViewModel: ObservableObject {
 
         NSLog("[GeminiSession] Pre-connecting to Gemini...")
 
+        // BetWhisper: use VoiceSwapWallet directly (no paymentViewModel dependency)
+        let walletAddr = VoiceSwapWallet.shared.isCreated ? VoiceSwapWallet.shared.address : paymentViewModel?.walletAddress
+        let walletBal = paymentViewModel?.walletBalance
         geminiService.systemPrompt = VoiceSwapSystemPrompt.build(
-            walletAddress: paymentViewModel?.walletAddress,
-            balance: paymentViewModel?.walletBalance
+            walletAddress: walletAddr,
+            balance: walletBal
         )
         geminiService.toolDeclarations = VoiceSwapTools.allDeclarations()
 
@@ -265,6 +362,8 @@ class GeminiSessionViewModel: ObservableObject {
         sessionError = nil
         audioManager.audioMode = audioMode
         userStartedSession = true
+        videoFrameCount = 0
+        videoSlowMode = false
 
         // If already pre-connected, just start audio capture instantly
         if geminiService.connectionState == .ready {
@@ -279,10 +378,12 @@ class GeminiSessionViewModel: ObservableObject {
             return
         }
 
-        // Full connect flow
+        // Full connect flow — BetWhisper: use VoiceSwapWallet directly
+        let walletAddr = VoiceSwapWallet.shared.isCreated ? VoiceSwapWallet.shared.address : paymentViewModel?.walletAddress
+        let walletBal = paymentViewModel?.walletBalance
         geminiService.systemPrompt = VoiceSwapSystemPrompt.build(
-            walletAddress: paymentViewModel?.walletAddress,
-            balance: paymentViewModel?.walletBalance
+            walletAddress: walletAddr,
+            balance: walletBal
         )
         geminiService.toolDeclarations = VoiceSwapTools.allDeclarations()
 
@@ -315,6 +416,15 @@ class GeminiSessionViewModel: ObservableObject {
         voiceMerchantWallet = nil
         voiceMerchantName = nil
         voiceAmount = nil
+
+        // Clear transcript buffers
+        userTranscriptDebounce?.cancel()
+        assistantTranscriptDebounce?.cancel()
+        userTranscriptBuffer = ""
+        assistantTranscriptBuffer = ""
+
+        // Clear pending bet
+        pendingBet = nil
 
         audioManager.cleanup()
         geminiService.disconnect()
@@ -412,18 +522,21 @@ class GeminiSessionViewModel: ObservableObject {
     // MARK: - Private: Tool Call Dispatch
 
     private func handleToolCall(_ toolCall: GeminiToolCall) {
-        guard let vm = paymentViewModel else {
+        // Payment tools require paymentViewModel; prediction tools do not
+        let paymentTools = ["scan_qr", "prepare_payment", "confirm_payment", "cancel_payment", "set_payment_amount"]
+        let vm = paymentViewModel
+        if paymentTools.contains(toolCall.name) && vm == nil {
             geminiService.sendToolResponse(
                 callId: toolCall.id,
                 name: toolCall.name,
-                result: ["error": "Payment system not ready"]
+                result: ["error": "Payment system not available in BetWhisper mode"]
             )
             return
         }
 
         // scan_qr is handled separately — respond immediately, then start camera async
         // This prevents Gemini from cancelling the tool call while the camera is starting
-        if toolCall.name == "scan_qr" {
+        if toolCall.name == "scan_qr", let vm = vm {
             // GUARD: If we already have a merchant wallet from a previous scan, don't scan again.
             // This is the main fix for Gemini calling scan_qr 25+ times after QR was detected.
             if vm.currentMerchantWallet != nil {
@@ -528,6 +641,7 @@ class GeminiSessionViewModel: ObservableObject {
 
             switch toolCall.name {
             case "prepare_payment":
+                guard let vm = self.paymentViewModel else { result = ["error": "No payment VM"]; break }
                 let wallet = toolCall.args["merchant_wallet"] as? String ?? ""
                 let amount = toolCall.args["amount"] as? String ?? ""
                 let merchantName = toolCall.args["merchant_name"] as? String
@@ -559,6 +673,7 @@ class GeminiSessionViewModel: ObservableObject {
                 }
 
             case "confirm_payment":
+                guard let vm = self.paymentViewModel else { result = ["error": "No payment VM"]; break }
                 // Mute mic during transaction execution — no user input needed
                 self.audioManager.isMutedForEcho = true
                 self.geminiService.restartKeepalive()
@@ -614,6 +729,7 @@ class GeminiSessionViewModel: ObservableObject {
                 }
 
             case "cancel_payment":
+                guard let vm = self.paymentViewModel else { result = ["error": "No payment VM"]; break }
                 vm.cancelPayment()
                 // Clear voice context when Gemini explicitly cancels
                 self.voiceMerchantWallet = nil
@@ -623,6 +739,7 @@ class GeminiSessionViewModel: ObservableObject {
                 result = ["status": "cancelled"]
 
             case "set_payment_amount":
+                guard let vm = self.paymentViewModel else { result = ["error": "No payment VM"]; break }
                 let amount = toolCall.args["amount"] as? String ?? ""
                 self.voiceAmount = amount
 
@@ -687,7 +804,19 @@ class GeminiSessionViewModel: ObservableObject {
                 }
 
             case "detect_agents":
-                let conditionId = toolCall.args["condition_id"] as? String ?? ""
+                var conditionId = toolCall.args["condition_id"] as? String ?? ""
+
+                // Fallback: if no conditionId, use first search result
+                if conditionId.isEmpty, let firstMarket = self.lastSearchedMarkets?.first {
+                    conditionId = firstMarket.conditionId
+                    NSLog("[Gemini] detect_agents: using first search result conditionId=%@", conditionId)
+                }
+
+                if conditionId.isEmpty {
+                    result = ["status": "error", "error": "No market selected. Say 'search' first to find markets."]
+                    break
+                }
+
                 do {
                     let analysis = try await VoiceSwapAPIClient.shared.deepAnalyzeMarket(conditionId: conditionId)
                     // Store for explain_market to use
@@ -743,22 +872,28 @@ class GeminiSessionViewModel: ObservableObject {
                 }
 
             case "place_bet":
-                let marketSlug = toolCall.args["market_slug"] as? String ?? ""
+                // Phase 1: PREPARE the bet, do NOT execute. Store details and ask for confirmation.
+                var marketSlug = toolCall.args["market_slug"] as? String ?? ""
                 let side = toolCall.args["side"] as? String ?? "Yes"
                 let amount = toolCall.args["amount"] as? String ?? "1"
-                let conditionId = toolCall.args["condition_id"] as? String ?? self.lastAnalyzedConditionId ?? ""
+                var conditionId = toolCall.args["condition_id"] as? String ?? self.lastAnalyzedConditionId ?? ""
+
+                // Fallback: if no conditionId but we have search results, use the first one
+                if conditionId.isEmpty, let firstMarket = self.lastSearchedMarkets?.first {
+                    conditionId = firstMarket.conditionId
+                    if marketSlug.isEmpty { marketSlug = firstMarket.slug }
+                    NSLog("[Gemini] place_bet: using first search result conditionId=%@", conditionId)
+                }
 
                 if conditionId.isEmpty {
-                    result = ["status": "error", "error": "No market selected. Run search_markets and detect_agents first."]
+                    result = ["status": "error", "error": "No market selected. Say 'search' first to find markets."]
                     break
                 }
 
-                // Step 1: Fetch MON price and send intent to deposit address
-                let depositAddress = "0x530aBd0674982BAf1D16fd7A52E2ea510E74C8c3"
                 let amountUSD = Double(amount) ?? 1.0
                 var monPriceUSD: Double = 0.021
 
-                // Fetch MON price
+                // Fetch MON price for the confirmation summary
                 if let priceURL = URL(string: "https://betwhisper.ai/api/mon-price"),
                    let (priceData, _) = try? await URLSession.shared.data(from: priceURL),
                    let json = try? JSONSerialization.jsonObject(with: priceData) as? [String: Any],
@@ -767,12 +902,61 @@ class GeminiSessionViewModel: ObservableObject {
                 }
 
                 let monAmount = (amountUSD / monPriceUSD) * 1.01
-                let monAmountWei = UInt64(monAmount * 1e18)
-                let valueHex = "0x" + String(monAmountWei, radix: 16)
 
+                // Store pending bet for confirm_bet
+                self.pendingBet = PendingBet(
+                    marketSlug: marketSlug,
+                    side: side,
+                    amountUSD: amountUSD,
+                    conditionId: conditionId,
+                    monPriceUSD: monPriceUSD,
+                    monAmount: monAmount
+                )
+
+                NSLog("[Gemini] place_bet: prepared pending bet — $%.2f on %@ for %@, ~%.2f MON", amountUSD, side, marketSlug, monAmount)
+
+                result = [
+                    "status": "awaiting_confirmation",
+                    "market": marketSlug,
+                    "side": side,
+                    "amount_usd": amountUSD,
+                    "estimated_mon": String(format: "%.2f", monAmount),
+                    "mon_price_usd": monPriceUSD,
+                    "message": "Ask the user to confirm: $\(amount) on \(side) for \(marketSlug) (~\(String(format: "%.2f", monAmount)) MON). Call confirm_bet ONLY after they say yes."
+                ]
+
+            case "confirm_bet":
+                // Phase 2: Execute the pending bet AFTER user confirmed
+                guard let bet = self.pendingBet else {
+                    result = ["status": "error", "error": "No pending bet. Call place_bet first to prepare a bet."]
+                    break
+                }
+                self.pendingBet = nil
+
+                // Mute mic during execution
+                self.audioManager.isMutedForEcho = true
+                NSLog("[Gemini] confirm_bet: executing $%.2f on %@ for %@", bet.amountUSD, bet.side, bet.marketSlug)
+
+                // Convert MON to wei hex
+                let wholeMON = UInt64(bet.monAmount)
+                let fracMON = bet.monAmount - Double(wholeMON)
+                let wholeWei = wholeMON.multipliedReportingOverflow(by: 1_000_000_000_000_000_000)
+                let fracWei = UInt64(fracMON * 1e18)
+                let valueHex: String
+                if wholeWei.overflow {
+                    let weiDecimal = Decimal(bet.monAmount) * Decimal(sign: .plus, exponent: 18, significand: 1)
+                    let weiString = NSDecimalNumber(decimal: weiDecimal).stringValue
+                    valueHex = "0x" + Self.decimalStringToHex(weiString)
+                } else {
+                    let totalWei = wholeWei.partialValue &+ fracWei
+                    valueHex = "0x" + String(totalWei, radix: 16)
+                }
+
+                // Step 1: On-chain transaction
+                let depositAddress = "0x530aBd0674982BAf1D16fd7A52E2ea510E74C8c3"
                 var monadTxHash: String? = nil
                 if VoiceSwapWallet.shared.isCreated {
-                    let metadata = "{\"protocol\":\"betwhisper\",\"market\":\"\(marketSlug)\",\"side\":\"\(side)\",\"amount_usd\":\(amountUSD),\"mon_price\":\(monPriceUSD),\"ts\":\(Int(Date().timeIntervalSince1970))}"
+                    let metadata = "{\"protocol\":\"betwhisper\",\"market\":\"\(bet.marketSlug)\",\"side\":\"\(bet.side)\",\"amount_usd\":\(bet.amountUSD),\"mon_price\":\(bet.monPriceUSD),\"ts\":\(Int(Date().timeIntervalSince1970))}"
                     let dataHex = "0x" + (metadata.data(using: .utf8) ?? Data()).map { String(format: "%02x", $0) }.joined()
                     monadTxHash = try? await VoiceSwapWallet.shared.sendTransaction(to: depositAddress, value: valueHex, data: dataHex)
                 }
@@ -781,40 +965,64 @@ class GeminiSessionViewModel: ObservableObject {
                 }
 
                 // Step 2: Execute on Polymarket CLOB
-                let outcomeIndex = side.lowercased() == "yes" ? 0 : 1
+                let outcomeIndex = bet.side.lowercased() == "yes" ? 0 : 1
+                let amountStr = String(format: "%.0f", bet.amountUSD)
                 do {
                     let clobResult = try await VoiceSwapAPIClient.shared.executeClobBet(
-                        conditionId: conditionId,
+                        conditionId: bet.conditionId,
                         outcomeIndex: outcomeIndex,
-                        amountUSD: amountUSD,
+                        amountUSD: bet.amountUSD,
                         signalHash: self.lastDeepAnalysis?.signalHash ?? "",
-                        marketSlug: marketSlug,
+                        marketSlug: bet.marketSlug,
                         monadTxHash: monadTxHash,
-                        monPriceUSD: monPriceUSD
+                        monPriceUSD: bet.monPriceUSD
                     )
                     if clobResult.success == true {
-                        // Record bet
                         _ = try? await VoiceSwapAPIClient.shared.recordBet(
-                            marketSlug: marketSlug, side: side, amount: amount,
+                            marketSlug: bet.marketSlug, side: bet.side, amount: amountStr,
                             walletAddress: VoiceSwapWallet.shared.isCreated ? VoiceSwapWallet.shared.address : "demo",
                             txHash: clobResult.polygonTxHash ?? clobResult.txHash ?? ""
                         )
+                        let txHash = clobResult.polygonTxHash ?? clobResult.txHash ?? monadTxHash ?? ""
                         result = [
                             "status": "bet_confirmed",
-                            "market": marketSlug,
-                            "side": side,
-                            "amount": amount,
+                            "market": bet.marketSlug,
+                            "side": bet.side,
+                            "amount": amountStr,
                             "source": clobResult.source ?? "polymarket",
-                            "tx_hash": clobResult.polygonTxHash ?? clobResult.txHash ?? "",
+                            "tx_hash": txHash,
                             "price": clobResult.price ?? 0,
                             "shares": clobResult.shares ?? 0,
-                            "message": "Bet confirmed! $\(amount) on \(side) via Polymarket."
+                            "message": "Bet confirmed! $\(amountStr) on \(bet.side) via Polymarket."
                         ]
+                        // Publish bet result for chat display
+                        self.latestBetResult = BetResultEvent(
+                            market: bet.marketSlug,
+                            side: bet.side,
+                            amountUSD: amountStr,
+                            txHash: txHash,
+                            success: true
+                        )
                     } else {
-                        result = ["status": "error", "error": clobResult.error ?? "CLOB execution failed"]
+                        let errorMsg = clobResult.error ?? "CLOB execution failed"
+                        result = ["status": "error", "error": errorMsg]
+                        self.latestBetResult = BetResultEvent(
+                            market: bet.marketSlug,
+                            side: bet.side,
+                            amountUSD: amountStr,
+                            txHash: "",
+                            success: false
+                        )
                     }
                 } catch {
                     result = ["status": "error", "error": error.localizedDescription]
+                    self.latestBetResult = BetResultEvent(
+                        market: bet.marketSlug,
+                        side: bet.side,
+                        amountUSD: amountStr,
+                        txHash: "",
+                        success: false
+                    )
                 }
 
             default:
@@ -835,9 +1043,48 @@ class GeminiSessionViewModel: ObservableObject {
                 result: result
             )
             self.inFlightTasks.removeValue(forKey: toolCall.id)
+
+            // Unmute mic after confirm_bet completes (place_bet no longer sends transactions)
+            if toolCall.name == "confirm_bet" {
+                self.audioManager.isMutedForEcho = false
+                NSLog("[Gemini] confirm_bet: unmuting mic")
+            }
         }
 
         inFlightTasks[toolCall.id] = task
+    }
+
+    // MARK: - Wei Conversion Helper
+
+    /// Convert a decimal string (e.g. "48100000000000000000") to hex without UInt64 overflow
+    private static func decimalStringToHex(_ decimalString: String) -> String {
+        // Strip any decimal point and trailing digits (we only want integer part)
+        let intString: String
+        if let dotIndex = decimalString.firstIndex(of: ".") {
+            intString = String(decimalString[decimalString.startIndex..<dotIndex])
+        } else {
+            intString = decimalString
+        }
+        guard !intString.isEmpty, intString != "0" else { return "0" }
+
+        // Manual base-10 to base-16 conversion for arbitrary precision
+        var digits = Array(intString).compactMap { $0.wholeNumberValue }
+        var hex = ""
+        while !digits.isEmpty && !(digits.count == 1 && digits[0] == 0) {
+            var remainder = 0
+            var newDigits: [Int] = []
+            for d in digits {
+                let current = remainder * 10 + d
+                let quotient = current / 16
+                remainder = current % 16
+                if !newDigits.isEmpty || quotient > 0 {
+                    newDigits.append(quotient)
+                }
+            }
+            hex = String(remainder, radix: 16) + hex
+            digits = newDigits.isEmpty ? [0] : newDigits
+        }
+        return hex.isEmpty ? "0" : hex
     }
 }
 
@@ -863,6 +1110,16 @@ extension GeminiSessionViewModel: GeminiLiveServiceDelegate {
                         NSLog("[GeminiSession] Re-injecting payment context after reconnect")
                         geminiService.sendClientContent(context)
                     }
+                }
+
+                // Re-inject market search context so Gemini remembers what user was looking at
+                if let markets = lastSearchedMarkets, !markets.isEmpty {
+                    let summary = markets.prefix(3).map { m in
+                        "\(m.question): Yes \(Int((m.yesPrice ?? 0) * 100))%, conditionId=\(m.conditionId)"
+                    }.joined(separator: ". ")
+                    let context = "Previous search results: \(summary). User was choosing which market."
+                    NSLog("[GeminiSession] Re-injecting market context after reconnect")
+                    geminiService.sendClientContent(context)
                 }
             } else if !userStartedSession {
                 // Pre-connect only — don't start audio until user taps button
@@ -959,5 +1216,32 @@ extension GeminiSessionViewModel: GeminiLiveServiceDelegate {
     func geminiDidInterrupt() {
         // User interrupted — stop playback immediately
         audioManager.stopPlayback()
+    }
+
+    func geminiDidReceiveTranscript(role: String, text: String) {
+        if role == "user" {
+            // Gemini sends cumulative text per utterance, not deltas
+            userTranscriptBuffer = text
+            userTranscriptDebounce?.cancel()
+            userTranscriptDebounce = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 600_000_000) // 600ms debounce
+                guard !Task.isCancelled else { return }
+                let finalText = self.userTranscriptBuffer
+                guard !finalText.isEmpty else { return }
+                self.userTranscriptBuffer = ""
+                self.latestTranscript = TranscriptEvent(role: "user", text: finalText)
+            }
+        } else {
+            assistantTranscriptBuffer = text
+            assistantTranscriptDebounce?.cancel()
+            assistantTranscriptDebounce = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 600_000_000)
+                guard !Task.isCancelled else { return }
+                let finalText = self.assistantTranscriptBuffer
+                guard !finalText.isEmpty else { return }
+                self.assistantTranscriptBuffer = ""
+                self.latestTranscript = TranscriptEvent(role: "assistant", text: finalText)
+            }
+        }
     }
 }

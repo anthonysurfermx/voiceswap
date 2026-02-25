@@ -68,7 +68,7 @@ class AudioManager: ObservableObject {
 
         try session.setCategory(.playAndRecord, mode: mode, options: options)
         try session.setPreferredSampleRate(GeminiConfig.inputAudioSampleRate)
-        try session.setPreferredIOBufferDuration(0.064)
+        try session.setPreferredIOBufferDuration(0.020)
         try session.setActive(true, options: .notifyOthersOnDeactivation)
 
         // In glasses mode, prefer Bluetooth HFP input

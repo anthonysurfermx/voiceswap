@@ -563,7 +563,7 @@ struct BetWhisperPortfolioView: View {
             // Explorer links
             HStack(spacing: 12) {
                 if let hash = order.monadTxHash {
-                    Link(destination: URL(string: "https://testnet.monadexplorer.com/tx/\(hash)")!) {
+                    Link(destination: URL(string: "https://monadexplorer.com/tx/\(hash)")!) {
                         HStack(spacing: 4) {
                             Text("MON")
                                 .font(.system(size: 9, weight: .bold, design: .monospaced))

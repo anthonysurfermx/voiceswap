@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		SK0000010000000000000001 /* Secrets.plist in Resources */ = {isa = PBXBuildFile; fileRef = SK0000020000000000000001 /* Secrets.plist */; };
 		1A0000010000000000000001 /* VoiceSwapApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000020000000000000001 /* VoiceSwapApp.swift */; };
 		1A0000030000000000000001 /* VoiceSwapMainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000040000000000000001 /* VoiceSwapMainView.swift */; };
 		1A0000050000000000000001 /* MetaGlassesManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000060000000000000001 /* MetaGlassesManager.swift */; };
@@ -41,9 +42,13 @@
 		A54F4D562EEDEAAE00B63C69 /* MWDATMockDevice in Frameworks */ = {isa = PBXBuildFile; productRef = A54F4D552EEDEAAE00B63C69 /* MWDATMockDevice */; };
 		SR0000010000000000000001 /* SpeechRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = SR0000020000000000000001 /* SpeechRecognizer.swift */; };
 		CS0000010000000000000001 /* ChatSpeechSynthesizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = CS0000020000000000000001 /* ChatSpeechSynthesizer.swift */; };
+		CV0000010000000000000001 /* Conversation.swift in Sources */ = {isa = PBXBuildFile; fileRef = CV0000020000000000000001 /* Conversation.swift */; };
+		CV0000030000000000000001 /* ConversationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CV0000040000000000000001 /* ConversationStore.swift */; };
+		CV0000050000000000000001 /* ConversationListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CV0000060000000000000001 /* ConversationListView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		SK0000020000000000000001 /* Secrets.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Secrets.plist; sourceTree = "<group>"; };
 		1A0000020000000000000001 /* VoiceSwapApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSwapApp.swift; sourceTree = "<group>"; };
 		1A0000040000000000000001 /* VoiceSwapMainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSwapMainView.swift; sourceTree = "<group>"; };
 		1A0000060000000000000001 /* MetaGlassesManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetaGlassesManager.swift; sourceTree = "<group>"; };
@@ -72,6 +77,9 @@
 		PC0000020000000000000001 /* ProbabilityCalculator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProbabilityCalculator.swift; sourceTree = "<group>"; };
 		SR0000020000000000000001 /* SpeechRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechRecognizer.swift; sourceTree = "<group>"; };
 		CS0000020000000000000001 /* ChatSpeechSynthesizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSpeechSynthesizer.swift; sourceTree = "<group>"; };
+		CV0000020000000000000001 /* Conversation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Conversation.swift; sourceTree = "<group>"; };
+		CV0000040000000000000001 /* ConversationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationStore.swift; sourceTree = "<group>"; };
+		CV0000060000000000000001 /* ConversationListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationListView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -124,6 +132,7 @@
 			isa = PBXGroup;
 			children = (
 				1A0000020000000000000001 /* VoiceSwapApp.swift */,
+				SK0000020000000000000001 /* Secrets.plist */,
 				PC0000020000000000000001 /* ProbabilityCalculator.swift */,
 				SR0000020000000000000001 /* SpeechRecognizer.swift */,
 				CS0000020000000000000001 /* ChatSpeechSynthesizer.swift */,
@@ -131,6 +140,7 @@
 				1A0000340000000000000001 /* Views */,
 				1A0000350000000000000001 /* MetaWearables */,
 				1A0000360000000000000001 /* Wallet */,
+				CV0000070000000000000001 /* Models */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -159,6 +169,7 @@
 				BW0000080000000000000001 /* BetWhisperTabView.swift */,
 				BW00000A0000000000000001 /* BetWhisperGroupsView.swift */,
 				WV0000020000000000000001 /* BetWhisperWalletView.swift */,
+				CV0000060000000000000001 /* ConversationListView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -181,6 +192,15 @@
 				B10000020000000000000001 /* VoiceSwapWallet.swift */,
 			);
 			path = Wallet;
+			sourceTree = "<group>";
+		};
+		CV0000070000000000000001 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				CV0000020000000000000001 /* Conversation.swift */,
+				CV0000040000000000000001 /* ConversationStore.swift */,
+			);
+			path = Models;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -259,6 +279,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				1A00000B0000000000000001 /* Assets.xcassets in Resources */,
+				SK0000010000000000000001 /* Secrets.plist in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -293,6 +314,9 @@
 				PC0000010000000000000001 /* ProbabilityCalculator.swift in Sources */,
 				SR0000010000000000000001 /* SpeechRecognizer.swift in Sources */,
 				CS0000010000000000000001 /* ChatSpeechSynthesizer.swift in Sources */,
+				CV0000010000000000000001 /* Conversation.swift in Sources */,
+				CV0000030000000000000001 /* ConversationStore.swift in Sources */,
+				CV0000050000000000000001 /* ConversationListView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

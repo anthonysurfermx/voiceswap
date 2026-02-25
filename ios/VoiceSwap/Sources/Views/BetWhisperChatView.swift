@@ -61,10 +61,20 @@ struct BetWhisperChatView: View {
     @State private var aiGateEligible: Bool = false
     @FocusState private var inputFocused: Bool
 
-    // Voice input
+    // Voice input (basic STT for text input)
     @StateObject private var speechRecognizer = SpeechRecognizer()
     private let tts = ChatSpeechSynthesizer()
     @State private var ttsEnabled: Bool = true
+
+    // Gemini Live voice session (agentic mode with tools)
+    @StateObject private var geminiSession = GeminiSessionViewModel()
+    @ObservedObject private var glassesManager = MetaGlassesManager.shared
+    @State private var isGeminiActive: Bool = false
+
+    // Conversation persistence
+    @StateObject private var conversationStore = ConversationStore.shared
+    @State private var currentConversationId: UUID?
+    @State private var showConversationList: Bool = false
 
     private let assistantName: String
     private let categories: [String]
@@ -81,6 +91,27 @@ struct BetWhisperChatView: View {
             VStack(spacing: 0) {
                 chatHeader
 
+                // Gemini Live session banner
+                if isGeminiActive {
+                    geminiSessionBanner
+                }
+
+                // Gemini error
+                if let error = geminiSession.sessionError {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 9))
+                            .foregroundColor(amber400)
+                        Text(error)
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundColor(amber400)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .background(amber400.opacity(0.08))
+                }
+
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 16) {
@@ -93,10 +124,14 @@ struct BetWhisperChatView: View {
                         .padding(.top, 12)
                         .padding(.bottom, 8)
                     }
-                    .onChange(of: messages.count) { _, _ in
+                    .onChange(of: messages.count) { oldCount, newCount in
                         if let last = messages.last {
                             withAnimation(.easeOut(duration: 0.2)) {
                                 proxy.scrollTo(last.id, anchor: .bottom)
+                            }
+                            // Auto-persist new messages with non-empty text
+                            if newCount > oldCount, !last.text.isEmpty {
+                                persistMessage(role: last.role, text: last.text)
                             }
                         }
                     }
@@ -107,6 +142,11 @@ struct BetWhisperChatView: View {
         }
         .preferredColorScheme(.dark)
         .onAppear {
+            // Create or resume conversation
+            if currentConversationId == nil {
+                let conv = conversationStore.create()
+                currentConversationId = conv.id
+            }
             loadInitialMarkets()
             checkAIGateEligibility()
             speechRecognizer.requestPermission()
@@ -114,11 +154,43 @@ struct BetWhisperChatView: View {
                 inputText = text
                 sendMessage()
             }
+            // Pre-connect Gemini WebSocket for instant voice activation
+            geminiSession.preconnect()
+            // Wire glasses camera frames to Gemini for visual context
+            glassesManager.onVideoFrame = { [weak geminiSession] image in
+                geminiSession?.handleVideoFrame(image)
+            }
         }
         .onChange(of: speechRecognizer.transcript) { _, newValue in
             if speechRecognizer.isListening && !newValue.isEmpty {
                 inputText = newValue
             }
+        }
+        .onChange(of: geminiSession.isSessionActive) { _, active in
+            isGeminiActive = active
+        }
+        .onChange(of: geminiSession.latestTranscript) { _, event in
+            guard let event else { return }
+            let chatRole: ChatRole = event.role == "user" ? .user : .assistant
+            messages.append(ChatMessage(role: chatRole, text: event.text))
+        }
+        .onChange(of: geminiSession.latestBetResult) { _, event in
+            guard let event else { return }
+            let statusText = event.success ? "Bet Confirmed" : "Bet Failed"
+            let txInfo = event.txHash.isEmpty ? "" : "\nTx: \(event.txHash.prefix(10))...\(event.txHash.suffix(6))"
+            let text = "\(statusText)\n$\(event.amountUSD) on \(event.side) — \(event.market)\(txInfo)"
+            messages.append(ChatMessage(role: .assistant, text: text))
+        }
+        .sheet(isPresented: $showConversationList) {
+            ConversationListView(
+                store: conversationStore,
+                onSelect: { conv in
+                    loadConversation(conv)
+                },
+                onNewChat: {
+                    startNewConversation()
+                }
+            )
         }
     }
 
@@ -126,6 +198,16 @@ struct BetWhisperChatView: View {
 
     private var chatHeader: some View {
         HStack {
+            // Conversation list button
+            Button {
+                showConversationList = true
+            } label: {
+                Image(systemName: "list.bullet")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(.white.opacity(0.4))
+            }
+            .padding(.trailing, 4)
+
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     RoundedRectangle(cornerRadius: 0)
@@ -140,17 +222,39 @@ struct BetWhisperChatView: View {
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(.white)
                 }
-                Text("PREDICTION MARKETS")
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.25))
-                    .tracking(1.5)
+                HStack(spacing: 4) {
+                    if isGeminiActive {
+                        Text(geminiSession.isAISpeaking ? "SPEAKING" : "LISTENING")
+                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            .foregroundColor(geminiSession.isAISpeaking ? amber400 : emerald)
+                            .tracking(1.5)
+                    } else {
+                        Text("PREDICTION MARKETS")
+                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.25))
+                            .tracking(1.5)
+                    }
+                }
             }
             Spacer()
-            Circle().fill(emerald).frame(width: 6, height: 6)
-            Text("LIVE")
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                .foregroundColor(emerald)
-                .tracking(1)
+
+            // Gemini Live voice button
+            Button {
+                toggleGeminiSession()
+            } label: {
+                HStack(spacing: 6) {
+                    if isGeminiActive {
+                        PulsingDot(color: emerald)
+                    }
+                    Image(systemName: isGeminiActive ? "waveform.circle.fill" : glassesManager.isConnected ? "eyeglasses" : "waveform.circle")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundColor(isGeminiActive ? emerald : .white.opacity(0.5))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Rectangle().fill(isGeminiActive ? emerald.opacity(0.12) : Color.white.opacity(0.06)))
+                .overlay(Rectangle().stroke(isGeminiActive ? emerald.opacity(0.3) : Color.white.opacity(0.08), lineWidth: 1))
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -983,47 +1087,69 @@ struct BetWhisperChatView: View {
 
             Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
 
-            HStack(spacing: 10) {
-                TextField("", text: $inputText,
-                          prompt: Text(loc("Ask \(assistantName)...", "Pregunta a \(assistantName)..."))
-                    .foregroundColor(.white.opacity(0.2)))
-                    .font(.system(size: 15))
-                    .foregroundColor(.white)
-                    .focused($inputFocused)
-                    .onSubmit { sendMessage() }
-
-                // Mic button
-                Button {
-                    tts.stopSpeaking()
-                    // Small delay to let TTS audio session release
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                        speechRecognizer.toggle()
+            if isGeminiActive {
+                // Gemini Live active: show voice-only bar
+                HStack(spacing: 12) {
+                    Text(loc("Voice mode active. \(assistantName) is listening.",
+                             "Modo voz activo. \(assistantName) escucha."))
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.3))
+                    Spacer()
+                    Button {
+                        toggleGeminiSession()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 18))
+                            .foregroundColor(.white.opacity(0.3))
                     }
-                } label: {
-                    Image(systemName: speechRecognizer.isListening ? "mic.fill" : "mic")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundColor(speechRecognizer.isListening ? .black : .white.opacity(0.4))
-                        .frame(width: 32, height: 32)
-                        .background(Rectangle().fill(
-                            speechRecognizer.isListening ? emerald : Color.white.opacity(0.06)))
                 }
-                .disabled(isLoading)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(Color.white.opacity(0.03))
+            } else {
+                // Normal text + voice input
+                HStack(spacing: 10) {
+                    TextField("", text: $inputText,
+                              prompt: Text(loc("Ask \(assistantName)...", "Pregunta a \(assistantName)..."))
+                        .foregroundColor(.white.opacity(0.2)))
+                        .font(.system(size: 15))
+                        .foregroundColor(.white)
+                        .focused($inputFocused)
+                        .onSubmit { sendMessage() }
 
-                // Send button
-                Button { sendMessage() } label: {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundColor(inputText.trimmingCharacters(in: .whitespaces).isEmpty ? .white.opacity(0.15) : .black)
-                        .frame(width: 32, height: 32)
-                        .background(Rectangle().fill(
-                            inputText.trimmingCharacters(in: .whitespaces).isEmpty
-                            ? Color.white.opacity(0.06) : Color.white))
+                    // Mic button (basic STT)
+                    Button {
+                        tts.stopSpeaking()
+                        // Small delay to let TTS audio session release
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                            speechRecognizer.toggle()
+                        }
+                    } label: {
+                        Image(systemName: speechRecognizer.isListening ? "mic.fill" : "mic")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundColor(speechRecognizer.isListening ? .black : .white.opacity(0.4))
+                            .frame(width: 32, height: 32)
+                            .background(Rectangle().fill(
+                                speechRecognizer.isListening ? emerald : Color.white.opacity(0.06)))
+                    }
+                    .disabled(isLoading)
+
+                    // Send button
+                    Button { sendMessage() } label: {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(inputText.trimmingCharacters(in: .whitespaces).isEmpty ? .white.opacity(0.15) : .black)
+                            .frame(width: 32, height: 32)
+                            .background(Rectangle().fill(
+                                inputText.trimmingCharacters(in: .whitespaces).isEmpty
+                                ? Color.white.opacity(0.06) : Color.white))
+                    }
+                    .disabled(inputText.trimmingCharacters(in: .whitespaces).isEmpty || isLoading)
                 }
-                .disabled(inputText.trimmingCharacters(in: .whitespaces).isEmpty || isLoading)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(Color.white.opacity(0.03))
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(Color.white.opacity(0.03))
         }
     }
 
@@ -1090,6 +1216,121 @@ struct BetWhisperChatView: View {
     private func speakIfEnabled(_ text: String) {
         guard ttsEnabled else { return }
         tts.speak(text)
+    }
+
+    // MARK: - Gemini Live Session
+
+    private var geminiSessionBanner: some View {
+        HStack(spacing: 10) {
+            // Audio waveform indicator
+            HStack(spacing: 2) {
+                ForEach(0..<5, id: \.self) { i in
+                    RoundedRectangle(cornerRadius: 0)
+                        .fill(geminiSession.isAISpeaking ? amber400 : emerald)
+                        .frame(width: 2, height: geminiSession.isAISpeaking
+                               ? CGFloat.random(in: 4...14)
+                               : geminiSession.isListening ? CGFloat.random(in: 2...8) : 3)
+                        .animation(.easeInOut(duration: 0.3).repeatForever(autoreverses: true).delay(Double(i) * 0.08), value: geminiSession.isAISpeaking)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(geminiSession.isAISpeaking
+                     ? loc("\(assistantName) is speaking...", "\(assistantName) esta hablando...")
+                     : loc("Listening via \(glassesManager.isConnected ? "Meta glasses" : "phone mic")...",
+                           "Escuchando por \(glassesManager.isConnected ? "lentes Meta" : "microfono")..."))
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.white.opacity(0.7))
+                if glassesManager.isConnected {
+                    HStack(spacing: 4) {
+                        Image(systemName: "eyeglasses")
+                            .font(.system(size: 8))
+                        Text("META")
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .tracking(1)
+                    }
+                    .foregroundColor(emerald.opacity(0.5))
+                }
+            }
+
+            Spacer()
+
+            // Stop button
+            Button {
+                toggleGeminiSession()
+            } label: {
+                Text("STOP")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .tracking(1)
+                    .foregroundColor(red400)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .overlay(Rectangle().stroke(red400.opacity(0.3), lineWidth: 1))
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(Rectangle().fill(emerald.opacity(0.06)))
+        .overlay(Rectangle().frame(height: 1).foregroundColor(emerald.opacity(0.15)), alignment: .bottom)
+    }
+
+    private func toggleGeminiSession() {
+        if isGeminiActive {
+            // Stop Gemini Live session
+            geminiSession.stopSession()
+            messages.append(ChatMessage(role: .assistant, text: loc(
+                "Voice session ended.",
+                "Sesion de voz terminada."
+            )))
+        } else {
+            // Stop basic STT if active
+            if speechRecognizer.isListening {
+                speechRecognizer.stopListening()
+            }
+            tts.stopSpeaking()
+
+            // Determine audio mode: glasses if connected, phone otherwise
+            let audioMode: AudioMode = glassesManager.isConnected ? .glasses : .phone
+            let modeText = glassesManager.isConnected
+                ? loc("Voice activated via Meta glasses. Say something!", "Voz activada por lentes Meta. Di algo!")
+                : loc("Voice activated via phone mic. Say something!", "Voz activada por microfono. Di algo!")
+
+            messages.append(ChatMessage(role: .assistant, text: modeText))
+            geminiSession.startSession(audioMode: audioMode)
+
+            // Start glasses camera for visual context (Gemini sees what you see)
+            if glassesManager.isConnected && !glassesManager.isStreaming {
+                Task { await glassesManager.startCameraStream() }
+            }
+        }
+    }
+
+    // MARK: - Conversation Management
+
+    private func persistMessage(role: ChatRole, text: String) {
+        guard let convId = currentConversationId, !text.isEmpty else { return }
+        let tm = TranscriptMessage(
+            role: role == .user ? "user" : "assistant",
+            text: text
+        )
+        conversationStore.appendMessage(to: convId, message: tm)
+    }
+
+    private func loadConversation(_ conv: Conversation) {
+        currentConversationId = conv.id
+        messages = conv.messages.map { tm in
+            ChatMessage(
+                role: tm.role == "user" ? .user : .assistant,
+                text: tm.text
+            )
+        }
+    }
+
+    private func startNewConversation() {
+        let conv = conversationStore.create()
+        currentConversationId = conv.id
+        messages = []
+        loadInitialMarkets()
     }
 
     // MARK: - Actions

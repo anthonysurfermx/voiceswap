@@ -32,6 +32,7 @@ protocol GeminiLiveServiceDelegate: AnyObject {
     func geminiDidCancelToolCalls(_ cancellation: GeminiToolCallCancellation)
     func geminiDidCompleteTurn()
     func geminiDidInterrupt()
+    func geminiDidReceiveTranscript(role: String, text: String)
 }
 
 // MARK: - WebSocket Delegate
@@ -285,8 +286,14 @@ class GeminiLiveService: ObservableObject {
 
     // MARK: - Send Video Frame
 
+    private var videoFramesSent: Int = 0
+
     func sendVideoFrame(jpegData: Data) {
         guard connectionState == .ready else { return }
+        videoFramesSent += 1
+        let count = videoFramesSent
+        let sizeKB = jpegData.count / 1024
+        NSLog("[Gemini] Sending video frame #%d (%dKB)", count, sizeKB)
         sendQueue.async { [weak self] in
             let base64 = jpegData.base64EncodedString()
             let json: [String: Any] = [
@@ -345,7 +352,10 @@ class GeminiLiveService: ObservableObject {
         var setup: [String: Any] = [
             "model": GeminiConfig.model,
             "generationConfig": [
-                "responseModalities": ["AUDIO"]
+                "responseModalities": ["AUDIO"],
+                "thinkingConfig": [
+                    "thinkingBudget": 0
+                ]
             ],
             "systemInstruction": [
                 "parts": [
@@ -357,10 +367,11 @@ class GeminiLiveService: ObservableObject {
                     "disabled": false,
                     "startOfSpeechSensitivity": "START_SENSITIVITY_HIGH",
                     "endOfSpeechSensitivity": "END_SENSITIVITY_HIGH",
-                    "prefixPaddingMs": 20
+                    "prefixPaddingMs": 100,
+                    "silenceDurationMs": 800
                 ] as [String: Any],
                 "activityHandling": "START_OF_ACTIVITY_INTERRUPTS",
-                "turnCoverage": "TURN_INCLUDES_ALL_INPUT"
+                "turnCoverage": "TURN_INCLUDES_ONLY_ACTIVITY"
             ],
             "inputAudioTranscription": [:] as [String: Any],
             "outputAudioTranscription": [:] as [String: Any]
@@ -597,12 +608,14 @@ class GeminiLiveService: ObservableObject {
                 lastUserSpeechEnd = Date()
                 responseLatencyLogged = false
                 NSLog("[Gemini] User said: %@", text)
+                delegate?.geminiDidReceiveTranscript(role: "user", text: text)
             }
 
             // 5e. Output transcription
             if let outputTranscription = serverContent["outputTranscription"] as? [String: Any],
                let text = outputTranscription["text"] as? String, !text.isEmpty {
                 NSLog("[Gemini] AI said: %@", text)
+                delegate?.geminiDidReceiveTranscript(role: "assistant", text: text)
             }
 
             return

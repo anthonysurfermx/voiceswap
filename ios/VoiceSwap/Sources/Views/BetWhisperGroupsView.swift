@@ -48,6 +48,7 @@ struct BetWhisperGroupsView: View {
     // Detail
     @State private var groupDetail: GroupDetail?
     @State private var leaderboard: [LeaderboardEntry] = []
+    @State private var showDeleteConfirm = false
 
     private var walletAddress: String {
         VoiceSwapWallet.shared.isCreated ? VoiceSwapWallet.shared.address : ""
@@ -593,11 +594,49 @@ struct BetWhisperGroupsView: View {
                     .background(Rectangle().fill(Color.white.opacity(0.04)))
                     .overlay(Rectangle().stroke(Color.white.opacity(0.08), lineWidth: 1))
                 }
+
+                // Delete group (creator only)
+                if detail.creator_wallet.lowercased() == walletAddress.lowercased() {
+                    Button {
+                        showDeleteConfirm = true
+                    } label: {
+                        Text("DELETE GROUP")
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .foregroundColor(red400.opacity(0.6))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .overlay(Rectangle().stroke(red400.opacity(0.2), lineWidth: 1))
+                    }
+                    .alert("Delete this group?", isPresented: $showDeleteConfirm) {
+                        Button("Cancel", role: .cancel) {}
+                        Button("Delete", role: .destructive) { deleteGroup(code: detail.invite_code) }
+                    } message: {
+                        Text("This cannot be undone.")
+                    }
+                }
             }
         }
     }
 
     // MARK: - Actions
+
+    private func deleteGroup(code: String) {
+        loading = true
+        Task {
+            do {
+                try await VoiceSwapAPIClient.shared.deleteGroup(code: code, wallet: walletAddress)
+                await MainActor.run {
+                    groupDetail = nil
+                    viewState = .list
+                    loading = false
+                    fetchGroups()
+                }
+            } catch {
+                print("[Groups] Delete error: \(error)")
+                await MainActor.run { loading = false }
+            }
+        }
+    }
 
     private func fetchGroups() {
         guard !walletAddress.isEmpty else { return }

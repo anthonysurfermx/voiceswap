@@ -931,18 +931,15 @@ public class MetaGlassesManager: NSObject, ObservableObject {
     /// Try to force audio route to Bluetooth HFP
     /// This helps establish the HFP connection needed for glasses detection
     private func tryForceBluetoothAudioRoute() async {
-        // DISABLED FOR DEBUGGING - Testing if audio interferes with Meta callback
-        print("[MetaGlasses] tryForceBluetoothAudioRoute() DISABLED FOR DEBUGGING")
-        /*
         print("[MetaGlasses] Attempting to force Bluetooth audio route...")
 
         let audioSession = AVAudioSession.sharedInstance()
 
         do {
-            // Configure audio session for Bluetooth HFP
+            // Use .videoChat for glasses (mic on glasses, speaker on phone = mild AEC)
             try audioSession.setCategory(
                 .playAndRecord,
-                mode: .voiceChat,  // voiceChat mode prefers Bluetooth HFP
+                mode: .videoChat,
                 options: [.allowBluetooth, .allowBluetoothA2DP]
             )
 
@@ -977,7 +974,6 @@ public class MetaGlassesManager: NSObject, ObservableObject {
         } catch {
             print("[MetaGlasses] Failed to configure Bluetooth audio: \(error)")
         }
-        */
     }
 
     /// List all available Bluetooth devices for debugging
@@ -1069,20 +1065,15 @@ public class MetaGlassesManager: NSObject, ObservableObject {
     /// Configure HFP (Hands-Free Profile) audio BEFORE starting streaming
     /// Per Meta docs: "It is essential to ensure that HFP is fully configured before initiating any streaming session"
     private func configureHFPAudio() throws {
-        // DISABLED FOR DEBUGGING - Testing if audio interferes with Meta callback
-        print("[MetaGlasses] configureHFPAudio() DISABLED FOR DEBUGGING")
-        /*
         print("[MetaGlasses] Configuring HFP audio session...")
 
         let audioSession = AVAudioSession.sharedInstance()
 
-        // Configure for play and record with Bluetooth HFP support
-        // Using .allowBluetooth enables HFP for both input and output
-        // Note: .allowBluetooth is being deprecated - use .allowBluetoothHFP in future iOS versions
+        // Use .videoChat for glasses (mild AEC, mic/speaker on separate devices)
         try audioSession.setCategory(
             .playAndRecord,
-            mode: .default,
-            options: [.allowBluetooth, .defaultToSpeaker, .mixWithOthers]
+            mode: .videoChat,
+            options: [.allowBluetooth, .defaultToSpeaker]
         )
 
         // Activate the session - this establishes HFP connection
@@ -1106,7 +1097,6 @@ public class MetaGlassesManager: NSObject, ObservableObject {
         } else {
             print("[MetaGlasses] ⚠ No Bluetooth device in audio route - glasses mic may not work")
         }
-        */
     }
 
     // MARK: - Camera Streaming
