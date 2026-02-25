@@ -301,7 +301,13 @@ class VoiceSwapWallet: ObservableObject {
             // Add 30% buffer for safety
             return estimate + estimate * 3 / 10
         } catch {
-            // Fallback to safe defaults if estimation fails
+            // If insufficient balance, propagate the error — don't send a doomed tx
+            let errorMsg = error.localizedDescription.lowercased()
+            if errorMsg.contains("insufficient") || errorMsg.contains("balance") {
+                NSLog("[VoiceSwapWallet] Gas estimation failed: insufficient balance — aborting tx")
+                throw WalletError.rpcError("Insufficient MON balance for this transaction")
+            }
+            // Fallback to safe defaults for other estimation failures
             NSLog("[VoiceSwapWallet] Gas estimation failed: %@, using defaults", error.localizedDescription)
             if let txData = data, txData != "0x" && txData.count > 2 {
                 return 500_000

@@ -280,8 +280,10 @@ class GeminiSessionViewModel: ObservableObject {
 
     private var lastVideoFrameTime: Date = .distantPast
     private var videoFrameCount: Int = 0
-    /// After initial context captured, slow down video to avoid flooding WebSocket
+    /// After initial context captured, pause video — only send when user speaks
     private var videoSlowMode: Bool = false
+    /// When true, next camera frame will be sent (triggered by user speech)
+    private var videoFrameRequested: Bool = false
 
     // MARK: Error Management
 
@@ -313,28 +315,40 @@ class GeminiSessionViewModel: ObservableObject {
     // MARK: - Video Frames (glasses camera → Gemini vision)
 
     /// Called by MetaGlassesManager.onVideoFrame for every camera frame.
-    /// Throttles to ~1fps initially, then 1 frame/2s in slow mode.
+    /// Phase 1 (first 10 frames): 1fps for initial context capture.
+    /// Phase 2 (slow mode): paused entirely, only sends 1 frame when user starts speaking.
     func handleVideoFrame(_ image: UIImage) {
         guard isSessionActive, geminiService.connectionState == .ready else { return }
 
-        // Pause video only while AI is actively speaking — allow during tool calls for context
+        // Pause video while AI is speaking
         guard !geminiService.isModelSpeaking else { return }
 
-        // After initial context (10 frames), slow to 1 frame/2s to prioritize audio
-        let interval: TimeInterval = videoSlowMode ? 2.0 : 1.0
+        if videoSlowMode {
+            // In slow mode: only send a fresh frame when user starts talking.
+            // This avoids flooding WebSocket while user is silent/thinking.
+            // The flag is set by geminiDidReceiveTranscript (user role).
+            guard videoFrameRequested else { return }
+            videoFrameRequested = false
+        }
+
+        // Throttle to max 1fps
         let now = Date()
-        guard now.timeIntervalSince(lastVideoFrameTime) >= interval else { return }
+        guard now.timeIntervalSince(lastVideoFrameTime) >= 1.0 else { return }
         lastVideoFrameTime = now
 
-        // Convert to JPEG at 50% quality
         guard let jpegData = image.jpegData(compressionQuality: 0.5) else { return }
         geminiService.sendVideoFrame(jpegData: jpegData)
 
         videoFrameCount += 1
         if videoFrameCount >= 10 && !videoSlowMode {
             videoSlowMode = true
-            NSLog("[GeminiSession] Video slow mode: 1 frame/2s (initial context captured)")
+            NSLog("[GeminiSession] Video slow mode: frames only on user speech (initial context captured)")
         }
+    }
+
+    /// Request one video frame when the user starts speaking (for visual context with their next query)
+    func requestVideoFrame() {
+        videoFrameRequested = true
     }
 
     // MARK: - Session Lifecycle
@@ -970,9 +984,26 @@ class GeminiSessionViewModel: ObservableObject {
                 if VoiceSwapWallet.shared.isCreated {
                     let metadata = "{\"protocol\":\"betwhisper\",\"market\":\"\(bet.marketSlug)\",\"side\":\"\(bet.side)\",\"amount_usd\":\(bet.amountUSD),\"mon_price\":\(bet.monPriceUSD),\"ts\":\(Int(Date().timeIntervalSince1970))}"
                     let dataHex = "0x" + (metadata.data(using: .utf8) ?? Data()).map { String(format: "%02x", $0) }.joined()
-                    monadTxHash = try? await VoiceSwapWallet.shared.sendTransaction(to: depositAddress, value: valueHex, data: dataHex)
+                    do {
+                        monadTxHash = try await VoiceSwapWallet.shared.sendTransaction(to: depositAddress, value: valueHex, data: dataHex)
+                    } catch {
+                        let errMsg = error.localizedDescription
+                        NSLog("[Gemini] confirm_bet: Monad tx failed — %@", errMsg)
+                        let amountStr = String(format: "%.0f", bet.amountUSD)
+                        if errMsg.lowercased().contains("insufficient") {
+                            result = ["status": "error", "error": "Insufficient MON balance. You need ~\(String(format: "%.1f", bet.monAmount)) MON to place this bet. Top up your wallet first."]
+                        } else {
+                            result = ["status": "error", "error": "Transaction failed: \(errMsg)"]
+                        }
+                        self.latestBetResult = BetResultEvent(
+                            market: bet.marketSlug, side: bet.side, amountUSD: amountStr,
+                            txHash: "", monadTxHash: "", success: false
+                        )
+                        break
+                    }
                 }
-                if monadTxHash == nil {
+                if monadTxHash == nil && !VoiceSwapWallet.shared.isCreated {
+                    // Demo mode: no wallet, generate mock tx
                     monadTxHash = "0x" + (0..<64).map { _ in String(format: "%x", Int.random(in: 0...15)) }.joined()
                 }
 
@@ -1263,6 +1294,9 @@ extension GeminiSessionViewModel: GeminiLiveServiceDelegate {
 
     func geminiDidReceiveTranscript(role: String, text: String) {
         if role == "user" {
+            // User started speaking — request a fresh video frame for visual context
+            requestVideoFrame()
+
             // Gemini sends cumulative text per utterance, not deltas
             userTranscriptBuffer = text
             userTranscriptDebounce?.cancel()
