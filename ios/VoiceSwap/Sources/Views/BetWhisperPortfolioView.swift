@@ -76,6 +76,7 @@ struct BetWhisperPortfolioView: View {
     @State private var errorMessage: String? = nil
     @State private var orders: [OrderHistoryItem] = []
     @State private var isLoadingHistory = false
+    @State private var monBalance: Double? = nil
 
     private var isConnected: Bool {
         walletManager.isConnected || localWallet.isCreated
@@ -143,6 +144,7 @@ struct BetWhisperPortfolioView: View {
                 if passed {
                     fetchPositions()
                     fetchHistory()
+                    fetchMonBalance()
                 }
             }
         }
@@ -232,6 +234,17 @@ struct BetWhisperPortfolioView: View {
         }
     }
 
+    // MARK: - MON Balance
+
+    private func fetchMonBalance() {
+        guard localWallet.isCreated else { return }
+        Task {
+            if let bal = try? await localWallet.getBalance() {
+                await MainActor.run { monBalance = bal }
+            }
+        }
+    }
+
     // MARK: - Sell
 
     private func sellPosition(_ pos: PositionItem) {
@@ -314,6 +327,7 @@ struct BetWhisperPortfolioView: View {
                     } else {
                         fetchHistory()
                     }
+                    fetchMonBalance()
                 } label: {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 14))
@@ -333,36 +347,88 @@ struct BetWhisperPortfolioView: View {
     // MARK: - Balance Card
 
     private var balanceCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("BALANCE")
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                .foregroundColor(.white.opacity(0.25))
-                .tracking(1.5)
+        VStack(spacing: 0) {
+            // Positions value
+            VStack(alignment: .leading, spacing: 12) {
+                Text("POSITIONS")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.25))
+                    .tracking(1.5)
 
-            if let addr = walletAddress {
-                HStack {
-                    Text(truncateAddress(addr))
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("$\(String(format: "%.2f", totalValue))")
+                        .font(.system(size: 32, weight: .bold, design: .monospaced))
+                        .foregroundColor(.white)
+
+                    Text(totalPnl >= 0 ? "+$\(String(format: "%.2f", totalPnl))" : "-$\(String(format: "%.2f", abs(totalPnl)))")
                         .font(.system(size: 14, weight: .medium, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.6))
-                    Spacer()
-                    Text("MONAD")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.3))
-                        .tracking(1)
+                        .foregroundColor(totalPnl >= 0 ? Color(hex: "10B981") : Color(hex: "EF4444"))
                 }
             }
+            .padding(16)
 
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("$\(String(format: "%.2f", totalValue))")
-                    .font(.system(size: 32, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white)
+            Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
 
-                Text(totalPnl >= 0 ? "+$\(String(format: "%.2f", totalPnl))" : "-$\(String(format: "%.2f", abs(totalPnl)))")
-                    .font(.system(size: 14, weight: .medium, design: .monospaced))
-                    .foregroundColor(totalPnl >= 0 ? Color(hex: "10B981") : Color(hex: "EF4444"))
+            // Wallet balances
+            VStack(spacing: 10) {
+                // MON balance
+                HStack {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(Color(hex: "836EF9"))
+                            .frame(width: 8, height: 8)
+                        Text("MON")
+                            .font(.system(size: 12, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.7))
+                    }
+                    Spacer()
+                    if let bal = monBalance {
+                        Text(String(format: "%.4f", bal))
+                            .font(.system(size: 14, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white)
+                    } else {
+                        Text("--")
+                            .font(.system(size: 14, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.2))
+                    }
+                }
+
+                // USDC balance (placeholder for now)
+                HStack {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(Color(hex: "2775CA"))
+                            .frame(width: 8, height: 8)
+                        Text("USDC")
+                            .font(.system(size: 12, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.7))
+                    }
+                    Spacer()
+                    Text("0.00")
+                        .font(.system(size: 14, weight: .bold, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.3))
+                }
+
+                // Wallet address
+                if let addr = walletAddress {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(Color(hex: "10B981"))
+                            .frame(width: 4, height: 4)
+                        Text(truncateAddress(addr))
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.3))
+                        Spacer()
+                        Text("MONAD")
+                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.2))
+                            .tracking(1)
+                    }
+                    .padding(.top, 2)
+                }
             }
+            .padding(16)
         }
-        .padding(16)
         .background(Rectangle().fill(Color.white.opacity(0.04)))
         .overlay(Rectangle().stroke(Color.white.opacity(0.08), lineWidth: 1))
     }
