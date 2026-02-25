@@ -143,14 +143,21 @@ class VoiceSwapWallet: ObservableObject {
     // MARK: - Balance
 
     /// Fetch MON balance from Monad RPC. Returns balance in MON (not wei).
+    /// Uses Decimal to handle balances > 18.44 MON (UInt64 max in wei).
     func getBalance() async throws -> Double {
         let result = try await rpcCall(method: "eth_getBalance", params: [address, "latest"])
         guard let hexResult = result as? String else {
             throw WalletError.rpcError("Invalid balance response")
         }
         let hex = hexResult.hasPrefix("0x") ? String(hexResult.dropFirst(2)) : hexResult
-        guard let wei = UInt64(hex, radix: 16) else { return 0 }
-        return Double(wei) / 1e18
+        // Parse hex string to Decimal to avoid UInt64 overflow (>18.44 MON)
+        var weiDecimal = Decimal(0)
+        for char in hex {
+            guard let digit = UInt8(String(char), radix: 16) else { return 0 }
+            weiDecimal = weiDecimal * 16 + Decimal(digit)
+        }
+        let monBalance = weiDecimal / Decimal(sign: .plus, exponent: 18, significand: 1)
+        return NSDecimalNumber(decimal: monBalance).doubleValue
     }
 
     // MARK: - Send Transaction

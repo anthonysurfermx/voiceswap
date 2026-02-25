@@ -7,6 +7,7 @@ struct ConversationListView: View {
     let onSelect: (Conversation) -> Void
     let onNewChat: () -> Void
     @Environment(\.dismiss) private var dismiss
+    @State private var showDeleteAllConfirm = false
 
     var body: some View {
         ZStack {
@@ -20,6 +21,16 @@ struct ConversationListView: View {
                         .foregroundColor(.white.opacity(0.4))
                         .tracking(1.5)
                     Spacer()
+                    if !store.conversations.isEmpty {
+                        Button {
+                            showDeleteAllConfirm = true
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.system(size: 14))
+                                .foregroundColor(.white.opacity(0.3))
+                        }
+                        .padding(.trailing, 12)
+                    }
                     Button {
                         onNewChat()
                         dismiss()
@@ -57,6 +68,14 @@ struct ConversationListView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .alert("Delete All Conversations?", isPresented: $showDeleteAllConfirm) {
+            Button("Delete All", role: .destructive) {
+                store.deleteAll()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will permanently delete all conversation history.")
+        }
     }
 
     private func conversationRow(_ conv: Conversation) -> some View {

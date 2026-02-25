@@ -1116,7 +1116,8 @@ class GeminiSessionViewModel: ObservableObject {
             // Unmute mic after confirm_bet completes (place_bet no longer sends transactions)
             if toolCall.name == "confirm_bet" {
                 self.audioManager.isMutedForEcho = false
-                NSLog("[Gemini] confirm_bet: unmuting mic")
+                VoiceSwapWallet.shared.resetNonceTracking()
+                NSLog("[Gemini] confirm_bet: unmuting mic, nonce tracking reset")
             }
         }
 

@@ -58,6 +58,14 @@ class ConversationStore: ObservableObject {
         try? FileManager.default.removeItem(at: file)
     }
 
+    func deleteAll() {
+        for conv in conversations {
+            let file = directory.appendingPathComponent("\(conv.id).json")
+            try? FileManager.default.removeItem(at: file)
+        }
+        conversations.removeAll()
+    }
+
     // MARK: - Persistence
 
     private func save(_ conversation: Conversation) {
