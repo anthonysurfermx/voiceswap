@@ -181,6 +181,9 @@ struct PendingBet {
     let conditionId: String
     let monPriceUSD: Double
     let monAmount: Double
+    let createdAt: Date = Date()
+
+    var isExpired: Bool { Date().timeIntervalSince(createdAt) > 90 }
 }
 
 // MARK: - Bet Result Event (for chat display)
@@ -191,7 +194,13 @@ struct BetResultEvent: Equatable {
     let side: String
     let amountUSD: String
     let txHash: String
+    let monadTxHash: String
     let success: Bool
+
+    var explorerURL: URL? {
+        guard !monadTxHash.isEmpty else { return nil }
+        return URL(string: "https://testnet.monadexplorer.com/tx/\(monadTxHash)")
+    }
 
     static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }
 }
@@ -257,6 +266,11 @@ class GeminiSessionViewModel: ObservableObject {
 
     private var pendingBet: PendingBet?
 
+    // MARK: MON price cache
+
+    private var cachedMonPrice: Double?
+    private var cachedMonPriceTime: Date = .distantPast
+
     // MARK: QR Response Fallback
 
     private var qrResponseFallbackTask: Task<Void, Never>?
@@ -299,15 +313,15 @@ class GeminiSessionViewModel: ObservableObject {
     // MARK: - Video Frames (glasses camera → Gemini vision)
 
     /// Called by MetaGlassesManager.onVideoFrame for every camera frame.
-    /// Throttles to ~1fps and sends JPEG to Gemini for visual context.
+    /// Throttles to ~1fps initially, then 1 frame/2s in slow mode.
     func handleVideoFrame(_ image: UIImage) {
         guard isSessionActive, geminiService.connectionState == .ready else { return }
 
-        // Pause video while AI is speaking or processing a tool call — reduces WebSocket load
-        guard !geminiService.isModelSpeaking, inFlightTasks.isEmpty else { return }
+        // Pause video only while AI is actively speaking — allow during tool calls for context
+        guard !geminiService.isModelSpeaking else { return }
 
-        // After initial context (10 frames), slow to 1 frame/5s to prioritize audio
-        let interval: TimeInterval = videoSlowMode ? 5.0 : 1.0
+        // After initial context (10 frames), slow to 1 frame/2s to prioritize audio
+        let interval: TimeInterval = videoSlowMode ? 2.0 : 1.0
         let now = Date()
         guard now.timeIntervalSince(lastVideoFrameTime) >= interval else { return }
         lastVideoFrameTime = now
@@ -319,7 +333,7 @@ class GeminiSessionViewModel: ObservableObject {
         videoFrameCount += 1
         if videoFrameCount >= 10 && !videoSlowMode {
             videoSlowMode = true
-            NSLog("[GeminiSession] Video slow mode: 1 frame/5s (initial context captured)")
+            NSLog("[GeminiSession] Video slow mode: 1 frame/2s (initial context captured)")
         }
     }
 
@@ -891,15 +905,7 @@ class GeminiSessionViewModel: ObservableObject {
                 }
 
                 let amountUSD = Double(amount) ?? 1.0
-                var monPriceUSD: Double = 0.021
-
-                // Fetch MON price for the confirmation summary
-                if let priceURL = URL(string: "https://betwhisper.ai/api/mon-price"),
-                   let (priceData, _) = try? await URLSession.shared.data(from: priceURL),
-                   let json = try? JSONSerialization.jsonObject(with: priceData) as? [String: Any],
-                   let price = json["price"] as? Double, price > 0 {
-                    monPriceUSD = price
-                }
+                let monPriceUSD = await self.fetchMonPrice()
 
                 let monAmount = (amountUSD / monPriceUSD) * 1.01
 
@@ -929,6 +935,12 @@ class GeminiSessionViewModel: ObservableObject {
                 // Phase 2: Execute the pending bet AFTER user confirmed
                 guard let bet = self.pendingBet else {
                     result = ["status": "error", "error": "No pending bet. Call place_bet first to prepare a bet."]
+                    break
+                }
+                if bet.isExpired {
+                    self.pendingBet = nil
+                    NSLog("[Gemini] confirm_bet: pending bet expired (>90s)")
+                    result = ["status": "error", "error": "Bet expired. MON price may have changed. Call place_bet again to get fresh pricing."]
                     break
                 }
                 self.pendingBet = nil
@@ -1001,6 +1013,7 @@ class GeminiSessionViewModel: ObservableObject {
                             side: bet.side,
                             amountUSD: amountStr,
                             txHash: txHash,
+                            monadTxHash: monadTxHash ?? "",
                             success: true
                         )
                     } else {
@@ -1011,6 +1024,7 @@ class GeminiSessionViewModel: ObservableObject {
                             side: bet.side,
                             amountUSD: amountStr,
                             txHash: "",
+                            monadTxHash: monadTxHash ?? "",
                             success: false
                         )
                     }
@@ -1021,6 +1035,7 @@ class GeminiSessionViewModel: ObservableObject {
                         side: bet.side,
                         amountUSD: amountStr,
                         txHash: "",
+                        monadTxHash: monadTxHash ?? "",
                         success: false
                     )
                 }
@@ -1052,6 +1067,34 @@ class GeminiSessionViewModel: ObservableObject {
         }
 
         inFlightTasks[toolCall.id] = task
+    }
+
+    // MARK: - MON Price Helper
+
+    /// Fetch MON price with 30s cache + retry. Falls back to cached or default.
+    private func fetchMonPrice() async -> Double {
+        // Return cached if fresh (<30s)
+        if let cached = cachedMonPrice, Date().timeIntervalSince(cachedMonPriceTime) < 30 {
+            return cached
+        }
+
+        // Try up to 2 times
+        for attempt in 0..<2 {
+            if attempt > 0 {
+                try? await Task.sleep(nanoseconds: 300_000_000) // 300ms retry delay
+            }
+            if let priceURL = URL(string: "https://betwhisper.ai/api/mon-price"),
+               let (priceData, _) = try? await URLSession.shared.data(from: priceURL),
+               let json = try? JSONSerialization.jsonObject(with: priceData) as? [String: Any],
+               let price = json["price"] as? Double, price > 0 {
+                cachedMonPrice = price
+                cachedMonPriceTime = Date()
+                return price
+            }
+        }
+
+        // Fall back to cached (even if stale) or default
+        return cachedMonPrice ?? 0.021
     }
 
     // MARK: - Wei Conversion Helper

@@ -176,10 +176,13 @@ struct BetWhisperChatView: View {
         }
         .onChange(of: geminiSession.latestBetResult) { _, event in
             guard let event else { return }
-            let statusText = event.success ? "Bet Confirmed" : "Bet Failed"
-            let txInfo = event.txHash.isEmpty ? "" : "\nTx: \(event.txHash.prefix(10))...\(event.txHash.suffix(6))"
-            let text = "\(statusText)\n$\(event.amountUSD) on \(event.side) — \(event.market)\(txInfo)"
-            messages.append(ChatMessage(role: .assistant, text: text))
+            if event.success {
+                let txShort = event.monadTxHash.isEmpty ? "" : "\(event.monadTxHash.prefix(10))...\(event.monadTxHash.suffix(6))"
+                let text = "Bet Confirmed\n$\(event.amountUSD) on \(event.side) — \(event.market)\(txShort.isEmpty ? "" : "\nMonad Tx: \(txShort)")"
+                messages.append(ChatMessage(role: .assistant, text: text))
+            } else {
+                messages.append(ChatMessage(role: .assistant, text: "Bet Failed\n$\(event.amountUSD) on \(event.side) — \(event.market)"))
+            }
         }
         .sheet(isPresented: $showConversationList) {
             ConversationListView(

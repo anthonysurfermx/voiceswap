@@ -244,6 +244,16 @@ class AudioManager: ObservableObject {
                 NSLog("[Audio] Engine stopped after route change (reason: %lu) — restarting capture", reasonValue)
                 restartCapture()
             } else {
+                // In glasses mode, verify Bluetooth is still the active input
+                if audioMode == .glasses {
+                    let currentInput = AVAudioSession.sharedInstance().currentRoute.inputs.first
+                    if currentInput?.portType != .bluetoothHFP {
+                        NSLog("[Audio] Bluetooth HFP lost (now: %@) — falling back to phone mic", currentInput?.portType.rawValue ?? "none")
+                        audioMode = .phone
+                        restartCapture()
+                        return
+                    }
+                }
                 NSLog("[Audio] Route changed (reason: %lu) — engine still running", reasonValue)
             }
         default:
@@ -263,7 +273,7 @@ class AudioManager: ObservableObject {
 
         // Retry with increasing delays — Bluetooth route changes can take time to settle
         Task { @MainActor in
-            let delays: [UInt64] = [500_000_000, 1_000_000_000, 2_000_000_000] // 0.5s, 1s, 2s
+            let delays: [UInt64] = [200_000_000, 500_000_000, 1_000_000_000] // 0.2s, 0.5s, 1s
 
             for (attempt, delay) in delays.enumerated() {
                 try? await Task.sleep(nanoseconds: delay)
