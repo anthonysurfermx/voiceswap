@@ -140,6 +140,19 @@ class VoiceSwapWallet: ObservableObject {
         NSLog("[VoiceSwapWallet] Wallet deleted (local + iCloud)")
     }
 
+    // MARK: - Balance
+
+    /// Fetch MON balance from Monad RPC. Returns balance in MON (not wei).
+    func getBalance() async throws -> Double {
+        let result = try await rpcCall(method: "eth_getBalance", params: [address, "latest"])
+        guard let hexResult = result as? String else {
+            throw WalletError.rpcError("Invalid balance response")
+        }
+        let hex = hexResult.hasPrefix("0x") ? String(hexResult.dropFirst(2)) : hexResult
+        guard let wei = UInt64(hex, radix: 16) else { return 0 }
+        return Double(wei) / 1e18
+    }
+
     // MARK: - Send Transaction
 
     func sendTransaction(to: String, value: String, data: String?) async throws -> String {

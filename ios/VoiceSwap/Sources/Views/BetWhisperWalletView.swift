@@ -416,7 +416,7 @@ struct BetWhisperWalletView: View {
 
         Task {
             do {
-                let balance = try await fetchMONBalance(address: wallet.address)
+                let balance = try await wallet.getBalance()
                 await MainActor.run {
                     monBalance = balance
                     isLoadingBalance = false
@@ -428,29 +428,6 @@ struct BetWhisperWalletView: View {
                 }
             }
         }
-    }
-
-    private func fetchMONBalance(address: String) async throws -> Double {
-        let url = URL(string: "https://rpc.monad.xyz")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "jsonrpc": "2.0",
-            "method": "eth_getBalance",
-            "params": [address, "latest"],
-            "id": 1
-        ])
-
-        let (data, _) = try await URLSession.shared.data(for: request)
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let hexResult = json["result"] as? String else {
-            throw URLError(.badServerResponse)
-        }
-
-        let hex = hexResult.hasPrefix("0x") ? String(hexResult.dropFirst(2)) : hexResult
-        guard let wei = UInt64(hex, radix: 16) else { return 0 }
-        return Double(wei) / 1e18
     }
 
     // MARK: - Export Key

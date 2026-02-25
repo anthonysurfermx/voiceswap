@@ -271,6 +271,10 @@ class GeminiSessionViewModel: ObservableObject {
     private var cachedMonPrice: Double?
     private var cachedMonPriceTime: Date = .distantPast
 
+    // MARK: Wallet balance cache
+
+    private var cachedWalletBalance: Double?
+
     // MARK: QR Response Fallback
 
     private var qrResponseFallbackTask: Task<Void, Never>?
@@ -364,17 +368,25 @@ class GeminiSessionViewModel: ObservableObject {
 
         // BetWhisper: use VoiceSwapWallet directly (no paymentViewModel dependency)
         let walletAddr = VoiceSwapWallet.shared.isCreated ? VoiceSwapWallet.shared.address : paymentViewModel?.walletAddress
-        let walletBal = paymentViewModel?.walletBalance
-        geminiService.systemPrompt = VoiceSwapSystemPrompt.build(
-            walletAddress: walletAddr,
-            balance: walletBal
-        )
-        geminiService.toolDeclarations = VoiceSwapTools.allDeclarations()
 
+        // Fetch real MON balance for system prompt
         Task {
-            let connected = await geminiService.connect()
+            var walletBal: String? = nil
+            if VoiceSwapWallet.shared.isCreated {
+                if let bal = try? await VoiceSwapWallet.shared.getBalance() {
+                    walletBal = String(format: "%.2f MON", bal)
+                    self.cachedWalletBalance = bal
+                }
+            }
+            self.geminiService.systemPrompt = VoiceSwapSystemPrompt.build(
+                walletAddress: walletAddr,
+                balance: walletBal
+            )
+            self.geminiService.toolDeclarations = VoiceSwapTools.allDeclarations()
+
+            let connected = await self.geminiService.connect()
             if connected {
-                NSLog("[GeminiSession] Pre-connect succeeded — awaiting user tap for audio")
+                NSLog("[GeminiSession] Pre-connect succeeded — awaiting user tap for audio (balance: %@)", walletBal ?? "unknown")
             } else {
                 NSLog("[GeminiSession] Pre-connect failed (will retry on button tap)")
             }
@@ -408,7 +420,7 @@ class GeminiSessionViewModel: ObservableObject {
 
         // Full connect flow — BetWhisper: use VoiceSwapWallet directly
         let walletAddr = VoiceSwapWallet.shared.isCreated ? VoiceSwapWallet.shared.address : paymentViewModel?.walletAddress
-        let walletBal = paymentViewModel?.walletBalance
+        let walletBal = cachedWalletBalance != nil ? String(format: "%.2f MON", cachedWalletBalance!) : nil
         geminiService.systemPrompt = VoiceSwapSystemPrompt.build(
             walletAddress: walletAddr,
             balance: walletBal
@@ -957,6 +969,17 @@ class GeminiSessionViewModel: ObservableObject {
                     result = ["status": "error", "error": "Bet expired. MON price may have changed. Call place_bet again to get fresh pricing."]
                     break
                 }
+
+                // Pre-check balance before attempting tx
+                if VoiceSwapWallet.shared.isCreated {
+                    if let balance = try? await VoiceSwapWallet.shared.getBalance(), balance < bet.monAmount {
+                        self.pendingBet = nil
+                        NSLog("[Gemini] confirm_bet: insufficient balance %.2f MON < %.2f MON needed", balance, bet.monAmount)
+                        result = ["status": "error", "error": "Insufficient balance. You have \(String(format: "%.2f", balance)) MON but need ~\(String(format: "%.1f", bet.monAmount)) MON. Top up your wallet first."]
+                        break
+                    }
+                }
+
                 self.pendingBet = nil
 
                 // Mute mic during execution
