@@ -193,7 +193,7 @@ struct BetWhisperOnboardingView: View {
 
     private var categoriesStep: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("What do you bet on?")
+            Text("What do you predict?")
                 .font(.system(size: 32, weight: .bold))
                 .foregroundColor(.white)
                 .padding(.horizontal, 24)

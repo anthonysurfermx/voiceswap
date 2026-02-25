@@ -740,7 +740,7 @@ struct BetWhisperPortfolioView: View {
                 .font(.system(size: 18, weight: .bold))
                 .foregroundColor(.white)
 
-            Text("Connect a wallet on Monad to place bets and track your positions.")
+            Text("Connect a wallet on Monad to trade prediction markets and track your positions.")
                 .font(.system(size: 14))
                 .foregroundColor(.white.opacity(0.4))
                 .multilineTextAlignment(.center)

@@ -610,7 +610,7 @@ struct BetWhisperChatView: View {
             Button {
                 handleAskAmount(market, analysis: analysis)
             } label: {
-                Text(loc("BET", "APOSTAR"))
+                Text(loc("TRADE", "INVERTIR"))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(.black)
                     .frame(maxWidth: .infinity)
@@ -683,10 +683,10 @@ struct BetWhisperChatView: View {
                             .fill(sizePct >= 25 ? red400 : sizePct >= 5 ? amber400 : emerald)
                             .frame(width: 2)
                         Text(sizePct >= 5
-                             ? loc("Your bet is \(sizePct)% of market volume. This will move the price against you.",
-                                   "Tu apuesta es \(sizePct)% del volumen. Esto movera el precio en tu contra.")
-                             : loc("Your bet size has negligible market impact.",
-                                   "Tu apuesta tiene impacto minimo en el mercado."))
+                             ? loc("Your position is \(sizePct)% of market volume. This will move the price against you.",
+                                   "Tu posicion es \(sizePct)% del volumen. Esto movera el precio en tu contra.")
+                             : loc("Your position size has negligible market impact.",
+                                   "Tu posicion tiene impacto minimo en el mercado."))
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundColor(sizePct >= 25 ? red400.opacity(0.7) : sizePct >= 5 ? amber400.opacity(0.7) : emerald.opacity(0.7))
                     }
@@ -823,7 +823,7 @@ struct BetWhisperChatView: View {
                 .padding(14)
             } else {
                 VStack(spacing: 10) {
-                    Text(loc("No edge detected. Bet at your own risk.", "Sin ventaja detectada. Apuesta bajo tu propio riesgo."))
+                    Text(loc("No edge detected. Trade at your own risk.", "Sin ventaja detectada. Invierte bajo tu propio riesgo."))
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(amber400.opacity(0.7))
 
@@ -831,7 +831,7 @@ struct BetWhisperChatView: View {
                         Button {
                             handleBetPrompt(side: "Yes", slug: market.slug, signalHash: signalHash, conditionId: market.conditionId)
                         } label: {
-                            Text("BET YES")
+                            Text("TRADE YES")
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundColor(emerald)
                                 .frame(maxWidth: .infinity)
@@ -841,7 +841,7 @@ struct BetWhisperChatView: View {
                         Button {
                             handleBetPrompt(side: "No", slug: market.slug, signalHash: signalHash, conditionId: market.conditionId)
                         } label: {
-                            Text("BET NO")
+                            Text("TRADE NO")
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundColor(red400)
                                 .frame(maxWidth: .infinity)
@@ -872,7 +872,7 @@ struct BetWhisperChatView: View {
                 Button {
                     handleBetPrompt(side: "Yes", slug: market.slug, signalHash: "skip")
                 } label: {
-                    Text("BET YES")
+                    Text("TRADE YES")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(emerald)
                         .frame(maxWidth: .infinity)
@@ -882,7 +882,7 @@ struct BetWhisperChatView: View {
                 Button {
                     handleBetPrompt(side: "No", slug: market.slug, signalHash: "skip")
                 } label: {
-                    Text("BET NO")
+                    Text("TRADE NO")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(red400)
                         .frame(maxWidth: .infinity)
@@ -934,7 +934,7 @@ struct BetWhisperChatView: View {
             HStack(spacing: 6) {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundColor(emerald)
-                Text(loc("BET PLACED", "APUESTA CONFIRMADA"))
+                Text(loc("TRADE CONFIRMED", "POSICION CONFIRMADA"))
                     .font(.system(size: 11, weight: .bold, design: .monospaced))
                     .foregroundColor(emerald)
                     .tracking(1)
@@ -1407,7 +1407,7 @@ struct BetWhisperChatView: View {
     // Step 0 → Step 1: Market selected
     private func handleMarketSelect(_ market: MarketItem) {
         messages.append(ChatMessage(role: .user, text: market.question))
-        var msg = ChatMessage(role: .assistant, text: loc("Want my analysis before you bet?", "Quieres mi analisis antes de apostar?"))
+        var msg = ChatMessage(role: .assistant, text: loc("Want my analysis before you trade?", "Quieres mi analisis antes de invertir?"))
         msg.attachment = .marketPreview(market)
         messages.append(msg)
     }
@@ -1449,7 +1449,7 @@ struct BetWhisperChatView: View {
 
     // Step 1 skip → Bet Choice
     private func handleSkipToChoice(_ market: MarketItem) {
-        messages.append(ChatMessage(role: .user, text: loc("Skip, bet now", "Saltar, apostar ya")))
+        messages.append(ChatMessage(role: .user, text: loc("Skip, trade now", "Saltar, invertir ya")))
         var msg = ChatMessage(role: .assistant, text: "")
         msg.attachment = .betChoice(market)
         messages.append(msg)
@@ -1741,15 +1741,15 @@ struct BetWhisperChatView: View {
                 timestamp: Int(Date().timeIntervalSince1970),
                 source: source, explorerUrl: explorerUrl, shares: shares, price: price, monadTxHash: monadTxHash
             )
-            let confirmText = loc("Bet confirmed on Polymarket.", "Apuesta confirmada en Polymarket.")
+            let confirmText = loc("Trade confirmed on Polymarket.", "Posicion confirmada en Polymarket.")
             var confirmMsg = ChatMessage(role: .assistant, text: confirmText)
             confirmMsg.attachment = .betConfirmed(record)
             messages.append(confirmMsg)
             // TTS: bet confirmation
             let priceStr = price != nil ? String(format: " at %.2f", price!) : ""
             let ttsText = loc(
-                "Bet placed. \(amount) dollars on \(side)\(priceStr).",
-                "Apuesta confirmada. \(amount) dolares en \(side)\(priceStr)."
+                "Trade placed. \(amount) dollars on \(side)\(priceStr).",
+                "Posicion confirmada. \(amount) dolares en \(side)\(priceStr)."
             )
             speakIfEnabled(ttsText)
             isLoading = false
