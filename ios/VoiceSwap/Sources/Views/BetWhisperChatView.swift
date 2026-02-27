@@ -30,9 +30,13 @@ enum ChatAttachment {
     case betAmountInput(MarketItem, DeepAnalysisResult)
     case successProbability(ProbabilityResult, MarketItem, String)
     case betChoice(MarketItem)
-    case betPrompt(String, String, String) // side, slug, signalHash
+    case betPrompt(String, String, String, String) // side, slug, signalHash, conditionId
+    case betConfirm(String, String, String, String, String) // side, slug, signalHash, amount, conditionId
     case betConfirmed(BetRecord)
     case contextInsight(String, [String]) // insight, keyStats
+    case balanceView([PositionItem], Double, Double) // positions, totalValue, totalPnl
+    case pinVerify // inline PIN pad
+    case sellConfirmed(String) // sell result text
     case loading(String)
     case error(String)
 }
@@ -76,6 +80,13 @@ struct BetWhisperChatView: View {
     @State private var currentConversationId: UUID?
     @State private var showConversationList: Bool = false
 
+    // Balance / PIN / Sell
+    @State private var pinDigits: String = ""
+    @State private var pinError: String? = nil
+    @State private var pinLoading: Bool = false
+    @State private var sellingPositionId: Int? = nil
+    private let security = SecuritySettings.shared
+
     private let assistantName: String
     private let categories: [String]
 
@@ -90,6 +101,21 @@ struct BetWhisperChatView: View {
 
             VStack(spacing: 0) {
                 chatHeader
+
+                // Beta disclaimer
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 9))
+                        .foregroundColor(amber400)
+                    Text("Proceed with caution — Beta v0.1. Experimental version, may involve financial risks.")
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundColor(amber400.opacity(0.8))
+                        .lineLimit(2)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(amber400.opacity(0.05))
 
                 // Gemini Live session banner
                 if isGeminiActive {
@@ -313,12 +339,20 @@ struct BetWhisperChatView: View {
             successProbabilityView(prob, market: market, signalHash: signalHash)
         case .betChoice(let market):
             betChoiceView(market)
-        case .betPrompt(let side, let slug, let signalHash):
-            betPromptView(side: side, slug: slug, signalHash: signalHash)
+        case .betPrompt(let side, let slug, let signalHash, let conditionId):
+            betPromptView(side: side, slug: slug, signalHash: signalHash, conditionId: conditionId)
+        case .betConfirm(let side, let slug, let signalHash, let amount, let conditionId):
+            betConfirmView(side: side, slug: slug, signalHash: signalHash, amount: amount, conditionId: conditionId)
         case .betConfirmed(let record):
             betConfirmedView(record)
         case .contextInsight(let insight, let keyStats):
             contextInsightView(insight, keyStats: keyStats)
+        case .balanceView(let positions, let totalValue, let totalPnl):
+            balanceViewAttachment(positions, totalValue: totalValue, totalPnl: totalPnl)
+        case .pinVerify:
+            pinVerifyAttachment()
+        case .sellConfirmed(let text):
+            sellConfirmedView(text)
         case .loading(let text):
             loadingView(text)
         case .error(let text):
@@ -819,6 +853,30 @@ struct BetWhisperChatView: View {
                                 .overlay(Rectangle().stroke(sideColor.opacity(0.15), lineWidth: 1))
                         }
                     }
+
+                    // Manual YES / NO choice (override recommendation)
+                    HStack(spacing: 8) {
+                        Button {
+                            handleBetPrompt(side: "Yes", slug: market.slug, signalHash: signalHash, conditionId: market.conditionId)
+                        } label: {
+                            Text("TRADE YES")
+                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                .foregroundColor(emerald.opacity(side == "Yes" ? 0.3 : 0.7))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                                .overlay(Rectangle().stroke(emerald.opacity(0.2), lineWidth: 1))
+                        }
+                        Button {
+                            handleBetPrompt(side: "No", slug: market.slug, signalHash: signalHash, conditionId: market.conditionId)
+                        } label: {
+                            Text("TRADE NO")
+                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                .foregroundColor(red400.opacity(side == "No" ? 0.3 : 0.7))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                                .overlay(Rectangle().stroke(red400.opacity(0.2), lineWidth: 1))
+                        }
+                    }
                 }
                 .padding(14)
             } else {
@@ -898,7 +956,7 @@ struct BetWhisperChatView: View {
 
     // MARK: - Bet Prompt (amount entry)
 
-    private func betPromptView(side: String, slug: String, signalHash: String) -> some View {
+    private func betPromptView(side: String, slug: String, signalHash: String, conditionId: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(loc("How much?", "Cuanto?"))
                 .font(.system(size: 13))
@@ -907,7 +965,7 @@ struct BetWhisperChatView: View {
             HStack(spacing: 6) {
                 ForEach(["1", "5", "10", "25"], id: \.self) { amt in
                     Button {
-                        handlePlaceBet(side: side, slug: slug, signalHash: signalHash, amount: amt)
+                        showBetConfirmation(side: side, slug: slug, signalHash: signalHash, amount: amt, conditionId: conditionId)
                     } label: {
                         Text("$\(amt)")
                             .font(.system(size: 11, weight: .semibold, design: .monospaced))
@@ -924,11 +982,222 @@ struct BetWhisperChatView: View {
         .overlay(Rectangle().stroke(Color.white.opacity(0.1), lineWidth: 1))
     }
 
+    private func showBetConfirmation(side: String, slug: String, signalHash: String, amount: String, conditionId: String) {
+        messages.append(ChatMessage(role: .user, text: "$\(amount) on \(side)"))
+        var msg = ChatMessage(role: .assistant, text: loc("Confirm your trade:", "Confirma tu operacion:"))
+        msg.attachment = .betConfirm(side, slug, signalHash, amount, conditionId)
+        messages.append(msg)
+    }
+
+    // MARK: - Bet Confirm (PIN + Face ID gate)
+
+    private func betConfirmView(side: String, slug: String, signalHash: String, amount: String, conditionId: String) -> some View {
+        let sideColor = side == "Yes" ? emerald : red400
+
+        return VStack(alignment: .leading, spacing: 12) {
+            // Header
+            HStack(spacing: 6) {
+                Image(systemName: "lock.shield.fill")
+                    .foregroundColor(amber400)
+                    .font(.system(size: 14))
+                Text(loc("CONFIRM TRADE", "CONFIRMAR OPERACION"))
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundColor(amber400)
+                    .tracking(1)
+            }
+
+            // Trade summary
+            HStack(spacing: 12) {
+                Text(side.uppercased())
+                    .font(.system(size: 15, weight: .bold, design: .monospaced))
+                    .foregroundColor(sideColor)
+                Text("$\(amount) USD")
+                    .font(.system(size: 15, weight: .medium, design: .monospaced))
+                    .foregroundColor(.white)
+            }
+
+            // Market slug
+            Text(slug.replacingOccurrences(of: "-", with: " ").prefix(50).uppercased())
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(.white.opacity(0.4))
+                .lineLimit(1)
+
+            Divider().background(Color.white.opacity(0.1))
+
+            // PIN entry
+            Text(loc("Enter PIN to confirm:", "Ingresa tu PIN para confirmar:"))
+                .font(.system(size: 11))
+                .foregroundColor(.white.opacity(0.6))
+
+            // PIN dots
+            HStack(spacing: 12) {
+                ForEach(0..<4, id: \.self) { i in
+                    ZStack {
+                        Rectangle()
+                            .fill(Color.white.opacity(0.06))
+                            .frame(width: 36, height: 40)
+                            .overlay(Rectangle().stroke(
+                                pinDigits.count > i ? sideColor : Color.white.opacity(0.2),
+                                lineWidth: 1
+                            ))
+                        if pinDigits.count > i {
+                            Circle()
+                                .fill(sideColor)
+                                .frame(width: 10, height: 10)
+                        }
+                    }
+                }
+                Spacer()
+            }
+
+            if let error = pinError {
+                Text(error)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(red400)
+            }
+
+            // Number pad (compact)
+            VStack(spacing: 4) {
+                ForEach([[1,2,3],[4,5,6],[7,8,9]], id: \.self) { row in
+                    HStack(spacing: 4) {
+                        ForEach(row, id: \.self) { num in
+                            Button {
+                                guard pinDigits.count < 4 else { return }
+                                pinDigits += "\(num)"
+                                if pinDigits.count == 4 {
+                                    handleTradeConfirmPin(pin: pinDigits, side: side, slug: slug, signalHash: signalHash, amount: amount, conditionId: conditionId)
+                                }
+                            } label: {
+                                Text("\(num)")
+                                    .font(.system(size: 16, weight: .medium, design: .monospaced))
+                                    .foregroundColor(.white)
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 36)
+                                    .background(Color.white.opacity(0.06))
+                            }
+                        }
+                    }
+                }
+                HStack(spacing: 4) {
+                    Color.clear.frame(height: 36)
+                    Button {
+                        guard pinDigits.count < 4 else { return }
+                        pinDigits += "0"
+                        if pinDigits.count == 4 {
+                            handleTradeConfirmPin(pin: pinDigits, side: side, slug: slug, signalHash: signalHash, amount: amount, conditionId: conditionId)
+                        }
+                    } label: {
+                        Text("0")
+                            .font(.system(size: 16, weight: .medium, design: .monospaced))
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 36)
+                            .background(Color.white.opacity(0.06))
+                    }
+                    Button {
+                        if !pinDigits.isEmpty { pinDigits.removeLast() }
+                    } label: {
+                        Image(systemName: "delete.left")
+                            .font(.system(size: 14))
+                            .foregroundColor(.white.opacity(0.6))
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 36)
+                            .background(Color.white.opacity(0.06))
+                    }
+                }
+            }
+
+            if pinLoading {
+                HStack(spacing: 6) {
+                    ProgressView().tint(sideColor).scaleEffect(0.7)
+                    Text(loc("Verifying...", "Verificando..."))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.5))
+                }
+            }
+        }
+        .padding(12)
+        .background(Rectangle().fill(Color.white.opacity(0.04)))
+        .overlay(Rectangle().stroke(sideColor.opacity(0.3), lineWidth: 1))
+    }
+
+    private func handleTradeConfirmPin(pin: String, side: String, slug: String, signalHash: String, amount: String, conditionId: String) {
+        pinLoading = true
+        pinError = nil
+
+        Task {
+            let wallet = VoiceSwapWallet.shared.address
+            guard let url = URL(string: "https://betwhisper.ai/api/user/pin/verify") else {
+                pinLoading = false
+                pinError = "Invalid URL"
+                return
+            }
+
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try? JSONSerialization.data(withJSONObject: [
+                "wallet": wallet.lowercased(),
+                "pin": pin,
+            ])
+
+            do {
+                let (data, _) = try await URLSession.shared.data(for: request)
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    if let verified = json["verified"] as? Bool, verified,
+                       let token = json["token"] as? String {
+                        UserDefaults.standard.set(token, forKey: "betwhisper_auth_token")
+                        await MainActor.run {
+                            pinDigits = ""
+                            pinLoading = false
+                            // Remove the confirm attachment
+                            messages.removeAll { if case .betConfirm = $0.attachment { return true }; return false }
+                        }
+                        // Face ID before executing
+                        let passed = await security.authenticateWithBiometrics()
+                        if passed {
+                            await MainActor.run {
+                                handlePlaceBet(side: side, slug: slug, signalHash: signalHash, amount: amount, conditionId: conditionId)
+                            }
+                        } else {
+                            await MainActor.run {
+                                messages.append(ChatMessage(role: .assistant, text: loc(
+                                    "Face ID required to execute trade.",
+                                    "Face ID requerido para ejecutar operacion."
+                                )))
+                            }
+                        }
+                    } else {
+                        let attemptsLeft = json["attemptsRemaining"] as? Int
+                        await MainActor.run {
+                            pinLoading = false
+                            pinDigits = ""
+                            if let remaining = attemptsLeft {
+                                pinError = loc("Wrong PIN. \(remaining) attempts left.", "PIN incorrecto. \(remaining) intentos.")
+                            } else {
+                                pinError = loc("Wrong PIN.", "PIN incorrecto.")
+                            }
+                        }
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    pinLoading = false
+                    pinError = loc("Network error. Try again.", "Error de red. Intenta de nuevo.")
+                    pinDigits = ""
+                }
+            }
+        }
+    }
+
     // MARK: - Bet Confirmed
 
     private func betConfirmedView(_ record: BetRecord) -> some View {
-        let isPolymarket = record.source == "polymarket" || record.source == "polymarket-mock"
-        let linkUrl = record.explorerUrl ?? "https://polygonscan.com/tx/\(record.txHash)"
+        // Prefer Monad tx (always real on-chain) over Polygon (may be mock)
+        let monadHash = record.monadTxHash ?? ""
+        let monadUrl = monadHash.isEmpty ? nil : "https://monadscan.com/tx/\(monadHash)"
+        let displayHash = monadHash.isEmpty ? record.txHash : monadHash
+        let displayUrl = monadUrl ?? record.explorerUrl ?? "https://monadscan.com/tx/\(record.txHash)"
 
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
@@ -938,14 +1207,12 @@ struct BetWhisperChatView: View {
                     .font(.system(size: 11, weight: .bold, design: .monospaced))
                     .foregroundColor(emerald)
                     .tracking(1)
-                if isPolymarket {
-                    Text("POLYMARKET")
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
-                        .foregroundColor(emerald.opacity(0.5))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .overlay(Rectangle().stroke(emerald.opacity(0.2), lineWidth: 1))
-                }
+                Text("MONAD")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundColor(emerald.opacity(0.5))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .overlay(Rectangle().stroke(emerald.opacity(0.2), lineWidth: 1))
             }
             HStack(spacing: 12) {
                 Text(record.side.uppercased())
@@ -955,7 +1222,7 @@ struct BetWhisperChatView: View {
                     .font(.system(size: 13, weight: .medium, design: .monospaced))
                     .foregroundColor(.white)
             }
-            if isPolymarket, let price = record.price, let shares = record.shares {
+            if let price = record.price, let shares = record.shares {
                 HStack(spacing: 16) {
                     Text("Price: \(String(format: "%.2f", price))")
                     Text("Shares: \(String(format: "%.1f", shares))")
@@ -964,12 +1231,12 @@ struct BetWhisperChatView: View {
                 .foregroundColor(.white.opacity(0.3))
             }
             Button {
-                if let url = URL(string: linkUrl) {
+                if let url = URL(string: displayUrl) {
                     UIApplication.shared.open(url)
                 }
             } label: {
                 HStack(spacing: 4) {
-                    Text(String(record.txHash.prefix(18)) + "...")
+                    Text(String(displayHash.prefix(18)) + "...")
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundColor(.white.opacity(0.4))
                     Image(systemName: "arrow.up.right.square")
@@ -1218,6 +1485,8 @@ struct BetWhisperChatView: View {
 
     private func speakIfEnabled(_ text: String) {
         guard ttsEnabled else { return }
+        // Don't play TTS through glasses speakers when typing in text chat
+        guard !glassesManager.isConnected else { return }
         tts.speak(text)
     }
 
@@ -1356,7 +1625,10 @@ struct BetWhisperChatView: View {
 
     private func handleUserMessage(_ text: String) async {
         let lower = text.lowercased()
-        if lower.contains("trending") || lower.contains("what's hot") || lower.contains("que hay") || lower.contains("popular") {
+        if lower.contains("balance") || lower.contains("posicion") || lower.contains("position")
+            || lower.contains("portfolio") || lower.contains("mis trades") || lower.contains("my trades") {
+            await showBalance()
+        } else if lower.contains("trending") || lower.contains("what's hot") || lower.contains("que hay") || lower.contains("popular") {
             await searchMarkets(query: "trending")
         } else {
             await searchMarkets(query: text)
@@ -1588,16 +1860,16 @@ struct BetWhisperChatView: View {
         messages.append(msg)
     }
 
-    // Step 4: Smart bet
+    // Step 4: Smart bet → show confirmation
     private func handleSmartBet(side: String, slug: String, signalHash: String, amount: String, conditionId: String) {
-        handlePlaceBet(side: side, slug: slug, signalHash: signalHash, amount: amount, conditionId: conditionId)
+        showBetConfirmation(side: side, slug: slug, signalHash: signalHash, amount: amount, conditionId: conditionId)
     }
 
     // Bet prompt → place bet
     private func handleBetPrompt(side: String, slug: String, signalHash: String, conditionId: String = "") {
         messages.append(ChatMessage(role: .user, text: "\(side) on this market"))
         var msg = ChatMessage(role: .assistant, text: loc("How much?", "Cuanto?"))
-        msg.attachment = .betPrompt(side, slug, signalHash)
+        msg.attachment = .betPrompt(side, slug, signalHash, conditionId)
         messages.append(msg)
     }
 
@@ -1606,7 +1878,6 @@ struct BetWhisperChatView: View {
 
     // Place bet: 3-step flow (Monad Intent → CLOB Execution → Confirmed)
     private func handlePlaceBet(side: String, slug: String, signalHash: String, amount: String, conditionId: String = "") {
-        messages.append(ChatMessage(role: .user, text: "$\(amount) on \(side)"))
         isLoading = true
 
         Task {
@@ -1615,8 +1886,8 @@ struct BetWhisperChatView: View {
             messages.append(loadingMsg)
             var loadingId = loadingMsg.id
 
-            // Fetch current MON price
-            var monPriceUSD: Double = 0.021
+            // Fetch current MON price (no hardcoded fallback — abort if unavailable)
+            var monPriceUSD: Double = 0
             do {
                 let url = URL(string: "https://betwhisper.ai/api/mon-price")!
                 let (data, _) = try await URLSession.shared.data(from: url)
@@ -1625,7 +1896,16 @@ struct BetWhisperChatView: View {
                     monPriceUSD = price
                 }
             } catch {
-                print("[BetWhisper] MON price fetch failed, using fallback: \(monPriceUSD)")
+                print("[BetWhisper] MON price fetch failed")
+            }
+            guard monPriceUSD > 0 else {
+                messages.removeAll { $0.id == loadingId }
+                messages.append(ChatMessage(role: .assistant, text: loc(
+                    "Could not fetch MON price. Try again in a moment.",
+                    "No se pudo obtener el precio de MON. Intenta en un momento."
+                )))
+                isLoading = false
+                return
             }
 
             // Calculate MON amount: (USD / MON price) * 1.01 buffer
@@ -1645,6 +1925,7 @@ struct BetWhisperChatView: View {
                     "Wallet not created. Go to the Wallet tab to set up your wallet first.",
                     "Wallet no creada. Ve a la tab Wallet para configurarla."
                 )))
+                isLoading = false
                 return
             }
 
@@ -1662,6 +1943,7 @@ struct BetWhisperChatView: View {
                     "Transaction failed: \(error.localizedDescription). Check your MON balance in the Wallet tab.",
                     "Transaccion fallida: \(error.localizedDescription). Revisa tu balance de MON en la tab Wallet."
                 )))
+                isLoading = false
                 return
             }
             messages.removeAll { $0.id == loadingId }
@@ -1691,6 +1973,9 @@ struct BetWhisperChatView: View {
             var source: String = "demo"
             var shares: Double? = nil
             var price: Double? = nil
+            var tokenId: String? = nil
+            var tickSize: String? = nil
+            var negRisk: Bool? = nil
 
             if !resolvedConditionId.isEmpty {
                 do {
@@ -1709,6 +1994,9 @@ struct BetWhisperChatView: View {
                         source = result.source ?? "polymarket"
                         shares = result.shares
                         price = result.price
+                        tokenId = result.tokenId
+                        tickSize = result.tickSize
+                        negRisk = result.negRisk
                         print("[BetWhisper] CLOB order: \(result.orderID ?? "") tx: \(finalTxHash)")
                     } else {
                         print("[BetWhisper] CLOB failed: \(result.error ?? "unknown")")
@@ -1726,14 +2014,34 @@ struct BetWhisperChatView: View {
 
             messages.removeAll { $0.id == loadingId }
 
-            // Record bet on backend
-            _ = try? await VoiceSwapAPIClient.shared.recordBet(
-                marketSlug: slug,
-                side: side,
-                amount: amount,
-                walletAddress: VoiceSwapWallet.shared.isCreated ? VoiceSwapWallet.shared.address : "demo",
-                txHash: finalTxHash
-            )
+            // Record position on backend only when CLOB succeeded (has shares)
+            if let s = shares, s > 0 {
+                do {
+                    let wallet = VoiceSwapWallet.shared.isCreated ? VoiceSwapWallet.shared.address : "demo"
+                    let recordUrl = URL(string: "https://betwhisper.ai/api/bet")!
+                    var recordReq = URLRequest(url: recordUrl)
+                    recordReq.httpMethod = "POST"
+                    recordReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    var recordBody: [String: Any] = [
+                        "marketSlug": slug,
+                        "side": side,
+                        "amount": amount,
+                        "walletAddress": wallet,
+                        "txHash": finalTxHash,
+                        "conditionId": resolvedConditionId,
+                        "monadTxHash": monadTxHash ?? "",
+                        "shares": s,
+                    ]
+                    if let p = price { recordBody["price"] = p }
+                    if let t = tokenId { recordBody["tokenId"] = t }
+                    if let ts = tickSize { recordBody["tickSize"] = ts }
+                    if let nr = negRisk { recordBody["negRisk"] = nr }
+                    recordReq.httpBody = try JSONSerialization.data(withJSONObject: recordBody)
+                    _ = try await URLSession.shared.data(for: recordReq)
+                } catch {
+                    print("[BetWhisper] Record position failed: \(error)")
+                }
+            }
 
             // Step 3: Confirmed
             let record = BetRecord(
@@ -1756,16 +2064,441 @@ struct BetWhisperChatView: View {
         }
     }
 
+    // MARK: - Balance Flow (PIN + Face ID)
+
+    private func showBalance() async {
+        guard VoiceSwapWallet.shared.isCreated else {
+            messages.append(ChatMessage(role: .assistant, text: loc(
+                "Create your wallet first in the Wallet tab.",
+                "Crea tu wallet primero en la tab Wallet."
+            )))
+            return
+        }
+
+        // Check if we have a valid PIN token
+        if let token = UserDefaults.standard.string(forKey: "betwhisper_auth_token") {
+            await fetchAndShowBalance(token: token)
+        } else {
+            // Need PIN verification — show inline PIN pad
+            var msg = ChatMessage(role: .assistant, text: loc("Enter your PIN to view positions.", "Ingresa tu PIN para ver posiciones."))
+            msg.attachment = .pinVerify
+            messages.append(msg)
+        }
+    }
+
+    private func fetchAndShowBalance(token: String) async {
+        let loadingMsg = ChatMessage(role: .assistant, text: "", attachment: .loading(loc("Loading positions...", "Cargando posiciones...")))
+        messages.append(loadingMsg)
+        let loadingId = loadingMsg.id
+
+        do {
+            let wallet = VoiceSwapWallet.shared.address
+            let response = try await VoiceSwapAPIClient.shared.fetchBalance(wallet: wallet, token: token)
+            messages.removeAll { $0.id == loadingId }
+
+            let text = response.positions.isEmpty
+                ? loc("No open positions.", "Sin posiciones abiertas.")
+                : loc("Your positions:", "Tus posiciones:")
+            var msg = ChatMessage(role: .assistant, text: text)
+            msg.attachment = .balanceView(response.positions, response.totalValue, response.totalPnl)
+            messages.append(msg)
+        } catch {
+            messages.removeAll { $0.id == loadingId }
+            // If 401 (token expired), prompt for PIN again
+            if case APIError.httpError(401) = error {
+                UserDefaults.standard.removeObject(forKey: "betwhisper_auth_token")
+                var msg = ChatMessage(role: .assistant, text: loc("Session expired. Enter your PIN again.", "Sesion expirada. Ingresa tu PIN de nuevo."))
+                msg.attachment = .pinVerify
+                messages.append(msg)
+            } else {
+                messages.append(ChatMessage(role: .assistant, text: "", attachment: .error(loc("Failed to load positions.", "Error al cargar posiciones."))))
+            }
+        }
+    }
+
+    private func handlePinSubmit(_ pin: String) {
+        pinLoading = true
+        pinError = nil
+
+        Task {
+            let wallet = VoiceSwapWallet.shared.address
+            guard let url = URL(string: "https://betwhisper.ai/api/user/pin/verify") else {
+                pinLoading = false
+                pinError = "Invalid URL"
+                return
+            }
+
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try? JSONSerialization.data(withJSONObject: [
+                "wallet": wallet.lowercased(),
+                "pin": pin,
+            ])
+
+            do {
+                let (data, _) = try await URLSession.shared.data(for: request)
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    if let verified = json["verified"] as? Bool, verified,
+                       let token = json["token"] as? String {
+                        UserDefaults.standard.set(token, forKey: "betwhisper_auth_token")
+                        await MainActor.run {
+                            pinDigits = ""
+                            pinLoading = false
+                            // Remove PIN attachment and show balance
+                            messages.removeAll { if case .pinVerify = $0.attachment { return true }; return false }
+                        }
+                        // Face ID before showing sensitive data
+                        let passed = await security.authenticateWithBiometrics()
+                        if passed {
+                            await fetchAndShowBalance(token: token)
+                        } else {
+                            await MainActor.run {
+                                messages.append(ChatMessage(role: .assistant, text: loc("Face ID required to view positions.", "Face ID requerido para ver posiciones.")))
+                            }
+                        }
+                    } else {
+                        await MainActor.run {
+                            pinLoading = false
+                            pinDigits = ""
+                            if let remaining = json["attemptsRemaining"] as? Int {
+                                pinError = loc("Wrong PIN. \(remaining) attempts left.", "PIN incorrecto. \(remaining) intentos restantes.")
+                            } else if let locked = json["locked"] as? Bool, locked {
+                                pinError = loc("Too many attempts. Try later.", "Demasiados intentos. Intenta despues.")
+                            } else {
+                                pinError = loc("Wrong PIN", "PIN incorrecto")
+                            }
+                        }
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    pinLoading = false
+                    pinError = loc("Network error", "Error de red")
+                }
+            }
+        }
+    }
+
+    // MARK: - Sell Flow (multi-step timeline like web)
+
+    private func handleSellPosition(_ position: PositionItem) {
+        sellingPositionId = position.id
+
+        Task {
+            // Face ID before selling
+            let passed = await security.authenticateWithBiometrics()
+            guard passed else {
+                await MainActor.run {
+                    sellingPositionId = nil
+                    messages.append(ChatMessage(role: .assistant, text: loc("Face ID required to sell.", "Face ID requerido para vender.")))
+                }
+                return
+            }
+
+            // Step 1: CLOB Sell
+            let step1Msg = ChatMessage(role: .assistant, text: "", attachment: .loading(loc("CLOB SELL — Executing on Polymarket...", "CLOB SELL — Ejecutando en Polymarket...")))
+            await MainActor.run { messages.append(step1Msg) }
+            let step1Id = step1Msg.id
+
+            do {
+                let wallet = VoiceSwapWallet.shared.address
+                let result = try await VoiceSwapAPIClient.shared.sellPosition(
+                    wallet: wallet,
+                    tokenId: position.tokenId,
+                    shares: position.shares,
+                    tickSize: position.tickSize,
+                    negRisk: position.negRisk,
+                    marketSlug: position.marketSlug
+                )
+
+                await MainActor.run {
+                    messages.removeAll { $0.id == step1Id }
+
+                    guard result.success == true else {
+                        sellingPositionId = nil
+                        messages.append(ChatMessage(role: .assistant, text: "", attachment: .error(result.error ?? loc("Sell failed", "Venta fallida"))))
+                        return
+                    }
+
+                    let usd = result.usdReceived ?? 0
+                    let sharesStr = String(format: "%.1f", result.sharesSold ?? position.shares)
+                    let priceStr = String(format: "%.2f", result.price ?? 0)
+
+                    // Step 1 done
+                    var clobMsg = ChatMessage(role: .assistant, text: loc(
+                        "CLOB SELL — Sold \(sharesStr) shares @ $\(priceStr) = $\(String(format: "%.2f", usd))",
+                        "CLOB SELL — Vendidas \(sharesStr) shares @ $\(priceStr) = $\(String(format: "%.2f", usd))"
+                    ))
+                    clobMsg.attachment = .sellConfirmed(loc("Polygon", "Polygon"))
+                    messages.append(clobMsg)
+
+                    // Step 2: MON Cashout result
+                    if let mc = result.monCashout {
+                        let monStr = String(format: "%.2f", mc.monAmount)
+                        if mc.status == "sent" {
+                            var cashoutMsg = ChatMessage(role: .assistant, text: loc(
+                                "MON CASHOUT — \(monStr) MON sent to your wallet",
+                                "MON CASHOUT — \(monStr) MON enviados a tu wallet"
+                            ))
+                            cashoutMsg.attachment = .sellConfirmed(loc("Monad", "Monad"))
+                            messages.append(cashoutMsg)
+                        } else if mc.status == "pending" {
+                            messages.append(ChatMessage(role: .assistant, text: loc(
+                                "MON CASHOUT — \(monStr) MON pending (server low balance)",
+                                "MON CASHOUT — \(monStr) MON pendiente (balance servidor bajo)"
+                            )))
+                        } else {
+                            messages.append(ChatMessage(role: .assistant, text: "", attachment: .error(loc(
+                                "MON CASHOUT — Failed. \(monStr) MON will be retried.",
+                                "MON CASHOUT — Fallido. \(monStr) MON se reintentara."
+                            ))))
+                        }
+                    }
+
+                    sellingPositionId = nil
+                }
+            } catch {
+                await MainActor.run {
+                    messages.removeAll { $0.id == step1Id }
+                    sellingPositionId = nil
+                    messages.append(ChatMessage(role: .assistant, text: "", attachment: .error(loc("Sell failed: \(error.localizedDescription)", "Venta fallida: \(error.localizedDescription)"))))
+                }
+            }
+        }
+    }
+
+    // MARK: - Balance View Attachment
+
+    private func balanceViewAttachment(_ positions: [PositionItem], totalValue: Double, totalPnl: Double) -> some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Text(loc("YOUR POSITIONS", "TUS POSICIONES"))
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.3))
+                    .tracking(1.5)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Rectangle().fill(Color.white.opacity(0.02)))
+            .overlay(Rectangle().frame(height: 1).foregroundColor(.white.opacity(0.06)), alignment: .bottom)
+
+            // Summary: Value + P&L
+            HStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Value")
+                        .font(.system(size: 10))
+                        .foregroundColor(.white.opacity(0.3))
+                    Text("$\(String(format: "%.2f", totalValue))")
+                        .font(.system(size: 16, weight: .bold, design: .monospaced))
+                        .foregroundColor(.white)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+
+                Rectangle().fill(Color.white.opacity(0.06)).frame(width: 1)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("P&L")
+                        .font(.system(size: 10))
+                        .foregroundColor(.white.opacity(0.3))
+                    Text("\(totalPnl >= 0 ? "+" : "")$\(String(format: "%.2f", totalPnl))")
+                        .font(.system(size: 16, weight: .bold, design: .monospaced))
+                        .foregroundColor(totalPnl >= 0 ? emerald : red400)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+            }
+            .background(Rectangle().fill(Color.white.opacity(0.03)))
+            .overlay(Rectangle().frame(height: 1).foregroundColor(.white.opacity(0.06)), alignment: .bottom)
+
+            // Positions list
+            if positions.isEmpty {
+                Text(loc("No open positions", "Sin posiciones abiertas"))
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.2))
+                    .padding(20)
+            } else {
+                ForEach(positions) { pos in
+                    positionRow(pos)
+                }
+            }
+        }
+        .background(Rectangle().fill(Color.white.opacity(0.04)))
+        .overlay(Rectangle().stroke(Color.white.opacity(0.08), lineWidth: 1))
+    }
+
+    private func positionRow(_ pos: PositionItem) -> some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 8) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(pos.marketSlug.replacingOccurrences(of: "-", with: " ").prefix(40).uppercased())
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.white.opacity(0.7))
+                        .lineLimit(1)
+
+                    HStack(spacing: 8) {
+                        Text(pos.side.uppercased())
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundColor(pos.side == "Yes" ? emerald : red400)
+
+                        Text("\(String(format: "%.1f", pos.shares)) @ $\(String(format: "%.2f", pos.avgPrice)) → $\(String(format: "%.2f", pos.currentPrice))")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.3))
+                    }
+                }
+
+                Spacer()
+
+                // P&L
+                Text("\(pos.pnl >= 0 ? "+" : "")$\(String(format: "%.2f", pos.pnl))")
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundColor(pos.pnl >= 0 ? emerald : red400)
+
+                // Sell button
+                if sellingPositionId == pos.id {
+                    ProgressView().tint(.white).scaleEffect(0.7)
+                        .frame(width: 50)
+                } else {
+                    Button {
+                        handleSellPosition(pos)
+                    } label: {
+                        Text("SELL")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .tracking(1)
+                            .foregroundColor(amber400)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .overlay(Rectangle().stroke(amber400.opacity(0.3), lineWidth: 1))
+                    }
+                }
+            }
+            .padding(12)
+
+            Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
+        }
+    }
+
+    // MARK: - PIN Verify Attachment
+
+    private func pinVerifyAttachment() -> some View {
+        VStack(spacing: 16) {
+            // PIN dots
+            HStack(spacing: 16) {
+                ForEach(0..<4, id: \.self) { i in
+                    Circle()
+                        .fill(i < pinDigits.count ? Color.white : Color.white.opacity(0.15))
+                        .frame(width: 14, height: 14)
+                        .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 1))
+                }
+            }
+
+            // Error
+            if let err = pinError {
+                Text(err)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(red400)
+            }
+
+            if pinLoading {
+                ProgressView().tint(.white.opacity(0.6))
+            } else {
+                // Number pad (compact)
+                VStack(spacing: 10) {
+                    ForEach(0..<3, id: \.self) { row in
+                        HStack(spacing: 16) {
+                            ForEach(1...3, id: \.self) { col in
+                                let digit = row * 3 + col
+                                pinButton(String(digit))
+                            }
+                        }
+                    }
+                    HStack(spacing: 16) {
+                        Color.clear.frame(width: 52, height: 44)
+                        pinButton("0")
+                        Button {
+                            if !pinDigits.isEmpty { pinDigits.removeLast() }
+                        } label: {
+                            Image(systemName: "delete.left")
+                                .font(.system(size: 16))
+                                .foregroundColor(.white.opacity(0.4))
+                                .frame(width: 52, height: 44)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(Rectangle().fill(Color.white.opacity(0.04)))
+        .overlay(Rectangle().stroke(Color.white.opacity(0.08), lineWidth: 1))
+    }
+
+    private func pinButton(_ digit: String) -> some View {
+        Button {
+            pinError = nil
+            guard pinDigits.count < 4 else { return }
+            pinDigits += digit
+            if pinDigits.count == 4 {
+                handlePinSubmit(pinDigits)
+            }
+        } label: {
+            Text(digit)
+                .font(.system(size: 22, weight: .light))
+                .foregroundColor(.white)
+                .frame(width: 52, height: 44)
+                .background(Circle().fill(Color.white.opacity(0.08)))
+        }
+    }
+
+    // MARK: - Sell Confirmed View
+
+    private func sellConfirmedView(_ text: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 16))
+                .foregroundColor(emerald)
+            Text(text)
+                .font(.system(size: 13))
+                .foregroundColor(.white.opacity(0.7))
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Rectangle().fill(emerald.opacity(0.08)))
+        .overlay(Rectangle().stroke(emerald.opacity(0.2), lineWidth: 1))
+    }
+
     /// Convert MON amount string (e.g. "0.01") to hex wei string (e.g. "0x2386f26fc10000")
+    /// Uses string-based big integer math to avoid UInt64 overflow (max ~18.4 MON)
     private func monToWeiHex(_ amount: String) -> String {
-        // Parse decimal amount and multiply by 10^18
         guard let decimalValue = Decimal(string: amount) else { return "0x0" }
         let weiDecimal = decimalValue * Decimal(sign: .plus, exponent: 18, significand: 1)
         let weiString = NSDecimalNumber(decimal: weiDecimal).stringValue
-        // Remove any decimal point (should be integer after multiplication)
         let cleanWei = weiString.components(separatedBy: ".").first ?? weiString
-        guard let weiUInt = UInt64(cleanWei) else { return "0x0" }
-        return "0x" + String(weiUInt, radix: 16)
+
+        // Use Python-style big integer: parse decimal string digit by digit into hex
+        // This avoids UInt64 overflow for amounts > ~18.4 MON
+        var value: [UInt8] = [] // big-endian bytes
+        for ch in cleanWei {
+            guard let digit = ch.wholeNumberValue else { return "0x0" }
+            // Multiply current value by 10 and add digit
+            var carry = digit
+            for i in (0..<value.count).reversed() {
+                let product = Int(value[i]) * 10 + carry
+                value[i] = UInt8(product & 0xFF)
+                carry = product >> 8
+            }
+            while carry > 0 {
+                value.insert(UInt8(carry & 0xFF), at: 0)
+                carry >>= 8
+            }
+        }
+        if value.isEmpty { return "0x0" }
+        let hex = value.map { String(format: "%02x", $0) }.joined()
+        // Strip leading zeros
+        let stripped = String(hex.drop(while: { $0 == "0" }))
+        return "0x" + (stripped.isEmpty ? "0" : stripped)
     }
 }
 

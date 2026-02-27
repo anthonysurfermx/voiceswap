@@ -467,6 +467,9 @@ public struct ClobExecuteResult: Decodable {
     public let marketSlug: String?
     public let side: String?
     public let error: String?
+    public let tokenId: String?
+    public let tickSize: String?
+    public let negRisk: Bool?
 }
 
 // MARK: - Order History (Transaction History)
@@ -518,6 +521,8 @@ public struct OrderHistoryItem: Decodable, Identifiable {
 public struct OrderHistoryResponse: Decodable {
     public let orders: [OrderHistoryItem]
 }
+
+// NOTE: BalanceResponse, PositionItem, SellResponse, MonCashout are defined in BetWhisperPortfolioView.swift
 
 // MARK: - Groups Models
 
@@ -1177,6 +1182,52 @@ public actor VoiceSwapAPIClient {
             throw APIError.httpError(http.statusCode)
         }
         return try JSONDecoder().decode(OrderHistoryResponse.self, from: data)
+    }
+
+    // MARK: - Balance (PIN-gated)
+
+    /// Fetch user balance with positions (requires JWT from PIN verification)
+    func fetchBalance(wallet: String, token: String) async throws -> BalanceResponse {
+        let url = URL(string: "\(betwhisperURL)/api/user/balance?wallet=\(wallet.lowercased())")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        if http.statusCode == 401 {
+            throw APIError.httpError(401)
+        }
+        if http.statusCode >= 400 {
+            throw APIError.httpError(http.statusCode)
+        }
+        return try JSONDecoder().decode(BalanceResponse.self, from: data)
+    }
+
+    // MARK: - Sell Position
+
+    /// Sell a position via CLOB + MON cashout (Face ID gated on device)
+    func sellPosition(
+        wallet: String, tokenId: String, shares: Double,
+        tickSize: String, negRisk: Bool, marketSlug: String
+    ) async throws -> SellResponse {
+        let url = URL(string: "\(betwhisperURL)/api/bet/sell")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("ios", forHTTPHeaderField: "X-Platform")
+        let body: [String: Any] = [
+            "wallet": wallet.lowercased(),
+            "tokenId": tokenId,
+            "shares": shares,
+            "tickSize": tickSize,
+            "negRisk": negRisk,
+            "marketSlug": marketSlug,
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, _) = try await session.data(for: request)
+        return try JSONDecoder().decode(SellResponse.self, from: data)
     }
 
     // MARK: - Health Check

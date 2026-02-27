@@ -13,6 +13,7 @@ struct BetWhisperTabView: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject private var glassesManager = MetaGlassesManager.shared
     @State private var isOnboarded: Bool = UserDefaults.standard.bool(forKey: "betwhisper_onboarded")
+    @State private var isPINUnlocked: Bool = false
     @State private var selectedTab: Int = 0
     @State private var isConnectingGlasses = false
 
@@ -22,6 +23,8 @@ struct BetWhisperTabView: View {
 
             if !isOnboarded {
                 BetWhisperOnboardingView(isComplete: $isOnboarded)
+            } else if VoiceSwapWallet.shared.isCreated && !isPINUnlocked {
+                BetWhisperPINView(isUnlocked: $isPINUnlocked, walletAddress: VoiceSwapWallet.shared.address)
             } else {
                 VStack(spacing: 0) {
                     // Tab content

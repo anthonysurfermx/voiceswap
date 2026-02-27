@@ -3,11 +3,10 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 60;
+	objectVersion = 56;
 	objects = {
 
 /* Begin PBXBuildFile section */
-		SK0000010000000000000001 /* Secrets.plist in Resources */ = {isa = PBXBuildFile; fileRef = SK0000020000000000000001 /* Secrets.plist */; };
 		1A0000010000000000000001 /* VoiceSwapApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000020000000000000001 /* VoiceSwapApp.swift */; };
 		1A0000030000000000000001 /* VoiceSwapMainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000040000000000000001 /* VoiceSwapMainView.swift */; };
 		1A0000050000000000000001 /* MetaGlassesManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000060000000000000001 /* MetaGlassesManager.swift */; };
@@ -15,23 +14,12 @@
 		1A0000090000000000000001 /* VoiceSwapViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000A0000000000000001 /* VoiceSwapViewModel.swift */; };
 		1A00000B0000000000000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1A00000C0000000000000001 /* Assets.xcassets */; };
 		1A00000D0000000000000001 /* WalletConnectManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000F0000000000000001 /* WalletConnectManager.swift */; };
-		C0D0153A2F0000000000001 /* VoiceSwapCryptoProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0153B2F0000000000001 /* VoiceSwapCryptoProvider.swift */; };
 		1A0000110000000000000001 /* GeminiConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000370000000000000001 /* GeminiConfig.swift */; };
 		1A0000120000000000000001 /* GeminiLiveService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000380000000000000001 /* GeminiLiveService.swift */; };
 		1A0000130000000000000001 /* AudioManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000390000000000000001 /* AudioManager.swift */; };
 		1A0000140000000000000001 /* GeminiSessionViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00003A0000000000000001 /* GeminiSessionViewModel.swift */; };
 		1A0000150000000000000001 /* VoiceSwapSystemPrompt.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00003B0000000000000001 /* VoiceSwapSystemPrompt.swift */; };
 		1A0000160000000000000001 /* SecuritySettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00003C0000000000000002 /* SecuritySettings.swift */; };
-		B10000010000000000000001 /* VoiceSwapWallet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000020000000000000001 /* VoiceSwapWallet.swift */; };
-		B10000030000000000000001 /* WalletSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000040000000000000001 /* WalletSetupView.swift */; };
-		BW0000010000000000000001 /* BetWhisperOnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BW0000020000000000000001 /* BetWhisperOnboardingView.swift */; };
-		BW0000030000000000000001 /* BetWhisperChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BW0000040000000000000001 /* BetWhisperChatView.swift */; };
-		BW0000050000000000000001 /* BetWhisperPortfolioView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BW0000060000000000000001 /* BetWhisperPortfolioView.swift */; };
-		BW0000070000000000000001 /* BetWhisperTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BW0000080000000000000001 /* BetWhisperTabView.swift */; };
-		BW0000090000000000000001 /* BetWhisperGroupsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BW00000A0000000000000001 /* BetWhisperGroupsView.swift */; };
-		WV0000010000000000000001 /* BetWhisperWalletView.swift in Sources */ = {isa = PBXBuildFile; fileRef = WV0000020000000000000001 /* BetWhisperWalletView.swift */; };
-		PC0000010000000000000001 /* ProbabilityCalculator.swift in Sources */ = {isa = PBXBuildFile; fileRef = PC0000020000000000000001 /* ProbabilityCalculator.swift */; };
-		B10000050000000000000001 /* secp256k1 in Frameworks */ = {isa = PBXBuildFile; productRef = B10000060000000000000001 /* secp256k1 */; };
 		A515AF1A2EED338A00AC5AD7 /* ReownAppKit in Frameworks */ = {isa = PBXBuildFile; productRef = A515AF192EED338A00AC5AD7 /* ReownAppKit */; };
 		A515AF1C2EED338A00AC5AD7 /* ReownAppKitUI in Frameworks */ = {isa = PBXBuildFile; productRef = A515AF1B2EED338A00AC5AD7 /* ReownAppKitUI */; };
 		A515AF1E2EED338A00AC5AD7 /* ReownRouter in Frameworks */ = {isa = PBXBuildFile; productRef = A515AF1D2EED338A00AC5AD7 /* ReownRouter */; };
@@ -40,15 +28,27 @@
 		A54F4D522EEDEAAE00B63C69 /* MWDATCamera in Frameworks */ = {isa = PBXBuildFile; productRef = A54F4D512EEDEAAE00B63C69 /* MWDATCamera */; };
 		A54F4D542EEDEAAE00B63C69 /* MWDATCore in Frameworks */ = {isa = PBXBuildFile; productRef = A54F4D532EEDEAAE00B63C69 /* MWDATCore */; };
 		A54F4D562EEDEAAE00B63C69 /* MWDATMockDevice in Frameworks */ = {isa = PBXBuildFile; productRef = A54F4D552EEDEAAE00B63C69 /* MWDATMockDevice */; };
-		SR0000010000000000000001 /* SpeechRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = SR0000020000000000000001 /* SpeechRecognizer.swift */; };
+		A5BA86062F51698100F2377A /* BetWhisperPINView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5BA86052F51698100F2377A /* BetWhisperPINView.swift */; };
+		B10000010000000000000001 /* VoiceSwapWallet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000020000000000000001 /* VoiceSwapWallet.swift */; };
+		B10000030000000000000001 /* WalletSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000040000000000000001 /* WalletSetupView.swift */; };
+		B10000050000000000000001 /* secp256k1 in Frameworks */ = {isa = PBXBuildFile; productRef = B10000060000000000000001 /* secp256k1 */; };
+		BW0000010000000000000001 /* BetWhisperOnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BW0000020000000000000001 /* BetWhisperOnboardingView.swift */; };
+		BW0000030000000000000001 /* BetWhisperChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BW0000040000000000000001 /* BetWhisperChatView.swift */; };
+		BW0000050000000000000001 /* BetWhisperPortfolioView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BW0000060000000000000001 /* BetWhisperPortfolioView.swift */; };
+		BW0000070000000000000001 /* BetWhisperTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BW0000080000000000000001 /* BetWhisperTabView.swift */; };
+		BW0000090000000000000001 /* BetWhisperGroupsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BW00000A0000000000000001 /* BetWhisperGroupsView.swift */; };
+		C0D0153A2F0000000000001 /* VoiceSwapCryptoProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0153B2F0000000000001 /* VoiceSwapCryptoProvider.swift */; };
 		CS0000010000000000000001 /* ChatSpeechSynthesizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = CS0000020000000000000001 /* ChatSpeechSynthesizer.swift */; };
 		CV0000010000000000000001 /* Conversation.swift in Sources */ = {isa = PBXBuildFile; fileRef = CV0000020000000000000001 /* Conversation.swift */; };
 		CV0000030000000000000001 /* ConversationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CV0000040000000000000001 /* ConversationStore.swift */; };
 		CV0000050000000000000001 /* ConversationListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CV0000060000000000000001 /* ConversationListView.swift */; };
+		PC0000010000000000000001 /* ProbabilityCalculator.swift in Sources */ = {isa = PBXBuildFile; fileRef = PC0000020000000000000001 /* ProbabilityCalculator.swift */; };
+		SK0000010000000000000001 /* Secrets.plist in Resources */ = {isa = PBXBuildFile; fileRef = SK0000020000000000000001 /* Secrets.plist */; };
+		SR0000010000000000000001 /* SpeechRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = SR0000020000000000000001 /* SpeechRecognizer.swift */; };
+		WV0000010000000000000001 /* BetWhisperWalletView.swift in Sources */ = {isa = PBXBuildFile; fileRef = WV0000020000000000000001 /* BetWhisperWalletView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		SK0000020000000000000001 /* Secrets.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Secrets.plist; sourceTree = "<group>"; };
 		1A0000020000000000000001 /* VoiceSwapApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSwapApp.swift; sourceTree = "<group>"; };
 		1A0000040000000000000001 /* VoiceSwapMainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSwapMainView.swift; sourceTree = "<group>"; };
 		1A0000060000000000000001 /* MetaGlassesManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetaGlassesManager.swift; sourceTree = "<group>"; };
@@ -58,14 +58,14 @@
 		1A00000E0000000000000001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		1A00000F0000000000000001 /* WalletConnectManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletConnectManager.swift; sourceTree = "<group>"; };
 		1A0000100000000000000001 /* VoiceSwap.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VoiceSwap.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		A515AF232EEDAAEA00AC5AD7 /* VoiceSwap.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = VoiceSwap.entitlements; sourceTree = "<group>"; };
-		C0D0153B2F0000000000001 /* VoiceSwapCryptoProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSwapCryptoProvider.swift; sourceTree = "<group>"; };
 		1A0000370000000000000001 /* GeminiConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiConfig.swift; sourceTree = "<group>"; };
 		1A0000380000000000000001 /* GeminiLiveService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiLiveService.swift; sourceTree = "<group>"; };
 		1A0000390000000000000001 /* AudioManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioManager.swift; sourceTree = "<group>"; };
 		1A00003A0000000000000001 /* GeminiSessionViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiSessionViewModel.swift; sourceTree = "<group>"; };
 		1A00003B0000000000000001 /* VoiceSwapSystemPrompt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSwapSystemPrompt.swift; sourceTree = "<group>"; };
 		1A00003C0000000000000002 /* SecuritySettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecuritySettings.swift; sourceTree = "<group>"; };
+		A515AF232EEDAAEA00AC5AD7 /* VoiceSwap.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = VoiceSwap.entitlements; sourceTree = "<group>"; };
+		A5BA86052F51698100F2377A /* BetWhisperPINView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetWhisperPINView.swift; sourceTree = "<group>"; };
 		B10000020000000000000001 /* VoiceSwapWallet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSwapWallet.swift; sourceTree = "<group>"; };
 		B10000040000000000000001 /* WalletSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletSetupView.swift; sourceTree = "<group>"; };
 		BW0000020000000000000001 /* BetWhisperOnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetWhisperOnboardingView.swift; sourceTree = "<group>"; };
@@ -73,13 +73,15 @@
 		BW0000060000000000000001 /* BetWhisperPortfolioView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetWhisperPortfolioView.swift; sourceTree = "<group>"; };
 		BW0000080000000000000001 /* BetWhisperTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetWhisperTabView.swift; sourceTree = "<group>"; };
 		BW00000A0000000000000001 /* BetWhisperGroupsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetWhisperGroupsView.swift; sourceTree = "<group>"; };
-		WV0000020000000000000001 /* BetWhisperWalletView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetWhisperWalletView.swift; sourceTree = "<group>"; };
-		PC0000020000000000000001 /* ProbabilityCalculator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProbabilityCalculator.swift; sourceTree = "<group>"; };
-		SR0000020000000000000001 /* SpeechRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechRecognizer.swift; sourceTree = "<group>"; };
+		C0D0153B2F0000000000001 /* VoiceSwapCryptoProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSwapCryptoProvider.swift; sourceTree = "<group>"; };
 		CS0000020000000000000001 /* ChatSpeechSynthesizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSpeechSynthesizer.swift; sourceTree = "<group>"; };
 		CV0000020000000000000001 /* Conversation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Conversation.swift; sourceTree = "<group>"; };
 		CV0000040000000000000001 /* ConversationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationStore.swift; sourceTree = "<group>"; };
 		CV0000060000000000000001 /* ConversationListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationListView.swift; sourceTree = "<group>"; };
+		PC0000020000000000000001 /* ProbabilityCalculator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProbabilityCalculator.swift; sourceTree = "<group>"; };
+		SK0000020000000000000001 /* Secrets.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Secrets.plist; sourceTree = "<group>"; };
+		SR0000020000000000000001 /* SpeechRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechRecognizer.swift; sourceTree = "<group>"; };
+		WV0000020000000000000001 /* BetWhisperWalletView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetWhisperWalletView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -145,19 +147,6 @@
 			path = Sources;
 			sourceTree = "<group>";
 		};
-		1A00003C0000000000000001 /* Gemini */ = {
-			isa = PBXGroup;
-			children = (
-				1A0000370000000000000001 /* GeminiConfig.swift */,
-				1A0000380000000000000001 /* GeminiLiveService.swift */,
-				1A0000390000000000000001 /* AudioManager.swift */,
-				1A00003A0000000000000001 /* GeminiSessionViewModel.swift */,
-				1A00003B0000000000000001 /* VoiceSwapSystemPrompt.swift */,
-				1A00003C0000000000000002 /* SecuritySettings.swift */,
-			);
-			path = Gemini;
-			sourceTree = "<group>";
-		};
 		1A0000340000000000000001 /* Views */ = {
 			isa = PBXGroup;
 			children = (
@@ -167,6 +156,7 @@
 				BW0000040000000000000001 /* BetWhisperChatView.swift */,
 				BW0000060000000000000001 /* BetWhisperPortfolioView.swift */,
 				BW0000080000000000000001 /* BetWhisperTabView.swift */,
+				A5BA86052F51698100F2377A /* BetWhisperPINView.swift */,
 				BW00000A0000000000000001 /* BetWhisperGroupsView.swift */,
 				WV0000020000000000000001 /* BetWhisperWalletView.swift */,
 				CV0000060000000000000001 /* ConversationListView.swift */,
@@ -192,6 +182,19 @@
 				B10000020000000000000001 /* VoiceSwapWallet.swift */,
 			);
 			path = Wallet;
+			sourceTree = "<group>";
+		};
+		1A00003C0000000000000001 /* Gemini */ = {
+			isa = PBXGroup;
+			children = (
+				1A0000370000000000000001 /* GeminiConfig.swift */,
+				1A0000380000000000000001 /* GeminiLiveService.swift */,
+				1A0000390000000000000001 /* AudioManager.swift */,
+				1A00003A0000000000000001 /* GeminiSessionViewModel.swift */,
+				1A00003B0000000000000001 /* VoiceSwapSystemPrompt.swift */,
+				1A00003C0000000000000002 /* SecuritySettings.swift */,
+			);
+			path = Gemini;
 			sourceTree = "<group>";
 		};
 		CV0000070000000000000001 /* Models */ = {
@@ -262,7 +265,7 @@
 			packageReferences = (
 				A515AF182EED31A300AC5AD7 /* XCRemoteSwiftPackageReference "reown-swift" */,
 				C0D015372F0000000000001 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */,
-				B10000070000000000000001 /* XCRemoteSwiftPackageReference "secp256k1.swift" */,
+				B10000070000000000000001 /* XCRemoteSwiftPackageReference "secp256k1" */,
 			);
 			productRefGroup = 1A0000320000000000000001 /* Products */;
 			projectDirPath = "";
@@ -295,6 +298,7 @@
 				1A0000050000000000000001 /* MetaGlassesManager.swift in Sources */,
 				1A0000070000000000000001 /* VoiceSwapAPIClient.swift in Sources */,
 				1A0000090000000000000001 /* VoiceSwapViewModel.swift in Sources */,
+				A5BA86062F51698100F2377A /* BetWhisperPINView.swift in Sources */,
 				1A00000D0000000000000001 /* WalletConnectManager.swift in Sources */,
 				C0D0153A2F0000000000001 /* VoiceSwapCryptoProvider.swift in Sources */,
 				1A0000110000000000000001 /* GeminiConfig.swift in Sources */,
@@ -549,7 +553,6 @@
 		};
 /* End XCConfigurationList section */
 
-
 /* Begin XCRemoteSwiftPackageReference section */
 		A515AF182EED31A300AC5AD7 /* XCRemoteSwiftPackageReference "reown-swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -559,20 +562,20 @@
 				minimumVersion = 2.0.0;
 			};
 		};
+		B10000070000000000000001 /* XCRemoteSwiftPackageReference "secp256k1" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/GigaBitcoin/secp256k1.swift";
+			requirement = {
+				kind = exactVersion;
+				version = 0.18.0;
+			};
+		};
 		C0D015372F0000000000001 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/facebook/meta-wearables-dat-ios";
 			requirement = {
 				kind = exactVersion;
 				version = 0.4.0;
-			};
-		};
-		B10000070000000000000001 /* XCRemoteSwiftPackageReference "secp256k1.swift" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/GigaBitcoin/secp256k1.swift";
-			requirement = {
-				kind = exactVersion;
-				version = 0.18.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
@@ -620,7 +623,7 @@
 		};
 		B10000060000000000000001 /* secp256k1 */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = B10000070000000000000001 /* XCRemoteSwiftPackageReference "secp256k1.swift" */;
+			package = B10000070000000000000001 /* XCRemoteSwiftPackageReference "secp256k1" */;
 			productName = secp256k1;
 		};
 /* End XCSwiftPackageProductDependency section */

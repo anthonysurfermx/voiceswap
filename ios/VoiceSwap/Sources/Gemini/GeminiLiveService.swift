@@ -367,8 +367,8 @@ class GeminiLiveService: ObservableObject {
                     "disabled": false,
                     "startOfSpeechSensitivity": "START_SENSITIVITY_HIGH",
                     "endOfSpeechSensitivity": "END_SENSITIVITY_HIGH",
-                    "prefixPaddingMs": 100,
-                    "silenceDurationMs": 800
+                    "prefixPaddingMs": 80,
+                    "silenceDurationMs": 500
                 ] as [String: Any],
                 "activityHandling": "START_OF_ACTIVITY_INTERRUPTS",
                 "turnCoverage": "TURN_INCLUDES_ONLY_ACTIVITY"
