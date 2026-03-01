@@ -33,7 +33,7 @@ struct BetWhisperTabView: View {
                         case 0:
                             BetWhisperChatView()
                         case 1:
-                            BetWhisperGroupsView()
+                            BetWhisperPulseMapView()
                         case 2:
                             BetWhisperPortfolioView()
                         case 3:
@@ -59,7 +59,7 @@ struct BetWhisperTabView: View {
     private var tabBar: some View {
         HStack(spacing: 0) {
             tabButton(index: 0, icon: "bubble.left.fill", label: "CHAT")
-            tabButton(index: 1, icon: "person.3.fill", label: "GROUPS")
+            tabButton(index: 1, icon: "map.fill", label: "PULSE")
             tabButton(index: 2, icon: "chart.bar.fill", label: "BETS")
             tabButton(index: 3, icon: "wallet.bifold", label: "WALLET")
             tabButton(index: 4, icon: "gearshape.fill", label: "MORE")
@@ -161,7 +161,7 @@ struct BetWhisperTabView: View {
                 )
 
                 // Network
-                settingsRow(label: "NETWORK", value: "Monad (Chain 143)")
+                settingsRow(label: "NETWORK", value: "Monad Testnet (10143)")
 
                 Spacer().frame(height: 24)
 
@@ -185,7 +185,7 @@ struct BetWhisperTabView: View {
                 }
 
                 // Version
-                Text("BetWhisper v1.0 / Monad Blitz CDMX")
+                Text("BetWhisper v2.0 / Foundry NYC")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(.white.opacity(0.15))
                     .frame(maxWidth: .infinity)

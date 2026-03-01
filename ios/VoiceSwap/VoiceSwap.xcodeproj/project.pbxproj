@@ -46,6 +46,7 @@
 		SK0000010000000000000001 /* Secrets.plist in Resources */ = {isa = PBXBuildFile; fileRef = SK0000020000000000000001 /* Secrets.plist */; };
 		SR0000010000000000000001 /* SpeechRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = SR0000020000000000000001 /* SpeechRecognizer.swift */; };
 		WV0000010000000000000001 /* BetWhisperWalletView.swift in Sources */ = {isa = PBXBuildFile; fileRef = WV0000020000000000000001 /* BetWhisperWalletView.swift */; };
+		PM0000010000000000000001 /* BetWhisperPulseMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = PM0000020000000000000001 /* BetWhisperPulseMapView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -82,6 +83,7 @@
 		SK0000020000000000000001 /* Secrets.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Secrets.plist; sourceTree = "<group>"; };
 		SR0000020000000000000001 /* SpeechRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechRecognizer.swift; sourceTree = "<group>"; };
 		WV0000020000000000000001 /* BetWhisperWalletView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetWhisperWalletView.swift; sourceTree = "<group>"; };
+		PM0000020000000000000001 /* BetWhisperPulseMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetWhisperPulseMapView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -159,6 +161,7 @@
 				A5BA86052F51698100F2377A /* BetWhisperPINView.swift */,
 				BW00000A0000000000000001 /* BetWhisperGroupsView.swift */,
 				WV0000020000000000000001 /* BetWhisperWalletView.swift */,
+				PM0000020000000000000001 /* BetWhisperPulseMapView.swift */,
 				CV0000060000000000000001 /* ConversationListView.swift */,
 			);
 			path = Views;
@@ -321,6 +324,7 @@
 				CV0000010000000000000001 /* Conversation.swift in Sources */,
 				CV0000030000000000000001 /* ConversationStore.swift in Sources */,
 				CV0000050000000000000001 /* ConversationListView.swift in Sources */,
+				PM0000010000000000000001 /* BetWhisperPulseMapView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
