@@ -1195,9 +1195,9 @@ struct BetWhisperChatView: View {
     private func betConfirmedView(_ record: BetRecord) -> some View {
         // Prefer Monad tx (always real on-chain) over Polygon (may be mock)
         let monadHash = record.monadTxHash ?? ""
-        let monadUrl = monadHash.isEmpty ? nil : "https://monadscan.com/tx/\(monadHash)"
+        let monadUrl = monadHash.isEmpty ? nil : "https://testnet.monadscan.com/tx/\(monadHash)"
         let displayHash = monadHash.isEmpty ? record.txHash : monadHash
-        let displayUrl = monadUrl ?? record.explorerUrl ?? "https://monadscan.com/tx/\(record.txHash)"
+        let displayUrl = monadUrl ?? record.explorerUrl ?? "https://testnet.monadscan.com/tx/\(record.txHash)"
 
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {

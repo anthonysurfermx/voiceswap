@@ -62,6 +62,10 @@
     <key>NSBluetoothPeripheralUsageDescription</key>
     <string>VoiceSwap needs Bluetooth to connect to your Meta Ray-Ban glasses.</string>
 
+    <!-- Location (Social Pulse Heatmap) -->
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>BetWhisper uses your location to show nearby trading activity on the Social Pulse heatmap.</string>
+
     <!-- Face ID / Touch ID (Transaction Security) -->
     <key>NSFaceIDUsageDescription</key>
     <string>VoiceSwap uses Face ID to securely confirm high-value transactions.</string>

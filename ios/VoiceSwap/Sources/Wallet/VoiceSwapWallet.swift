@@ -19,9 +19,9 @@ class VoiceSwapWallet: ObservableObject {
 
     private var privateKeyData: Data?
 
-    // Monad chain config
-    private let chainId: UInt64 = 143
-    private let rpcURL = URL(string: "https://rpc.monad.xyz")!
+    // Monad Testnet config (Unlink privacy pool is on testnet)
+    private let chainId: UInt64 = 10143
+    private let rpcURL = URL(string: "https://testnet-rpc.monad.xyz")!
 
     // Nonce tracking for multi-step transactions
     private var lastUsedNonce: UInt64?

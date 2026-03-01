@@ -109,14 +109,14 @@ public struct ConnectedWallet: Codable {
 // MARK: - Monad Configuration
 
 public struct MonadConfig {
-    public static let mainnetChainId = 143
+    public static let mainnetChainId = 10143
 
     public static let mainnet = ChainInfo(
-        chainId: 143,
-        name: "Monad",
-        rpcUrl: "https://rpc.monad.xyz",
+        chainId: 10143,
+        name: "Monad Testnet",
+        rpcUrl: "https://testnet-rpc.monad.xyz",
         symbol: "MON",
-        explorer: "https://monadscan.com"
+        explorer: "https://testnet.monadscan.com"
     )
 }
 
@@ -314,7 +314,7 @@ public class WalletConnectManager: ObservableObject {
             for account in session.accounts {
                 let chainIdStr = account.blockchain.reference
                 print("[WalletConnect]   - Account \(account.address.prefix(10))... on chain \(chainIdStr)")
-                if chainIdStr == "143" || chainIdStr == String(MonadConfig.mainnetChainId) {
+                if chainIdStr == "10143" || chainIdStr == String(MonadConfig.mainnetChainId) {
                     bestAccount = account
                     print("[WalletConnect]   → Selected (Monad account)")
                     break
@@ -793,14 +793,14 @@ public class WalletConnectManager: ObservableObject {
 
             let addParams = AddChainParams(
                 chainId: monadHex,
-                chainName: "Monad",
+                chainName: "Monad Testnet",
                 nativeCurrency: AddChainParams.NativeCurrency(
                     name: "Monad",
                     symbol: "MON",
                     decimals: 18
                 ),
-                rpcUrls: ["https://rpc.monad.xyz"],
-                blockExplorerUrls: ["https://monadscan.com"]
+                rpcUrls: ["https://testnet-rpc.monad.xyz"],
+                blockExplorerUrls: ["https://testnet.monadscan.com"]
             )
 
             let params = AnyCodable([addParams])

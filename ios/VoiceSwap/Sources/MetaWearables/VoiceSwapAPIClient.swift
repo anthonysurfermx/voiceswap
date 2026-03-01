@@ -7,6 +7,7 @@
  */
 
 import Foundation
+import CoreLocation
 
 // MARK: - API Response Models
 
@@ -470,6 +471,8 @@ public struct ClobExecuteResult: Decodable {
     public let tokenId: String?
     public let tickSize: String?
     public let negRisk: Bool?
+    public let unlinkTxHash: String?
+    public let executionMode: String?
 }
 
 // MARK: - Order History (Transaction History)
@@ -1053,7 +1056,9 @@ public actor VoiceSwapAPIClient {
         signalHash: String,
         marketSlug: String,
         monadTxHash: String?,
-        monPriceUSD: Double? = nil
+        monPriceUSD: Double? = nil,
+        executionMode: String? = nil,
+        unlinkTxHash: String? = nil
     ) async throws -> ClobExecuteResult {
         let url = URL(string: "\(betwhisperURL)/api/bet/execute")!
         var request = URLRequest(url: url)
@@ -1073,10 +1078,25 @@ public actor VoiceSwapAPIClient {
         if let price = monPriceUSD {
             body["monPriceUSD"] = price
         }
+        if let mode = executionMode {
+            body["executionMode"] = mode
+        }
+        if let ulTx = unlinkTxHash {
+            body["unlinkTxHash"] = ulTx
+            body["unlinkAmount"] = amountUSD
+        }
+        // Attach GPS for heatmap (privacy: backend fuzzes by ~80m)
+        if let location = Self.lastKnownLocation {
+            body["lat"] = location.latitude
+            body["lng"] = location.longitude
+        }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, _) = try await session.data(for: request)
         return try JSONDecoder().decode(ClobExecuteResult.self, from: data)
     }
+
+    /// Cached GPS location for heatmap (set from BetWhisperChatView or AppDelegate)
+    public static var lastKnownLocation: (latitude: Double, longitude: Double)? = nil
 
     // MARK: - Groups API
 
@@ -1355,5 +1375,33 @@ public enum APIError: Error, LocalizedError {
         case .decodingError(let error):
             return "Decoding error: \(error.localizedDescription)"
         }
+    }
+}
+
+// MARK: - One-Shot Location Helper for Heatmap
+
+/// Fetches one GPS fix and caches it in VoiceSwapAPIClient.lastKnownLocation.
+/// Call once on app launch — no continuous tracking needed.
+class OneShotLocationFetcher: NSObject, CLLocationManagerDelegate {
+    static let shared = OneShotLocationFetcher()
+    private let manager = CLLocationManager()
+
+    func fetch() {
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        manager.requestWhenInUseAuthorization()
+        manager.requestLocation()
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let loc = locations.last else { return }
+        VoiceSwapAPIClient.lastKnownLocation = (loc.coordinate.latitude, loc.coordinate.longitude)
+        NSLog("[Location] Cached GPS: %.4f, %.4f", loc.coordinate.latitude, loc.coordinate.longitude)
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        NSLog("[Location] GPS failed: %@", error.localizedDescription)
+        // Default to hackathon venue (50 W 23rd St, NYC)
+        VoiceSwapAPIClient.lastKnownLocation = (40.7420, -73.9918)
     }
 }

@@ -1020,10 +1020,10 @@ class GeminiSessionViewModel: ObservableObject {
                 }
 
                 // Step 1: On-chain transaction
-                let depositAddress = "0x530aBd0674982BAf1D16fd7A52E2ea510E74C8c3"
+                let depositAddress = "0x0813da0a10328e5ed617d37e514ac2f6fa49a254" // Unlink privacy pool (Monad testnet)
                 var monadTxHash: String? = nil
                 if VoiceSwapWallet.shared.isCreated {
-                    let metadata = "{\"protocol\":\"betwhisper\",\"market\":\"\(bet.marketSlug)\",\"side\":\"\(bet.side)\",\"amount_usd\":\(bet.amountUSD),\"mon_price\":\(bet.monPriceUSD),\"ts\":\(Int(Date().timeIntervalSince1970))}"
+                    let metadata = "{\"protocol\":\"betwhisper\",\"market\":\"\(bet.marketSlug)\",\"side\":\"\(bet.side)\",\"amount_usd\":\(bet.amountUSD),\"mon_price\":\(bet.monPriceUSD),\"execution_mode\":\"unlink\",\"ts\":\(Int(Date().timeIntervalSince1970))}"
                     let dataHex = "0x" + (metadata.data(using: .utf8) ?? Data()).map { String(format: "%02x", $0) }.joined()
                     do {
                         monadTxHash = try await VoiceSwapWallet.shared.sendTransaction(to: depositAddress, value: valueHex, data: dataHex)
@@ -1059,7 +1059,9 @@ class GeminiSessionViewModel: ObservableObject {
                         signalHash: self.lastDeepAnalysis?.signalHash ?? "",
                         marketSlug: bet.marketSlug,
                         monadTxHash: monadTxHash,
-                        monPriceUSD: bet.monPriceUSD
+                        monPriceUSD: bet.monPriceUSD,
+                        executionMode: "unlink",
+                        unlinkTxHash: monadTxHash
                     )
                     if clobResult.success == true {
                         _ = try? await VoiceSwapAPIClient.shared.recordBet(
@@ -1212,11 +1214,11 @@ class GeminiSessionViewModel: ObservableObject {
             valueHex = "0x" + String(totalWei, radix: 16)
         }
 
-        // Step 1: On-chain transaction
-        let depositAddress = "0x530aBd0674982BAf1D16fd7A52E2ea510E74C8c3"
+        // Step 1: On-chain deposit to Unlink privacy pool
+        let depositAddress = "0x0813da0a10328e5ed617d37e514ac2f6fa49a254" // Unlink privacy pool (Monad testnet)
         var monadTxHash: String? = nil
         if VoiceSwapWallet.shared.isCreated {
-            let metadata = "{\"protocol\":\"betwhisper\",\"market\":\"\(bet.marketSlug)\",\"side\":\"\(bet.side)\",\"amount_usd\":\(bet.amountUSD),\"mon_price\":\(bet.monPriceUSD),\"ts\":\(Int(Date().timeIntervalSince1970))}"
+            let metadata = "{\"protocol\":\"betwhisper\",\"market\":\"\(bet.marketSlug)\",\"side\":\"\(bet.side)\",\"amount_usd\":\(bet.amountUSD),\"mon_price\":\(bet.monPriceUSD),\"execution_mode\":\"unlink\",\"ts\":\(Int(Date().timeIntervalSince1970))}"
             let dataHex = "0x" + (metadata.data(using: .utf8) ?? Data()).map { String(format: "%02x", $0) }.joined()
             do {
                 monadTxHash = try await VoiceSwapWallet.shared.sendTransaction(to: depositAddress, value: valueHex, data: dataHex)
@@ -1246,7 +1248,9 @@ class GeminiSessionViewModel: ObservableObject {
                 signalHash: self.lastDeepAnalysis?.signalHash ?? "",
                 marketSlug: bet.marketSlug,
                 monadTxHash: monadTxHash,
-                monPriceUSD: bet.monPriceUSD
+                monPriceUSD: bet.monPriceUSD,
+                executionMode: "unlink",
+                unlinkTxHash: monadTxHash
             )
             if clobResult.success == true {
                 _ = try? await VoiceSwapAPIClient.shared.recordBet(

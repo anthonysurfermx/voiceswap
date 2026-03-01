@@ -62,9 +62,12 @@ struct VoiceSwapApp: App {
         // explicitly activates voice or connects glasses from Settings.
         requestNotificationPermission()
 
+        // Fetch GPS for heatmap (one-shot, non-blocking)
+        OneShotLocationFetcher.shared.fetch()
+
         // Configure app
         print("[BetWhisper] App started")
-        print("[BetWhisper] Network: Monad Mainnet (Chain ID: 143)")
+        print("[BetWhisper] Network: Monad Testnet (Chain ID: 10143)")
         if VoiceSwapWallet.shared.isCreated {
             print("[BetWhisper] Wallet: \(VoiceSwapWallet.shared.address)")
         }

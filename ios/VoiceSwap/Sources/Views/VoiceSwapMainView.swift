@@ -3174,7 +3174,7 @@ struct PaymentHistoryRow: View {
     }
 
     private var explorerURL: URL? {
-        URL(string: "https://monadscan.com/tx/\(payment.tx_hash)")
+        URL(string: "https://testnet.monadscan.com/tx/\(payment.tx_hash)")
     }
 
     var body: some View {
