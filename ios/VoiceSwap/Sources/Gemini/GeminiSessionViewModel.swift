@@ -984,7 +984,7 @@ class GeminiSessionViewModel: ObservableObject {
                 if bet.isExpired {
                     self.pendingBet = nil
                     NSLog("[Gemini] confirm_bet: pending bet expired (>90s)")
-                    result = ["status": "error", "error": "Bet expired. MON price may have changed. Call place_bet again to get fresh pricing."]
+                    result = ["status": "error", "error": "Trade expired. MON price may have changed. Call place_bet again to get fresh pricing."]
                     break
                 }
 
@@ -1071,7 +1071,7 @@ class GeminiSessionViewModel: ObservableObject {
                         )
                         let txHash = clobResult.polygonTxHash ?? clobResult.txHash ?? monadTxHash ?? ""
                         result = [
-                            "status": "bet_confirmed",
+                            "status": "trade_confirmed",
                             "market": bet.marketSlug,
                             "side": bet.side,
                             "amount": amountStr,
@@ -1079,7 +1079,7 @@ class GeminiSessionViewModel: ObservableObject {
                             "tx_hash": txHash,
                             "price": clobResult.price ?? 0,
                             "shares": clobResult.shares ?? 0,
-                            "message": "Bet confirmed! $\(amountStr) on \(bet.side) via Polymarket."
+                            "message": "Trade confirmed! $\(amountStr) on \(bet.side) via Polymarket."
                         ]
                         // Publish bet result for chat display
                         self.latestBetResult = BetResultEvent(

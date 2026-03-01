@@ -35,10 +35,12 @@ struct BetWhisperTabView: View {
                         case 1:
                             BetWhisperPulseMapView()
                         case 2:
-                            BetWhisperPortfolioView()
+                            BetWhisperGroupsView()
                         case 3:
-                            BetWhisperWalletView()
+                            BetWhisperPortfolioView()
                         case 4:
+                            BetWhisperWalletView()
+                        case 5:
                             settingsView
                         default:
                             BetWhisperChatView()
@@ -60,9 +62,10 @@ struct BetWhisperTabView: View {
         HStack(spacing: 0) {
             tabButton(index: 0, icon: "bubble.left.fill", label: "CHAT")
             tabButton(index: 1, icon: "map.fill", label: "PULSE")
-            tabButton(index: 2, icon: "chart.bar.fill", label: "BETS")
-            tabButton(index: 3, icon: "wallet.bifold", label: "WALLET")
-            tabButton(index: 4, icon: "gearshape.fill", label: "MORE")
+            tabButton(index: 2, icon: "person.3.fill", label: "GROUPS")
+            tabButton(index: 3, icon: "chart.bar.fill", label: "BETS")
+            tabButton(index: 4, icon: "wallet.bifold", label: "WALLET")
+            tabButton(index: 5, icon: "gearshape.fill", label: "MORE")
         }
         .padding(.top, 8)
         .padding(.bottom, 24)

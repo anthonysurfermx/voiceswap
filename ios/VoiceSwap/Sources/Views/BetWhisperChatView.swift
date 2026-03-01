@@ -204,10 +204,10 @@ struct BetWhisperChatView: View {
             guard let event else { return }
             if event.success {
                 let txShort = event.monadTxHash.isEmpty ? "" : "\(event.monadTxHash.prefix(10))...\(event.monadTxHash.suffix(6))"
-                let text = "Bet Confirmed\n$\(event.amountUSD) on \(event.side) — \(event.market)\(txShort.isEmpty ? "" : "\nMonad Tx: \(txShort)")"
+                let text = "Trade Confirmed\n$\(event.amountUSD) on \(event.side) — \(event.market)\(txShort.isEmpty ? "" : "\nMonad Tx: \(txShort)")"
                 messages.append(ChatMessage(role: .assistant, text: text))
             } else {
-                messages.append(ChatMessage(role: .assistant, text: "Bet Failed\n$\(event.amountUSD) on \(event.side) — \(event.market)"))
+                messages.append(ChatMessage(role: .assistant, text: "Trade Failed\n$\(event.amountUSD) on \(event.side) — \(event.market)"))
             }
         }
         .sheet(isPresented: $showConversationList) {
